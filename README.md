@@ -2,7 +2,7 @@
 
 **Pull the real frontend of any public site in ~15 seconds. No AI, no tokens.**
 
-![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](docs/images/huly-live-vs-clone.jpg)
+![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](https://raw.githubusercontent.com/eshaangulati123/perfectclone-website-cloner/main/docs/images/huly-live-vs-clone.jpg)
 
 perfectclone clones any website 1:1. It crawls the site with a real browser (Playwright),
 downloads the site's own HTML, JavaScript, CSS, fonts and images, and gives you a folder you can
@@ -10,13 +10,19 @@ serve, edit and deploy. Then it lets you rebrand it, rehost it and strip the ori
 trackers without breaking it, including Next.js sites that hydrate on load.
 
 ```bash
-pip install git+https://github.com/eshaangulati123/perfectclone-website-cloner
+pip install perfectclone
 
 perfectclone clone example.com
 perfectclone serve example.com             # → http://localhost:8000
 ```
 
 That's it. Chromium is downloaded automatically the first time you clone. Requires Python 3.10+.
+
+Or try it without installing anything, using [uv](https://docs.astral.sh/uv/):
+
+```bash
+uvx perfectclone clone example.com
+```
 
 ## Why not an AI cloner?
 
@@ -29,21 +35,21 @@ perfectclone doesn't regenerate anything. It mirrors the bytes the site actually
 the clone *is* the site: same markup, same bundles, same animations, same JavaScript running.
 Sometimes the real solution is the simple one.
 
-|                         | AI cloners                    | wget / HTTrack           | perfectclone                       |
-| ----------------------- | ----------------------------- | ------------------------ | ---------------------------------- |
-| Output                  | New code that looks similar   | Files linked from HTML   | The site's own files               |
-| Fidelity                | Visual similarity score       | Breaks on JS-heavy sites | Byte-for-byte                      |
-| Lazy JS chunks, fonts   | n/a (regenerated)             | Missed (no JS engine)    | Captured by a real browser         |
-| Next.js / React hydration | n/a                         | Breaks                   | Works                              |
-| Safe text / brand edits | Edit generated code           | Breaks hydration         | Payload-aware, hydration-safe      |
-| Strip trackers          | n/a                           | Manual                   | Built in                           |
-| Needs an LLM / API key  | Yes                           | No                       | No                                 |
+|                                         | AI cloners | wget / HTTrack | perfectclone |
+| --------------------------------------- | :--------: | :------------: | :----------: |
+| Copies the site's real files            | ❌         | ✅             | ✅           |
+| Pixel-identical on modern JS sites      | ❌         | ❌             | ✅           |
+| Catches lazy-loaded JS, fonts, images   | —          | ❌             | ✅           |
+| React / Next.js sites still run         | —          | ❌             | ✅           |
+| Rebrand without breaking the site       | ✅         | ⚠️             | ✅           |
+| Strips the original site's trackers     | —          | ❌             | ✅           |
+| Works without an LLM or API key         | ❌         | ✅             | ✅           |
 
 ## Tested on real sites
 
 Each card is one site split down the middle: the live site on the left, the clone on the right.
 
-![Live vs clone split view for nextjs.org, astro.build, svelte.dev, vitepress.dev, docusaurus.io and wordpress.org](docs/images/compatibility.jpg)
+![Live vs clone split view for nextjs.org, astro.build, svelte.dev, vitepress.dev, docusaurus.io and wordpress.org](https://raw.githubusercontent.com/eshaangulati123/perfectclone-website-cloner/main/docs/images/compatibility.jpg)
 
 `scripts/compat.py` clones each site, serves the copy, and compares its home page with the live
 one at 1440×900, with animations and videos paused on the same frame:
@@ -152,7 +158,7 @@ static hosts. Contributions welcome.
 
 ## Contributing
 
-perfectclone is open source under the [MIT License](LICENSE). Issues and pull requests are
+perfectclone is open source under the [MIT License](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/LICENSE). Issues and pull requests are
 welcome, especially reports of sites that don't clone cleanly. See
-[CONTRIBUTING.md](CONTRIBUTING.md), and please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
-Report security issues privately as described in [SECURITY.md](SECURITY.md).
+[CONTRIBUTING.md](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/CONTRIBUTING.md), and please follow the [Code of Conduct](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/CODE_OF_CONDUCT.md).
+Report security issues privately as described in [SECURITY.md](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/SECURITY.md).
