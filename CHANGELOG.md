@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
 
 ## 0.1.0
 
+- Published on PyPI: `pip install perfectclone`, or `uvx perfectclone` to run it without installing.
+- Releases publish to PyPI automatically from GitHub releases.
 - Requires Python 3.10+.
 - `clone`: crawl with Chromium, mirror server HTML, every asset the pages load and Next.js
   navigation payloads, make the site's own asset URLs local (fonts and module scripts need

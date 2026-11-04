@@ -75,6 +75,17 @@ python scripts/compat.py huly.io          # just one
   quirk, a host's behaviour), not what the next line does.
 - Fail soft while cloning: one bad asset should land in `manifest.json`, not crash the run.
 
+## Releasing
+
+Maintainers only. Releases publish to PyPI from GitHub Actions; there's no token to manage.
+
+1. Bump `__version__` in `src/perfectclone/__init__.py`.
+2. Move the "Unreleased" notes in `CHANGELOG.md` under the new version.
+3. Merge to `main`, then create a GitHub release tagged `vX.Y.Z` (matching `__version__`).
+
+The release workflow builds the package, checks it, confirms the tag matches the version, and
+uploads it to PyPI.
+
 ## Reporting bugs
 
 Use the bug report template. Include your OS, Python version, `perfectclone --version`, the
