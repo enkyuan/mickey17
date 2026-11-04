@@ -1,11 +1,6 @@
-__pycache__/
-*.pyc
-*.egg-info/
-build/
-dist/
-.pytest_cache/
-.venv/
-# Clones made while developing
+/target/
+/dhat-heap.json
+*.trace
+# Generated website snapshots
 */site/
 */extract/
-manifest.json

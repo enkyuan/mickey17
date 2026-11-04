@@ -1,42 +1,22 @@
-name: Release
-
-# Publishing a GitHub release builds the package and uploads it to PyPI. Uses PyPI trusted
-# publishing (OIDC), so no API token is stored in the repo.
+name: Build release
 on:
   release:
     types: [published]
-
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install build twine
-      - run: python -m build
-      - run: twine check --strict dist/*
-      - name: Tag matches package version
-        run: |
-          version=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"(.+?)\"', pathlib.Path('src/perfectclone/__init__.py').read_text()).group(1))")
-          test "v$version" = "${GITHUB_REF_NAME}" || { echo "Tag ${GITHUB_REF_NAME} doesn't match version $version"; exit 1; }
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - run: cargo build --release --locked
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/perfectclone
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+          name: perfectclone-${{ runner.os }}
+          path: |
+            target/release/perfectclone
+            target/release/perfectclone.exe
