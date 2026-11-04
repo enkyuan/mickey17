@@ -69,7 +69,7 @@ python scripts/compat.py huly.io          # just one
 
 ### Style
 
-- Plain Python 3.9+, standard library plus Playwright. Discuss new dependencies in an issue
+- Plain Python 3.10+, standard library plus Playwright. Discuss new dependencies in an issue
   first.
 - Match the surrounding code. Comments explain *why* something non-obvious is done (a framework
   quirk, a host's behaviour), not what the next line does.

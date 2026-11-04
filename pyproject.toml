@@ -9,7 +9,7 @@ description = "Clone any website 1:1 with a real browser, then edit it safely."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Eshaan Gulati" }]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["playwright>=1.40"]
 keywords = ["website cloner", "clone website", "website copier", "website mirror", "playwright", "nextjs", "httrack alternative", "web scraping"]
 classifiers = [
@@ -46,7 +46,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 130
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
