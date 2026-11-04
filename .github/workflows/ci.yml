@@ -5,6 +5,7 @@ permissions:
 jobs:
   check:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -18,9 +19,26 @@ jobs:
       - run: cargo test --locked
       - uses: browser-actions/setup-chrome@v2
         id: chrome
-      - run: cargo test --locked --test browser -- --ignored
+      - name: Prepare Chrome
+        shell: bash
         env:
-          PERFECTCLONE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # Chrome's renderer helpers require a real .app bundle. setup-chrome
+            # extracts its contents into a cache directory without that suffix.
+            bundle="${CHROME_PATH%/Contents/MacOS/*}"
+            ditto "$bundle" "$RUNNER_TEMP/Chrome.app"
+            CHROME_PATH="$RUNNER_TEMP/Chrome.app/Contents/MacOS/Google Chrome for Testing"
+          fi
+          echo "PERFECTCLONE_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
+          "$CHROME_PATH" --version
+      - name: Check Linux browser startup
+        if: runner.os == 'Linux'
+        run: |
+          timeout 20s "$PERFECTCLONE_CHROME" --headless --disable-gpu \
+            --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
+      - run: cargo test --locked --test browser -- --ignored
       - run: cargo run --locked --release --example heap_profile
   audit:
     runs-on: ubuntu-latest
