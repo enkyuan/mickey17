@@ -5,7 +5,7 @@ downloads the site's own HTML, JavaScript, CSS, fonts and images, and gives you 
 serve, edit and deploy. Then it lets you rebrand it, rehost it and strip the original owner's
 trackers without breaking it, including Next.js sites that hydrate on load.
 
-![huly.io live next to its perfectclone copy: 100% pixel-identical, 0 hydration errors](docs/images/huly-live-vs-clone.jpg)
+![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](docs/images/huly-live-vs-clone.jpg)
 
 ```bash
 pip install git+https://github.com/eshaangulati123/perfectclone-website-cloner
