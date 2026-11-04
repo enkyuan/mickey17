@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ## 0.1.0
 
+- Requires Python 3.10+.
 - `clone`: crawl with Chromium, mirror server HTML, every asset the pages load and Next.js
   navigation payloads, make the site's own asset URLs local (fonts and module scripts need
   this), strip trackers, write `manifest.json`. `--extract` saves text, metadata and screenshots.

@@ -14,7 +14,7 @@ perfectclone clone example.com
 perfectclone serve example.com             # → http://localhost:8000
 ```
 
-That's it. Chromium is downloaded automatically the first time you clone. Requires Python 3.9+.
+That's it. Chromium is downloaded automatically the first time you clone. Requires Python 3.10+.
 
 ## Why not an AI cloner?
 
