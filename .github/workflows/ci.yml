@@ -36,12 +36,12 @@ jobs:
             # to create its sandbox, but not a downloaded tool-cache binary.
             CHROME_PATH="$(command -v google-chrome)"
           fi
-          echo "PERFECTCLONE_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
+          echo "MOSHA_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
           "$CHROME_PATH" --version
       - name: Check Linux browser startup
         if: runner.os == 'Linux'
         run: |
-          timeout 20s "$PERFECTCLONE_CHROME" --headless --disable-gpu \
+          timeout 20s "$MOSHA_CHROME" --headless --disable-gpu \
             --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
       - run: cargo test --locked --test browser -- --ignored
       - run: cargo run --locked --release --example heap_profile
