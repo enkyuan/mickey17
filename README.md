@@ -1,11 +1,13 @@
 # perfectclone: website cloner that copies the real site, 1:1
 
-**perfectclone clones any website 1:1.** It crawls the site with a real browser (Playwright),
+**Pull the real frontend of any public site in ~15 seconds. No AI, no tokens.**
+
+![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](docs/images/huly-live-vs-clone.jpg)
+
+perfectclone clones any website 1:1. It crawls the site with a real browser (Playwright),
 downloads the site's own HTML, JavaScript, CSS, fonts and images, and gives you a folder you can
 serve, edit and deploy. Then it lets you rebrand it, rehost it and strip the original owner's
 trackers without breaking it, including Next.js sites that hydrate on load.
-
-![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](docs/images/huly-live-vs-clone.jpg)
 
 ```bash
 pip install git+https://github.com/eshaangulati123/perfectclone-website-cloner
