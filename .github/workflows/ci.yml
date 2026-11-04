@@ -18,6 +18,7 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked
       - uses: browser-actions/setup-chrome@v2
+        if: runner.os == 'macOS'
         id: chrome
       - name: Prepare Chrome
         shell: bash
@@ -30,6 +31,10 @@ jobs:
             bundle="${CHROME_PATH%/Contents/MacOS/*}"
             ditto "$bundle" "$RUNNER_TEMP/Chrome.app"
             CHROME_PATH="$RUNNER_TEMP/Chrome.app/Contents/MacOS/Google Chrome for Testing"
+          else
+            # Ubuntu's AppArmor policy allows the system Chrome installation
+            # to create its sandbox, but not a downloaded tool-cache binary.
+            CHROME_PATH="$(command -v google-chrome)"
           fi
           echo "PERFECTCLONE_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
           "$CHROME_PATH" --version
