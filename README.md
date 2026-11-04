@@ -1,164 +1,59 @@
-# perfectclone: website cloner that copies the real site, 1:1
+# Mosha
 
-**Pull the real frontend of any public site in ~15 seconds. No AI, no tokens.**
+Clone a website's frontend with Chromium, then edit and serve the local copy. Written in Rust.
 
-![Clone any website. Get the real files. huly.io cloned with perfectclone: 0.00% pixel difference, 14 seconds, 157 files, 0 LLM calls.](https://raw.githubusercontent.com/eshaangulati123/perfectclone-website-cloner/main/docs/images/huly-live-vs-clone.jpg)
+## Use
 
-perfectclone clones any website 1:1. It crawls the site with a real browser (Playwright),
-downloads the site's own HTML, JavaScript, CSS, fonts and images, and gives you a folder you can
-serve, edit and deploy. Then it lets you rebrand it, rehost it and strip the original owner's
-trackers without breaking it, including Next.js sites that hydrate on load.
+Requires Rust 1.99.1 and Chrome or Chromium. The executable is currently named `perfectclone`.
 
-```bash
-pip install perfectclone
+```sh
+cargo install --path . --locked
 
-perfectclone clone example.com
-perfectclone serve example.com             # → http://localhost:8000
+perfectclone clone https://example.com -o example
+perfectclone serve example
+perfectclone replace example 'Example' 'Demo'
+perfectclone rehost example https://example.com https://demo.example
+perfectclone strip-trackers example
 ```
 
-That's it. Chromium is downloaded automatically the first time you clone. Requires Python 3.10+.
+Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
+manifest for failed resources. `--extract` adds text, metadata and screenshots; `--max-pages`
+defaults to 200. Trackers and robots rules can be overridden with `--keep-trackers` and
+`--ignore-robots`. Set `PERFECTCLONE_CHROME` if browser discovery fails.
 
-Or try it without installing anything, using [uv](https://docs.astral.sh/uv/):
+## Capabilities
 
-```bash
-uvx perfectclone clone example.com
-```
+- **Browser capture.** Scrolls to discover lazy assets; saves server HTML for hydration.
+  Persistent background requests do not block document readiness.
+- **Safe editing.** Rewrites Next.js Flight JSON and UTF-8 text lengths alongside HTML,
+  protects asset URLs, and atomically replaces each edited file.
+- **Bounded downloads.** Deduplicates up to 100,000 asset URLs, limits responses to 64 MiB,
+  and fetches sequentially with a 30-second request timeout. Conflicting paths are reported.
+- **Streaming preview.** Loopback server with clean URLs, RSC navigation, original-image
+  routing, HEAD requests and byte ranges for media.
 
-## Why not an AI cloner?
+## Performance
 
-Most "clone any website" tools today regenerate the site: an AI agent looks at screenshots or
-scraped markup, writes a new React/Next.js app, and compares the result against the original
-with a visual-similarity score until it's close enough. That gets you a lookalike. The code is
-new, the behaviour is approximate, and there are always gaps.
+Local release-build measurements on Apple M1, Rust 1.99.1:
 
-perfectclone doesn't regenerate anything. It mirrors the bytes the site actually serves, so
-the clone *is* the site: same markup, same bundles, same animations, same JavaScript running.
-Sometimes the real solution is the simple one.
+| Workload | Time |
+| --- | ---: |
+| Replace text while protecting URLs, 156 KiB | 1.68 ms |
+| Rewrite 4,096 Flight text rows | 923 µs |
 
-|                                         | AI cloners | wget / HTTrack | perfectclone |
-| --------------------------------------- | :--------: | :------------: | :----------: |
-| Copies the site's real files            | ❌         | ✅             | ✅           |
-| Pixel-identical on modern JS sites      | ❌         | ❌             | ✅           |
-| Catches lazy-loaded JS, fonts, images   | —          | ❌             | ✅           |
-| React / Next.js sites still run         | —          | ❌             | ✅           |
-| Rebrand without breaking the site       | ✅         | ⚠️             | ✅           |
-| Strips the original site's trackers     | —          | ❌             | ✅           |
-| Works without an LLM or API key         | ❌         | ✅             | ✅           |
-
-## Tested on real sites
-
-Each card is one site split down the middle: the live site on the left, the clone on the right.
-
-![Live vs clone split view for nextjs.org, astro.build, svelte.dev, vitepress.dev, docusaurus.io and wordpress.org](https://raw.githubusercontent.com/eshaangulati123/perfectclone-website-cloner/main/docs/images/compatibility.jpg)
-
-`scripts/compat.py` clones each site, serves the copy, and compares its home page with the live
-one at 1440×900, with animations and videos paused on the same frame:
-
-| Site | Built with | Pixel match | Hydration errors | Notes |
-| --- | --- | --- | --- | --- |
-| huly.io | Next.js | 100% | 0 | |
-| nextjs.org | Next.js | 100% | 0 | |
-| astro.build | Astro | 100% | 0 | |
-| svelte.dev | SvelteKit | 100% | 0 | |
-| vitepress.dev | VitePress (Vue) | 100% | 0 | |
-| docusaurus.io | Docusaurus (React) | 100% | 0 | |
-| wordpress.org/news | WordPress | 100% | 0 | |
-| paulgraham.com | Hand-written HTML | 100% | 0 | |
-| example.com | Static HTML | 100% | 0 | |
-| framer.com | Framer | 96% | 0 | Cookie banner needs Framer's backend |
-| webflow.com | Webflow | 93% | 0 | Cookie banner won't run on localhost; carousel caught mid-scroll |
-
-Every clone loaded with zero requests to trackers. Run it yourself with
-`python scripts/compat.py`, and please open an issue for any site that doesn't come out right.
-
-## Commands
-
-```bash
-perfectclone clone <url> [-o out] [--max-pages 200] [--extract] [--keep-trackers] [--ignore-robots]
-perfectclone serve <site> [-p 8000]
-perfectclone replace <site> <old> <new> [--exact-case] [--substring]
-perfectclone rehost <site> <old-origin> <new-origin>
-perfectclone strip-trackers <site>
-```
-
-- **clone** writes `out/site/` (the working copy) and `out/manifest.json` (pages, failures,
-  third-party hosts the site uses). `--extract` also saves each page's text, metadata
-  (headings, links, images, forms, JSON-LD) and a full-page screenshot to `out/extract/`.
-  Trackers are stripped by default.
-- **replace** renames text everywhere: HTML, JS, CSS, JSON, SVG. It also handles the UPPER,
-  lower and Capitalized variants, and leaves URLs and asset paths alone so nothing 404s.
-- **rehost** points canonical, Open Graph, JSON-LD and sitemap URLs at your domain.
-- **serve** works like a static host: clean URLs (`/about` → `/about/index.html`), and
-  `/_next/image` requests are served from the mirrored originals.
-
-Rebrand a clone and put it online:
-
-```bash
-perfectclone clone acme.com -o acme
-perfectclone replace acme "Acme" "Globex"
-perfectclone rehost  acme https://acme.com https://globex.com
-npx netlify-cli deploy --dir acme/site --prod      # or any static host
-```
-
-## How it works
-
-1. **Crawl with a real browser.** Each page is rendered in Chromium and scrolled to the bottom,
-   and every response is recorded. That catches what static mirrors miss: code-split JS chunks,
-   fonts requested from CSS, images behind lazy loading. Links are followed breadth-first,
-   seeded from the sitemap. robots.txt is respected unless you pass `--ignore-robots`.
-2. **Mirror the server's bytes.** Pages are saved as the HTML the *server* sends, not the
-   rendered DOM, because that's what the site's JavaScript expects to hydrate. Assets keep
-   their URL paths, and CSS/JS are scanned for further references (`url()`, `srcset`, chunk
-   paths) until nothing new turns up.
-3. **Edit without breaking hydration.** A Next.js App Router page ships its HTML *and* a
-   serialized copy of the React tree in `self.__next_f.push(...)` script chunks. Change one and
-   not the other, and React throws a hydration error and re-renders from the payload, undoing
-   your edit. perfectclone decodes the payload stream, edits it row by row, recomputes the
-   UTF-8 byte lengths of length-prefixed text rows (`<id>:T<hex>,…`), rejoins rows that span
-   chunks, and writes it back next to the matching HTML edit.
-4. **Strip trackers.** Google Analytics/Tag Manager, the Meta pixel, LinkedIn Insight, Hotjar,
-   Clarity, Segment, PostHog, HubSpot, TikTok, Reddit, X, Cloudflare Web Analytics, RB2B and
-   more. They're removed from `<script>`/`<noscript>` tags, from preload hints, and from Next.js
-   `next/script` elements that only exist in the payload.
+These measure in-memory editing, not website cloning speed. The heap workload retained no
+additional bytes after warm-up. [Validation](VALIDATION.md) has methodology, memory results
+and commands to reproduce the checks.
 
 ## Limits
 
-- **No backend.** Forms, logins, search and API calls still go to the original servers (or
-  fail). perfectclone copies the front end.
-- **Next.js client-side navigation** needs each page's RSC payload answered for `?_rsc=`
-  requests. perfectclone mirrors them and `perfectclone serve` routes them. On a plain static
-  host, internal links fall back to full page loads: everything still works, just without the
-  instant transitions.
-- **Chunks that are only requested after a click** (say, a modal's code) are captured if the
-  crawl triggered them or a bundle names them as a string. A bundle can also assemble a chunk
-  URL at runtime, and that one may be missed.
-- **Bot protection** (CAPTCHAs, aggressive Cloudflare rules) can block the crawl. perfectclone
-  does not try to get around it.
-- Embeds (YouTube, Cal.com, maps) and third-party CDNs keep loading from their own hosts.
+Frontends only: forms, APIs, embeds and external CDN assets may still need their original
+servers. Authenticated or interaction-only resources may be missed. Tracker removal uses
+signatures; arbitrary-site visual parity is not established.
 
-## Roadmap
+Keep served files under your control. Path checks reject traversal and symlinks but do not
+isolate concurrent local filesystem changes. Edits are atomic per file, not across a whole clone.
 
-**Clone apps behind a login, like dashboards.** Today perfectclone sees what an anonymous visitor
-sees, and data that loads from APIs after the page renders isn't kept. The plan, for apps you
-have an account on:
+## License
 
-- **Crawl as you.** Sign in once in a browser window; perfectclone saves the session and
-  crawls with it.
-- **Record API responses.** Keep every JSON response the app fetches during the crawl and have
-  `perfectclone serve` replay them, so charts, tables and lists show real data offline.
-- **Explore by clicking.** Click through navigation, tabs and menus to reach views that only
-  exist in client-side routing.
-
-The result is a clickable snapshot of the UI and its data at capture time. Saving, server-side
-filtering and live updates still need the real backend.
-
-Other ideas: hydration-aware editing for Nuxt, SvelteKit and Remix payloads, and a deploy
-helper that writes `_redirects` / `vercel.json` rules so `?_rsc=` and `/_next/image` work on
-static hosts. Contributions welcome.
-
-## Contributing
-
-perfectclone is open source under the [MIT License](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/LICENSE). Issues and pull requests are
-welcome, especially reports of sites that don't clone cleanly. See
-[CONTRIBUTING.md](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/CONTRIBUTING.md), and please follow the [Code of Conduct](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/CODE_OF_CONDUCT.md).
-Report security issues privately as described in [SECURITY.md](https://github.com/eshaangulati123/perfectclone-website-cloner/blob/main/SECURITY.md).
+[MIT](LICENSE).

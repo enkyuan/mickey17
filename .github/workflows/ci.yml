@@ -1,47 +1,54 @@
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
+name: Rust CI
+on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check .
-
-  test:
-    runs-on: ubuntu-latest
+  check:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: pytest -q
-
-  smoke:
-    # End to end against a stable public page: install, clone, serve, fetch.
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked
+      - uses: browser-actions/setup-chrome@v2
+        if: runner.os == 'macOS'
+        id: chrome
+      - name: Prepare Chrome
+        shell: bash
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # Chrome's renderer helpers require a real .app bundle. setup-chrome
+            # extracts its contents into a cache directory without that suffix.
+            bundle="${CHROME_PATH%/Contents/MacOS/*}"
+            ditto "$bundle" "$RUNNER_TEMP/Chrome.app"
+            CHROME_PATH="$RUNNER_TEMP/Chrome.app/Contents/MacOS/Google Chrome for Testing"
+          else
+            # Ubuntu's AppArmor policy allows the system Chrome installation
+            # to create its sandbox, but not a downloaded tool-cache binary.
+            CHROME_PATH="$(command -v google-chrome)"
+          fi
+          echo "PERFECTCLONE_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
+          "$CHROME_PATH" --version
+      - name: Check Linux browser startup
+        if: runner.os == 'Linux'
+        run: |
+          timeout 20s "$PERFECTCLONE_CHROME" --headless --disable-gpu \
+            --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
+      - run: cargo test --locked --test browser -- --ignored
+      - run: cargo run --locked --release --example heap_profile
+  audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install .
-      - run: python -m playwright install --with-deps chromium
-      - run: perfectclone clone https://example.com -o example
-      - run: |
-          perfectclone serve example -p 8000 &
-          sleep 2
-          curl -fsS http://localhost:8000/ | grep -q "Example Domain"
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
