@@ -23,10 +23,12 @@ REF = re.compile(
 # robots.txt still apply. From an href, only files that are clearly assets are mirrored.
 ASSET_HREF = re.compile(
     r"\.(css|js|mjs|ico|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|otf|json|webmanifest|xml|pdf|mp4|webm)(\?|$)", re.I)
-# Lazily loaded chunks appear only as string literals inside bundles.
+# Lazy chunks and other files loaded at runtime appear only as string literals inside scripts.
+# Bundlers leave node_modules source paths in strings too; those aren't served.
 CHUNK = re.compile(
-    r"""["'`](/?(?:_next|static|assets|build|dist)/[^"'`\s]+?"""
-    r"""\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|webp|avif|svg|gif|mp4|webm|json))["'`]""")
+    r"""["'`](?:\./)?(/?(?!node_modules/)[\w-]+/[^"'`\s?]+?"""
+    r"""\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|webp|avif|svg|gif|mp4|webm|json|wasm|riv|bin|glb|gltf)"""
+    r"""(?:\?[^"'`\s]*)?)["'`]""")
 TEXT_TYPES = (".html", ".css", ".js", ".mjs", ".svg", ".json", ".xml", ".txt", ".webmanifest")
 # Files a site often has that no page references directly (service workers are registered
 # from script, browsers request icons and manifests on their own).

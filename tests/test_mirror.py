@@ -43,3 +43,17 @@ def test_next_image_urls_map_to_the_original():
 def test_lazy_chunks_are_found_inside_bundles():
     js = 'e.u=function(e){return"static/chunks/"+e};var a="/_next/static/chunks/942-abc.js";'
     assert refs(js, "https://acme.com/_next/static/chunks/main.js", "acme.com") == {"https://acme.com/_next/static/chunks/942-abc.js"}
+
+
+def test_runtime_assets_with_relative_paths_and_queries_are_found():
+    js = ("window.__riveSrc={js:'vendor/rive/rive.js?v=e1856181',wasm:'vendor/rive/rive.wasm?v=ee9b7e35',"
+          "riv:'assets/s02/read.riv?v=f5168dfe',heroimg:'assets/s01/hero-painting.webp?v=a1034a8d'};"
+          "bfbin:'assets/shared/butterfly.bin?v=ae64facc';import(new URL('shaders/tear.js?v=e8e5ab2e',document.baseURI));"
+          "var cdn='cdn.other.com/x.js',mod='node_modules/@acme/media/player.js';"
+          '{"imports":{"./shaders/glass.js":"./shaders/glass.js?v=b45f0a07"}}')
+    assert refs(js, BASE, "acme.com") == {
+        "https://acme.com/vendor/rive/rive.js?v=e1856181", "https://acme.com/vendor/rive/rive.wasm?v=ee9b7e35",
+        "https://acme.com/assets/s02/read.riv?v=f5168dfe", "https://acme.com/assets/s01/hero-painting.webp?v=a1034a8d",
+        "https://acme.com/shaders/tear.js?v=e8e5ab2e", "https://acme.com/assets/shared/butterfly.bin?v=ae64facc",
+        "https://acme.com/shaders/glass.js", "https://acme.com/shaders/glass.js?v=b45f0a07",
+    }
