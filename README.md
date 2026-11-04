@@ -1,16 +1,14 @@
-# perfectclone
+# Mosha
 
-A Rust CLI that crawls public websites with Chromium, mirrors their original HTML and assets,
-and edits the result with awareness of Next.js React flight payloads.
+Clone a website's frontend with Chromium, then edit and serve the local copy. Written in Rust.
 
-## Build and use
+## Use
 
-Install Rust with rustup and install Chrome or Chromium. The repository pins Rust 1.99.1
-(edition 2024), including rustfmt and Clippy. No Python or Node runtime is required.
+Requires Rust 1.99.1 and Chrome or Chromium. The executable is currently named `perfectclone`.
 
 ```sh
-cargo build --release --locked
 cargo install --path . --locked
+
 perfectclone clone https://example.com -o example
 perfectclone serve example
 perfectclone replace example 'Example' 'Demo'
@@ -18,76 +16,44 @@ perfectclone rehost example https://example.com https://demo.example
 perfectclone strip-trackers example
 ```
 
-Set `PERFECTCLONE_CHROME` to the browser executable if automatic discovery fails.
-The browser uses a temporary profile and certificate validation. It is closed when the crawl ends.
+Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
+manifest for failed resources. `--extract` adds text, metadata and screenshots; `--max-pages`
+defaults to 200. Trackers and robots rules can be overridden with `--keep-trackers` and
+`--ignore-robots`. Set `PERFECTCLONE_CHROME` if browser discovery fails.
 
-`clone` accepts `--max-pages 200`, `--extract`, `--keep-trackers`, and `--ignore-robots`.
-It requires a new or empty output directory. It follows same-site links breadth-first, seeds
-from sitemap locations, respects robots page rules, scrolls to trigger lazy assets, and records
-same-site response URLs. DOM readiness is independent of network idleness, so persistent
-background requests do not prevent a loaded page from being saved. HTTP fetches save server HTML
-rather than the rendered DOM, and scan HTML/CSS/JS references recursively. Resources are fetched
-sequentially with a 30-second timeout
-and a 64 MiB response limit; discovery is capped at 100,000 URLs. Failed URLs are recorded in
-`manifest.json`. Inspect that manifest before treating a snapshot as complete.
+## Capabilities
 
-The output contains `site/`, `manifest.json`, and optionally `extract/` with text, metadata,
-headings, links, images, forms, JSON-LD, and full-page PNGs. Query variants sharing an asset path
-are checked for byte collisions and reported rather than silently overwriting each other.
+- **Browser capture.** Scrolls to discover lazy assets; saves server HTML for hydration.
+  Persistent background requests do not block document readiness.
+- **Safe editing.** Rewrites Next.js Flight JSON and UTF-8 text lengths alongside HTML,
+  protects asset URLs, and atomically replaces each edited file.
+- **Bounded downloads.** Deduplicates up to 100,000 asset URLs, limits responses to 64 MiB,
+  and fetches sequentially with a 30-second request timeout. Conflicting paths are reported.
+- **Streaming preview.** Loopback server with clean URLs, RSC navigation, original-image
+  routing, HEAD requests and byte ranges for media.
 
-`replace` protects HTTP URLs, root-relative paths, mailto and telephone targets, matches whole
-words, and includes upper/lower/capitalized variants. Use `--exact-case` or `--substring` to change
-those defaults. HTML flight data and standalone `.rsc` streams are edited together, including
-UTF-8 byte-length updates for long text rows and rows split across chunks. Invalid flight lengths
-return errors. Non-UTF-8 files are left unchanged. Edits stage a complete sibling file before atomic
-replacement, preserving the original on write failure. The multi-file command is not transactional.
+## Performance
 
-`serve` binds only to loopback, tries the requested `-p/--port` and the next 19 ports, and supports
-clean URLs, RSC navigation, Next.js image originals, HEAD requests and streamed byte ranges.
-Traversal and symlink paths are refused. Keep the output directory under your control while serving;
-filesystem checks do not provide isolation from a concurrent local process changing files.
+Local release-build measurements on Apple M1, Rust 1.99.1:
 
-## Validation and profiling
+| Workload | Time |
+| --- | ---: |
+| Replace text while protecting URLs, 156 KiB | 1.68 ms |
+| Rewrite 4,096 Flight text rows | 923 µs |
 
-```sh
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --locked
-cargo test --test browser -- --ignored
-cargo bench --bench editing
-cargo run --release --example heap_profile
-cargo run --release --example heap_profile -- --record
-cargo install cargo-audit --locked
-cargo audit
-```
-
-The browser test uses a local fixture with two pages, lazy-loaded assets, robots exclusion,
-extraction, editing, and preview serving. It needs installed Chrome and loopback networking.
-The benchmark measures replacement on ~160 KiB and flight processing over 4,096 rows.
-The DHAT executable warms shared regex caches and asserts that five repeated editing workloads
-retain no extra allocation bytes or blocks. The separate `--record` run writes
-`target/dhat-heap.json` for the DHAT viewer.
-These checks cover the measured workloads, not every input or Chromium's own heap.
-
-For macOS process-level checks:
-
-```sh
-leaks --atExit -- target/release/examples/heap_profile
-sample <running-perfectclone-pid> 5 -file target/cpu-sample.txt
-```
-
-Release builds retain symbols for CPU profiling. See [VALIDATION.md](VALIDATION.md) for the
-observed results and environment limitations from the migration.
+These measure in-memory editing, not website cloning speed. The heap workload retained no
+additional bytes after warm-up. [Validation](VALIDATION.md) has methodology, memory results
+and commands to reproduce the checks.
 
 ## Limits
 
-This copies frontends, not backends. Forms, API calls and embeds may still contact their original
-servers. Tracker removal uses signatures and does not guarantee zero outbound tracking.
-Browser capture records response URLs, then fetches them again without browser authentication;
-one-time, authenticated, POST-only and state-dependent responses may not replay.
-Dynamically assembled URLs, interaction-only chunks and external CDN assets may remain remote.
-robots rules apply to page discovery; dependencies of allowed pages may still be downloaded.
-No bot-protection bypass or cross-site redirects are implemented. Visual parity across arbitrary
-frameworks and sites has not been established for this rewrite.
+Frontends only: forms, APIs, embeds and external CDN assets may still need their original
+servers. Authenticated or interaction-only resources may be missed. Tracker removal uses
+signatures; arbitrary-site visual parity is not established.
 
-Licensed under MIT; original copyright attribution is retained in LICENSE.
+Keep served files under your control. Path checks reject traversal and symlinks but do not
+isolate concurrent local filesystem changes. Edits are atomic per file, not across a whole clone.
+
+## License
+
+[MIT](LICENSE).
