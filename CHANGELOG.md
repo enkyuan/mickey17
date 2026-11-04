@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- `clone`: mirror files scripts reference by path in any folder, including `./` and `?v=` paths
+  and `.wasm`, `.riv`, `.bin`, `.glb`, `.gltf` files.
+
 ## 0.1.0
 
 - Requires Python 3.10+.
