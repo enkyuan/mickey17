@@ -7,3 +7,8 @@
   and pull request titles.
 - Enable the tracked commit-message hook with `git config core.hooksPath .githooks`.
   See [CONTRIBUTING.md](CONTRIBUTING.md) for examples.
+- Every new `mochi-web` publication on crates.io must have a matching GitHub
+  release, tagged `mochi-web-v<version>` at the published package commit.
+  Compose reviewed feature, migration, limitation, and validation notes for the
+  changes since the previous release. Follow [docs/RELEASING.md](docs/RELEASING.md);
+  do not mark a release complete while either publication remains unverified.

@@ -22,3 +22,7 @@ Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refact
 Use the same format for pull request titles so squash merges keep the convention.
 The commit-message hook checks local commits; the Commit conventions workflow checks
 every commit reachable from the pushed branch or pull request head.
+
+For crates.io publication and the corresponding GitHub release, follow
+[Releasing Mochi](docs/RELEASING.md). The working notes for the next release are
+in [docs/releases/NEXT.md](docs/releases/NEXT.md).
