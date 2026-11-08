@@ -263,3 +263,14 @@ isolate concurrent local filesystem changes. Edits are atomic per file, not acro
 [MIT](LICENSE).
 
 New exports use Bun, Base UI, Tailwind v4 and Motion. `components/ui` is reserved for Base UI primitives; styled compositions live in `components/compositions`. For editable typed components and scoped tokens, see the [authored source export](docs/AUTHORED_EXPORT.md). It consumes a reviewed semantic specification; automated semantic inference remains unfinished.
+
+### Reconstruction benchmarks
+
+The [benchmark suite](benchmarks/README.md) reports separate layout, typography,
+style, content, asset, graphics, behavior and routing measurements. It preserves
+missing/failed cases in the denominator, records exact screenshot differences,
+checks repeatability and source/build hashes, and retains React Doctor diagnostics.
+Calibration tests must detect deliberately injected regressions before site ratings
+are trusted. Existing-project, reviewed-specification and CLI reconstruction runs
+are separate tracks; fixture results do not establish arbitrary-site accuracy.
+See [parity contracts](docs/PARITY.md) for the offline comparison gate.

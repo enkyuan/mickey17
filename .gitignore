@@ -11,3 +11,6 @@
 
 # macOS directory metadata
 .DS_Store
+
+# Benchmark dependencies
+/benchmarks/node_modules/

@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mochi::{
-    analysis, authored, crawl, edit, evidence, export, interpret, project, serve, trackers, util,
+    analysis, authored, crawl, edit, evidence, export, interpret, parity, project, serve, trackers,
+    util,
 };
 use std::path::PathBuf;
 #[derive(Parser)]
@@ -112,6 +113,20 @@ enum Command {
         #[arg(long = "recover-client-route")]
         recover_client_routes: Vec<String>,
     },
+    /// Hash editable app inputs before collecting candidate parity measurements.
+    FingerprintProject { project: PathBuf },
+    /// Compare fixed browser states; fail on stale input, gaps or measured differences.
+    CheckParity {
+        project: PathBuf,
+        #[arg(long)]
+        contract: PathBuf,
+        #[arg(long)]
+        reference: PathBuf,
+        #[arg(long)]
+        candidate: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -202,6 +217,22 @@ fn main() -> Result<()> {
                 report.assets_fetched,
                 out.display(),
                 report.failures.len()
+            );
+        }
+        Command::FingerprintProject { project } => {
+            println!("{}", parity::project_fingerprint(&project)?);
+        }
+        Command::CheckParity {
+            project,
+            contract,
+            reference,
+            candidate,
+            out,
+        } => {
+            parity::check(&project, &contract, &reference, &candidate, &out)?;
+            println!(
+                "Matched declared parity contract; scope and input hashes: {}",
+                out.display()
             );
         }
         Command::PlanSource { site, out } => {

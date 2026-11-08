@@ -9,6 +9,7 @@ pub mod export;
 pub mod flight;
 pub mod interpret;
 pub mod mirror;
+pub mod parity;
 pub mod project;
 pub mod recover;
 pub mod serve;

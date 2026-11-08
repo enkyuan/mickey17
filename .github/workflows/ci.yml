@@ -21,6 +21,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
+      - name: Validate benchmark scoring and coverage
+        run: |
+          bun install --cwd benchmarks --frozen-lockfile
+          bun run --cwd benchmarks check
+          bun test --cwd benchmarks
       - uses: browser-actions/setup-chrome@v2
         if: runner.os == 'macOS'
         id: chrome
