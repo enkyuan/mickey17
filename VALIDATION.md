@@ -65,3 +65,39 @@ The dependency audit reported no advisories for the locked dependencies.
 [CI](.github/workflows/ci.yml) runs checks on Linux and macOS. The
 [release workflow](.github/workflows/release.yml) builds Linux, macOS and Windows binaries;
 this document records local measurements, not a cross-platform performance claim.
+
+## Structural analysis development checks
+
+The reconstruction foundation was verified locally on Apple M1 with Rust 1.99.1:
+
+- The initial full run passed 32 regular tests and two explicitly executed Chromium tests.
+  After three additional tests were added, the scoped analysis, cache, and CLI run passed
+  all 15 tests. The final full-suite rerun passed all 35 regular tests with no failures;
+  its two browser tests were ignored and had been explicitly executed in the initial run.
+  Coverage includes
+  ETag/Last-Modified revalidation, query identities, content deduplication, corrupt-body
+  recovery, cache-control/redirect changes, concurrency limits, structural distinctions,
+  mixed-text ordering, namespaces, snapshot/report path checks, and the total-node budget.
+- The browser fixture produced one structural template from two product pages, captured
+  JavaScript-rendered text, reused validated assets on the second clone, and preserved
+  cache objects when the first clone was edited.
+- Formatting, Clippy with warnings denied, and the locked dependency audit passed.
+- An actual CLI fixture cloned two pages twice with zero resource failures, reused three
+  validated asset bodies, and successfully regenerated its analysis after the origin was stopped.
+
+A single synthetic offline run processed 200 snapshots containing 50,400 nodes and 10,000
+repeated card subtrees in **1.077 seconds**. This was a debug build and includes process
+startup, JSON parsing, hashing, grouping, and report I/O. The fixture has a body/main wrapper
+and 50 identical-structure, five-node cards per page; page content varies independently of
+structure. It yielded one template and a card candidate with 10,000 occurrences. This is
+an initial local observation, not a statistical benchmark or a crawl/source-generation speed claim.
+
+Build and replay captured snapshots with:
+
+```sh
+cargo build --locked
+time target/debug/mochi analyze <clone-captured-with-analyze>
+```
+
+These checks cover the development checkout. The published 0.2.0 package predates this feature;
+no new registry release or remote CI result is represented by these local observations.

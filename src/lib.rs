@@ -1,4 +1,6 @@
 //! Native website cloning and safe, hydration-aware editing.
+pub mod analysis;
+pub mod cache;
 pub mod crawl;
 pub mod edit;
 pub mod flight;

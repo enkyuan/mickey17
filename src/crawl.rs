@@ -1,4 +1,4 @@
-use crate::{edit, mirror, trackers};
+use crate::{analysis, edit, mirror, trackers};
 use anyhow::{Context, Result, ensure};
 use headless_chrome::{Browser, LaunchOptions};
 use regex::Regex;
@@ -6,7 +6,7 @@ use reqwest::blocking::Client;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeSet, VecDeque},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -70,6 +70,22 @@ pub struct Options {
     pub keep_trackers: bool,
     pub ignore_robots: bool,
 }
+
+pub struct PipelineOptions {
+    pub analyze: bool,
+    pub jobs: usize,
+    pub cache_dir: Option<PathBuf>,
+}
+
+impl Default for PipelineOptions {
+    fn default() -> Self {
+        Self {
+            analyze: false,
+            jobs: 4,
+            cache_dir: None,
+        }
+    }
+}
 pub fn page_key(mut u: Url, base: &Url) -> Option<Url> {
     if !matches!(u.scheme(), "http" | "https") || !mirror::same_site(&u, base) {
         return None;
@@ -116,7 +132,20 @@ pub fn page_key(mut u: Url, base: &Url) -> Option<Url> {
 }
 const EXTRACT: &str = r#"JSON.stringify({title:document.title,lang:document.documentElement.lang,canonical:document.querySelector('link[rel=canonical]')?.href||null,meta:Object.fromEntries([...document.querySelectorAll('meta')].map(m=>[m.name||m.getAttribute('property')||m.httpEquiv,m.content])),text:document.body?.innerText||'',headings:[...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(h=>({tag:h.tagName,text:h.innerText})),links:[...document.querySelectorAll('a[href]')].map(a=>({href:a.href,text:a.innerText})),images:[...document.images].map(i=>({src:i.currentSrc||i.src,alt:i.alt})),forms:[...document.forms].map(f=>({action:f.action,method:f.method,fields:[...f.elements].map(i=>({tag:i.tagName,type:i.type,name:i.name}))})),jsonld:[...document.querySelectorAll('script[type="application/ld+json"]')].map(s=>s.textContent)})"#;
 pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::MirrorReport> {
+    clone_with_options(start, out, options, &PipelineOptions::default())
+}
+
+pub fn clone_with_options(
+    start: &str,
+    out: &Path,
+    options: &Options,
+    pipeline: &PipelineOptions,
+) -> Result<mirror::MirrorReport> {
     ensure!(options.max_pages > 0, "max-pages must be positive");
+    ensure!(
+        (1..=16).contains(&pipeline.jobs),
+        "jobs must be between 1 and 16"
+    );
     let base = Url::parse(&if start.contains("://") {
         start.to_string()
     } else {
@@ -125,6 +154,10 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
     ensure!(
         matches!(base.scheme(), "http" | "https") && base.host_str().is_some(),
         "expected HTTP(S) URL"
+    );
+    ensure!(
+        !pipeline.analyze || base.as_str().len() <= 8192,
+        "analysis URL exceeds 8 KiB"
     );
     ensure!(
         !out.exists() || (out.is_dir() && out.read_dir()?.next().is_none()),
@@ -321,6 +354,27 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
                     }
                 }
             }
+            if pipeline.analyze {
+                let captured = tab
+                    .evaluate(analysis::CAPTURE_SCRIPT, false)?
+                    .value
+                    .context("missing DOM snapshot")?;
+                let raw = captured.as_str().context("invalid DOM snapshot")?;
+                ensure!(
+                    raw.len() as u64 <= analysis::MAX_SNAPSHOT_BYTES,
+                    "DOM snapshot exceeds 8 MiB"
+                );
+                let snapshot: analysis::Snapshot = serde_json::from_str(raw)?;
+                ensure!(snapshot.url.len() <= 8192, "snapshot URL exceeds 8 KiB");
+                ensure!(
+                    mirror::same_site(&Url::parse(&snapshot.url)?, &base),
+                    "snapshot redirected outside site"
+                );
+                let path = out
+                    .join("analysis/pages")
+                    .join(format!("page-{:05}.json", pages.len()));
+                crate::util::write(out, &path, raw.as_bytes())?;
+            }
             metadata
                 .push(json!({"url":u,"final_url":final_url,"status":status,"title":data["title"]}));
             pages.push(u.clone());
@@ -339,7 +393,16 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
         .map_err(|_| anyhow::anyhow!("capture lock poisoned"))?
         .clone();
     let site = out.join("site");
-    let report = mirror::mirror(&client, &pages, assets, &site)?;
+    let report = mirror::mirror_with_options(
+        &client,
+        &pages,
+        assets,
+        &site,
+        &mirror::DownloadOptions {
+            jobs: pipeline.jobs,
+            cache_dir: pipeline.cache_dir.clone(),
+        },
+    )?;
     edit::localize(&site, &base)?;
     if !options.keep_trackers {
         trackers::strip(&site)?;
@@ -347,12 +410,27 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
     std::fs::write(
         out.join("manifest.json"),
         serde_json::to_vec_pretty(
-            &json!({"source":base,"pages":metadata,"assets_fetched":report.assets_fetched,"failures":report.failures,"skipped":skipped,"external_hosts":*external.lock().map_err(|_|anyhow::anyhow!("capture lock poisoned"))?}),
+            &json!({"source":base,"pages":metadata,"assets_fetched":report.assets_fetched,"cache_revalidations":report.cache_revalidations,"failures":report.failures,"skipped":skipped,"external_hosts":*external.lock().map_err(|_|anyhow::anyhow!("capture lock poisoned"))?}),
         )?,
     )?;
     ensure!(
         report.saved_pages > 0,
         "no pages could be saved; see manifest.json"
     );
+    if pipeline.analyze {
+        let analysis = analysis::analyze(out)?;
+        let analyzed = analysis
+            .pages
+            .iter()
+            .filter(|page| page.status == "analyzed")
+            .count();
+        println!(
+            "Structural analysis: {}/{} pages, {} templates, {} component candidates (analysis/report.json)",
+            analyzed,
+            analysis.pages.len(),
+            analysis.templates.len(),
+            analysis.component_candidates.len()
+        );
+    }
     Ok(report)
 }

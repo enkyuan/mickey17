@@ -1256,6 +1256,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "mochi-web"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "criterion",
+ "dhat",
+ "headless_chrome",
+ "html-escape",
+ "http-body-util",
+ "percent-encoding",
+ "regex",
+ "reqwest",
+ "robotstxt",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tower-http",
+ "url",
+ "walkdir",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1335,32 +1362,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "mochi-web"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "criterion",
- "dhat",
- "headless_chrome",
- "html-escape",
- "http-body-util",
- "percent-encoding",
- "regex",
- "reqwest",
- "robotstxt",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
- "tower-http",
- "url",
- "walkdir",
-]
 
 [[package]]
 name = "pin-project-lite"
@@ -1930,6 +1931,17 @@ name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
