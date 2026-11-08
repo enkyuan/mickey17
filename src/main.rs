@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mochi::{crawl, edit, serve, trackers, util};
+use mochi::{analysis, crawl, edit, serve, trackers, util};
 use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
@@ -27,7 +27,18 @@ enum Command {
         keep_trackers: bool,
         #[arg(long)]
         ignore_robots: bool,
+        /// Capture rendered DOM and report structural reuse candidates.
+        #[arg(long)]
+        analyze: bool,
+        /// Concurrent asset downloads (1-16); page visits remain sequential.
+        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
+        jobs: u8,
+        /// Revalidate and reuse public asset bodies in this shared cache directory.
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
     },
+    /// Recompute structural analysis from a clone captured with --analyze, without network access.
+    Analyze { site: PathBuf },
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -62,6 +73,9 @@ fn main() -> Result<()> {
             extract,
             keep_trackers,
             ignore_robots,
+            analyze,
+            jobs,
+            cache_dir,
         } => {
             let out = out.unwrap_or_else(|| {
                 url::Url::parse(&if url.contains("://") {
@@ -76,7 +90,7 @@ fn main() -> Result<()> {
                 })
                 .unwrap_or_else(|| "clone".into())
             });
-            let report = crawl::clone_site(
+            let report = crawl::clone_with_options(
                 &url,
                 &out,
                 &crawl::Options {
@@ -85,6 +99,11 @@ fn main() -> Result<()> {
                     keep_trackers,
                     ignore_robots,
                 },
+                &crawl::PipelineOptions {
+                    analyze,
+                    jobs: jobs.into(),
+                    cache_dir,
+                },
             )?;
             println!(
                 "Saved {} pages and {} assets to {} ({} failures; see manifest.json)",
@@ -92,6 +111,15 @@ fn main() -> Result<()> {
                 report.assets_fetched,
                 out.display(),
                 report.failures.len()
+            );
+        }
+        Command::Analyze { site } => {
+            let report = analysis::analyze(&site)?;
+            println!(
+                "Analyzed {} nodes: {} templates, {} component candidates (analysis/report.json)",
+                report.nodes_analyzed,
+                report.templates.len(),
+                report.component_candidates.len()
             );
         }
         Command::Serve { site, port } => {

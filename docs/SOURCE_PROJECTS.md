@@ -1,6 +1,8 @@
 # Editable source projects
 
-Status: design proposal, not implemented. Research checked on 2026-11-07.
+Status: full source export remains a design proposal. Structural capture, subtree hashing,
+exact template clustering, bounded asset concurrency, and opt-in revalidated asset caching
+are implemented locally. Research checked on 2026-11-07.
 
 The intended output is an editable frontend project with reusable components and native
 framework routing. The existing Rust CLI captures deployed HTML and assets. Its Next.js
@@ -9,9 +11,17 @@ Flight editing and preview helpers do not reconstruct React source or run a Next
 ## Current behavior
 
 - `src/crawl.rs` discovers pages using Chromium, links, and sitemaps. `--extract` saves
-  metadata, text, and screenshots. It does not extract a component tree or design system.
+  metadata, text, and screenshots. `--analyze` captures rendered DOM and selected computed
+  styles. Neither option generates component source or a design system.
 - `src/mirror.rs` downloads server HTML and same-site referenced assets, including CSS
   and fonts. It preserves URL paths and can save Next.js RSC responses as `index.rsc`.
+- `src/analysis.rs` performs a bottom-up SHA-256 pass over normalized ordered subtrees.
+  Exact root fingerprints and viewport sizes define template clusters; each cluster has
+  a representative page. Repeated subtrees become ranked candidates with source references.
+  Content and asset URL differences are potential future props, not automatically inferred props.
+- `src/cache.rs` revalidates opt-in cached public asset bodies with the origin. Cache
+  objects use content hashes; URL identities preserve query variants. Bounded download
+  batches preserve deterministic output writes and existing collision reporting.
 - `src/edit.rs` rewrites captured text and URLs, including Flight payloads.
 - `src/serve.rs` serves the captured files with clean URLs and Next.js image/RSC handling.
 
@@ -20,6 +30,22 @@ dependency, Tailwind configuration, StyleX compiler, or token extraction. Styles
 as compiled CSS, inline styles, or original runtime behavior when their assets are captured.
 External font/CDN dependencies may remain remote. This is not verified compatibility with
 every framework or CSS engine.
+
+## AI-assisted interpretation
+
+The implemented structural analysis makes no model calls. It produces observations such
+as: an `article` subtree with a particular structure occurs on 40 pages, and these are its
+source nodes and captured styles. A future model could interpret representative examples
+as a `ProductCard`, propose `title`, `price`, and `image` props, and suggest boundaries between
+that component and its surrounding list. Those are proposals requiring validation.
+
+Interpretation should consume bounded candidate examples and shared template representatives,
+then return structured component/prop/behavior proposals with evidence references and unresolved
+questions. It should not regenerate every page independently or claim the original hooks,
+backend, or route definitions were recovered. Framework code generation and visual/interaction
+verification remain separate stages. No provider, paid model integration, approximate template
+matching, automatic source exporter, or adaptive crawl selection is implemented yet. Current
+clustering analyzes the pages already visited and does not reduce crawl coverage.
 
 ## Architecture for reconstruction
 

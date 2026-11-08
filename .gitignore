@@ -4,3 +4,6 @@
 # Generated website snapshots
 */site/
 */extract/
+# Generated structural evidence; source directories named analysis remain visible.
+**/analysis/pages/page-*.json
+**/analysis/report.json
