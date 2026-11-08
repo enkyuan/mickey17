@@ -1,5 +1,5 @@
 //! Deterministic Chromium smoke test. Requires Chrome and loopback networking.
-use mosha::{crawl, edit, serve};
+use mochi::{crawl, edit, serve};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires installed Chrome; run cargo test --test browser -- --ignored"]
 async fn clone_render_extract_edit_and_serve() {

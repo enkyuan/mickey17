@@ -30,7 +30,7 @@ async fn mirror_preserves_html_rsc_and_reports_asset_collisions() {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap();
-        let report = mosha::mirror::mirror(&client, &[base], BTreeSet::new(), &root).unwrap();
+        let report = mochi::mirror::mirror(&client, &[base], BTreeSet::new(), &root).unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join("index.html")).unwrap(),
             HTML
@@ -75,7 +75,7 @@ async fn page_alias_collision_keeps_first_page() {
             base.join("about").unwrap(),
             base.join("about/index.html").unwrap(),
         ];
-        let r = mosha::mirror::mirror(&client, &pages, BTreeSet::new(), &root).unwrap();
+        let r = mochi::mirror::mirror(&client, &pages, BTreeSet::new(), &root).unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join("about/index.html")).unwrap(),
             "first page"

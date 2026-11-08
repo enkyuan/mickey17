@@ -1,4 +1,4 @@
-use mosha::{edit, mirror, serve, util};
+use mochi::{edit, mirror, serve, util};
 use url::Url;
 
 #[test]
@@ -38,7 +38,7 @@ fn cli_replacement_preserves_json_escaping_and_text_row_lengths() {
     )
     .unwrap();
     let new = "A\"B\\C\n雪";
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_mosha"))
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_mochi"))
         .args([
             "replace",
             t.path().to_str().unwrap(),
@@ -90,7 +90,7 @@ fn interrupted_edit_keeps_original_file() {
             "-c",
             "ulimit -f 1; exec \"$1\" replace \"$2\" Acme Globex --exact-case",
             "sh",
-            env!("CARGO_BIN_EXE_mosha"),
+            env!("CARGO_BIN_EXE_mochi"),
             t.path().to_str().unwrap(),
         ])
         .output()
@@ -137,7 +137,7 @@ fn json_replacement_preserves_decoded_asset_paths_and_matches_html() {
     edit::replace(t.path(), &r).unwrap();
     let saved = std::fs::read_to_string(p).unwrap();
     assert!(saved.contains("src=\"/Acme/logo.png\" alt=\"Globex\""));
-    mosha::flight::edit_flight(&saved, &|row| {
+    mochi::flight::edit_flight(&saved, &|row| {
         let tree: serde_json::Value =
             serde_json::from_str(row.strip_prefix("0:").unwrap()).unwrap();
         assert_eq!(tree[3]["src"], "/Acme/logo.png");

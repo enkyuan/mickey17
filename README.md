@@ -1,4 +1,4 @@
-# Mosha
+# Mochi
 
 Clone a website's frontend with Chromium, then edit and serve the local copy. Written in Rust.
 
@@ -7,19 +7,50 @@ Clone a website's frontend with Chromium, then edit and serve the local copy. Wr
 Requires Rust 1.99.1 and Chrome or Chromium.
 
 ```sh
+cargo install mochi-web --locked
+# Or install a checkout:
 cargo install --path . --locked
 
-mosha clone https://example.com -o example
-mosha serve example
-mosha replace example 'Example' 'Demo'
-mosha rehost example https://example.com https://demo.example
-mosha strip-trackers example
+mochi clone https://example.com -o example
+mochi serve example
+mochi replace example 'Example' 'Demo'
+mochi rehost example https://example.com https://demo.example
+mochi strip-trackers example
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
 manifest for failed resources. `--extract` adds text, metadata and screenshots; `--max-pages`
 defaults to 200. Trackers and robots rules can be overridden with `--keep-trackers` and
-`--ignore-robots`. Set `MOSHA_CHROME` if browser discovery fails.
+`--ignore-robots`. Set `MOCHI_CHROME` if browser discovery fails.
+
+The crates.io package is `mochi-web`; the executable and Rust library are named `mochi`.
+
+## Output
+
+The current clone is a mirror of deployed files, with paths based on captured URLs:
+
+```text
+example/
+  manifest.json
+  site/
+    index.html
+    about/index.html
+    _next/static/...       # when present on a Next.js site
+    assets/...            # original asset paths vary by site
+  extract/                # only with --extract
+    page-00000.json
+    page-00000.txt
+    page-00000.png
+```
+
+It does not generate components, hooks, framework source routes, or a buildable frontend
+project. CSS and same-site fonts are copied as assets; there is no component-library,
+token, Tailwind, or StyleX source generator. External assets can still depend on their
+original hosts.
+
+[Editable source project design](docs/SOURCE_PROJECTS.md) describes the proposed reconstruction
+pipeline, framework-specific layouts, component primitives, fonts, and styling adapters.
+That pipeline is not implemented yet.
 
 ## Capabilities
 

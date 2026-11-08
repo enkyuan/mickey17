@@ -1,13 +1,20 @@
 [package]
-name = "mosha"
+name = "mochi-web"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 description = "Browser-rendered website mirroring and hydration-aware editing"
 license = "MIT"
-repository = "https://github.com/enkyuan/mosha"
+repository = "https://github.com/enkyuan/mochi"
 readme = "README.md"
 exclude = ["/.github/**", "/.gstack/**", "/.editorconfig"]
+
+[lib]
+name = "mochi"
+
+[[bin]]
+name = "mochi"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
