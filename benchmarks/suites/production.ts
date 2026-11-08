@@ -102,6 +102,33 @@ for (const site of sites) {
             [1440, 900],
             [1960, 1190],
         ] as [number, number][]) {
+            // Reference DOM observations: the Garden essay uses an article root;
+            // Microsoft's models title is h2, with an explicit unsplit text node.
+            const routeProbes = probes.map((probe) => {
+                if (
+                    site.name === "infinitegarden" &&
+                    route.startsWith("/articles/commercial-") &&
+                    probe.reference === "main"
+                )
+                    return {
+                        ...probe,
+                        reference: "article",
+                        candidate: "article",
+                    };
+                if (
+                    site.name === "microsoft-ai" &&
+                    route === "/models/" &&
+                    probe.reference === "h1"
+                )
+                    return {
+                        ...probe,
+                        reference:
+                            probe.property === "text"
+                                ? "main h2 [data-split-original]"
+                                : "main h2",
+                    };
+                return probe;
+            });
             for (const [phase, y] of [
                 ["initial", 0],
                 ["one-screen", viewport[1]],
@@ -116,7 +143,7 @@ for (const site of sites) {
                     viewport,
                     reducedMotion: false,
                     actions: y ? [{ kind: "scroll", y }] : [],
-                    probes,
+                    probes: routeProbes,
                 });
             suite.cases.push({
                 id: `route-${index}.${viewport[0]}.reduced`,
@@ -124,7 +151,7 @@ for (const site of sites) {
                 viewport,
                 reducedMotion: true,
                 actions: [],
-                probes,
+                probes: routeProbes,
             });
         }
     await writeFile(

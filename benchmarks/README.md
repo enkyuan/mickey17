@@ -153,3 +153,10 @@ cases retain all their required probes in the denominator. Numbers measure only
 the named corpus and case distribution. Calibration fixtures are not production
 sites; repeated measurements are not independent sites and do not justify a
 population-level confidence interval or a promise about arbitrary websites.
+
+The production templates map the Garden essay’s `article` to the candidate’s
+`article`, and the Microsoft models page’s `h2` to the candidate’s `h1`. Its title
+text uses the source’s explicit `data-split-original` node to avoid counting its
+visual animation duplicate twice. Selector absence still fails; these mappings
+were derived from the captured DOM, not adjusted to improve a score. Whole-page
+`text` probes retain DOM/screen-reader duplication and are raw text comparisons.
