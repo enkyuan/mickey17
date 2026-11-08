@@ -20,6 +20,11 @@ mochi strip-trackers example
 # Development checkout installed with --path . (not registry 0.2.0):
 mochi clone https://example.com -o example-analyzed --analyze --jobs 4 --cache-dir ../mochi-cache
 mochi analyze example-analyzed
+
+# Richer evidence for the source-export pipeline (development checkout):
+mochi clone https://example.com -o example-source --source-evidence --max-pages 20
+mochi check-evidence example-source
+mochi model-project example-source
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
@@ -48,6 +53,12 @@ example/
   analysis/               # only with --analyze
     pages/page-00000.json # rendered DOM and selected computed styles
     report.json           # templates and repeated-subtree candidates
+  reconstruction/         # only with --source-evidence
+    manifests/page-00000.json
+    pages/page-00000-375x812.json
+    screens/page-00000-375x812.png
+    report.json           # offline validation and completeness summary
+    project.json          # offline model, after model-project
 ```
 
 It does not generate components, hooks, framework source routes, or a buildable frontend
@@ -90,6 +101,60 @@ validation with ETag or Last-Modified; there is no offline/stale fallback. The c
 redirected responses, `private`, `no-store`, `Vary`, and `Set-Cookie` responses, and verifies
 cached body hashes before use. `manifest.json` records successful cache revalidations.
 Pages and RSC responses are fetched normally. The cache has no automatic disk eviction yet.
+
+## Source evidence
+
+`clone --source-evidence` saves a separate source-evidence schema. It preserves ordered
+element/text nodes without shortening text, namespaced attributes, live control values,
+metadata, interned computed styles/custom properties, readable CSSOM rules, font-face
+descriptors, active `::before`/`::after` styles, resource observations, and viewport PNGs.
+It captures the initial state at 375x812, 768x1024, and 1440x900; override with, for example,
+`--source-viewports 375x812,1440x900`. Sizes are CSS pixels with device scale 1; this changes
+viewport dimensions, not the browser's user agent or touch mode. The observed color scheme
+is recorded; themes and controls are not automatically toggled. Fonts get a bounded readiness
+wait. Screenshots are references, not proof that an application was reconstructed.
+
+`check-evidence <clone>` runs offline, validates the expected captures against per-page
+viewport manifests and the clone inventory, verifies screenshot hashes and dimensions,
+and refreshes `reconstruction/report.json` atomically. Missing/changed files or invalid
+graphs fail validation without replacing the previous report. Inspectable incomplete
+captures are reported, and the command exits unsuccessfully until every expected capture
+is complete within its declared initial light-DOM/CSSOM scope. Files are created without
+overwriting existing captures. Old `--analyze` snapshots do not count as source evidence;
+the library exposes an explicitly lossy projection from complete source captures to the
+existing analysis schema.
+
+Limits per capture: 16 MiB JSON, 20,000 nodes (including text), 4,096 computed style records,
+256 levels, 128 stylesheets, 20,000 CSS rules, 10,000 resource observations, and 1 MiB per
+text/attribute/CSS value. There are 1–8 distinct viewports, each dimension 200–4096 pixels;
+`max-pages × viewports` must be at most 1,000. Offline inspection caps total nodes at 250,000.
+Screenshots are bounded at 64 MiB each. A limit marks evidence incomplete or rejects the
+capture rather than silently clipping content and claiming completeness.
+
+Blocked/unloaded stylesheets, missing images/fonts, open shadow roots, embedded frame/canvas/video
+content, and omitted sensitive control values are reported as issues. Closed shadow roots,
+other interaction states, animation timelines, and arbitrary-site fidelity are outside this
+capture scope. Font declarations and resource observations do not verify font binary metadata,
+licensing, or availability of every remote asset. Query variants remain distinct in source
+capture; the mirror retains its existing file-path collision reporting.
+
+`model-project <clone>` derives `reconstruction/project.json` offline from complete evidence.
+It preserves literal URLs/queries and full observations, pools styles by exact content hash,
+finds structural component candidates, extracts varying text/attribute/control props, and
+records viewport style variants. Shared shells require identical siblings around one `<main>`
+across at least two routes. Component selections cannot overlap. Repeated viewports alone
+cannot establish reuse. Unselected nodes remain in the model as evidence.
+
+The asset registry records local candidate file hashes under `site/`, external/unresolved
+resources, and original runtime observations. Query-bearing asset URLs remain ambiguous
+because mirror paths omit queries. Candidate hashes verify the local bytes, not their origin.
+The model has a 64 MiB aggregate source JSON budget, 128 MiB output budget, 256 MiB aggregate
+local asset budget, and at most 256 selected component candidates. Failed validation or an
+input changing during a rebuild preserves the previous model. See [the model contract](docs/PROJECT_MODEL.md).
+
+These are capture, validation, and modeling features for the development checkout. The source
+exporter, semantic token naming, Base UI generation, and Jev interpretation remain future
+steps; capture, inspection, analysis, and model building make no AI calls.
 
 ## Capabilities
 

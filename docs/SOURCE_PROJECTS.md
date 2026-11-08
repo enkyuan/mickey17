@@ -4,6 +4,21 @@ Status: full source export remains a design proposal. Structural capture, subtre
 exact template clustering, bounded asset concurrency, and opt-in revalidated asset caching
 are implemented locally. Research checked on 2026-11-07.
 
+The development checkout also implements bounded initial-state source evidence via
+`clone --source-evidence` and offline `check-evidence`: full ordered text, CSSOM rules,
+computed styles, font declarations, viewport screenshots, and explicit completeness issues.
+This is the first capture contract, not an editable source exporter or verified visual parity.
+
+`model-project <clone>` now adds a deterministic [project model](PROJECT_MODEL.md): literal
+routes, full observations, exact style pooling, structural candidates with prop bindings,
+shared-shell candidates, navigation references, and an asset registry. This remains data;
+it does not emit framework files or recover application behavior.
+
+The [source-exporter decision map](designs/SOURCE_EXPORTER.md) records the proposed next
+milestone, including TypeSafe Jev's bounded interpretation role, model-independent code
+generation, adapter choices, and acceptance checks. The exporter and Jev integration remain
+planned; the mechanical project-model stage is implemented locally.
+
 The intended output is an editable frontend project with reusable components and native
 framework routing. The existing Rust CLI captures deployed HTML and assets. Its Next.js
 Flight editing and preview helpers do not reconstruct React source or run a Next.js server.
@@ -19,6 +34,10 @@ Flight editing and preview helpers do not reconstruct React source or run a Next
   Exact root fingerprints and viewport sizes define template clusters; each cluster has
   a representative page. Repeated subtrees become ranked candidates with source references.
   Content and asset URL differences are potential future props, not automatically inferred props.
+- `src/evidence.rs` validates the richer source schema, expected viewport manifests, and
+  screenshot integrity. It rejects incomplete input for legacy projection and future export.
+  `src/source_capture.js` preserves full text and readable CSS while recording unsupported
+  content and capture limits; it observes initial states without interacting with controls.
 - `src/cache.rs` revalidates opt-in cached public asset bodies with the origin. Cache
   objects use content hashes; URL identities preserve query variants. Bounded download
   batches preserve deterministic output writes and existing collision reporting.

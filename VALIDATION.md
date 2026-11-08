@@ -101,3 +101,66 @@ time target/debug/mochi analyze <clone-captured-with-analyze>
 
 These checks cover the development checkout. The published 0.2.0 package predates this feature;
 no new registry release or remote CI result is represented by these local observations.
+
+## Source evidence development checks
+
+The initial-state source-evidence contract was verified locally on Apple M1 with Rust
+1.99.1 and installed Google Chrome:
+
+- `cargo test --locked`: 40 non-browser tests and one doctest passed. Four browser tests
+  are ignored by that command and were executed separately.
+- `cargo test --locked --test browser --test evidence --test source_browser -- --include-ignored`:
+  all four real Chrome tests and five source-evidence boundary tests passed. The existing
+  clone/edit/serve and shared-cache browser fixtures still pass.
+- The rich fixture preserves text beyond the analysis snippet limit, mixed text order,
+  Unicode, SVG attribute namespaces, live input/textarea/checkbox states, custom properties,
+  media/supports rules, pseudo-elements, and font-face descriptors. Two query URLs were
+  captured at 375x812 and 1440x900; computed font sizes changed at the CSS breakpoint and
+  all four PNG hashes/dimensions were checked. An actual CLI invocation captured and
+  validated a separate one-viewport clone.
+- Small configured node/depth/style/rule/value/byte budgets produce explicit incomplete
+  captures. Cross-origin CSSOM access, HTTP 404 CSS, shadow content, and nonempty password
+  values are not silently treated as complete evidence. Password values were omitted.
+- Invalid graphs/metadata, missing snapshots, unlisted partial snapshots, mismatched
+  inventory, changed screenshot bytes, oversized inputs, and symlinked files are rejected.
+  Failed inspection preserves the previous complete report; offline validation fails for
+  recorded incomplete captures. Repeating capture cannot overwrite prior files.
+- Formatting, Clippy with warnings denied, workflow linting, and documentation link checks
+  passed. CI is configured to execute both browser test files on its existing platforms;
+  these notes record local execution, not a new hosted-CI result.
+
+The source schema describes observed initial light-DOM/CSSOM states. It does not establish
+unobserved interactions, complete theme coverage, font binary metadata, arbitrary-site
+fidelity, a working exported application, or live Jev behavior. No source exporter/model
+integration was exercised, and no registry release was published by these checks.
+
+## Project model development checks
+
+The deterministic project-model stage was verified locally on 2026-11-08 with the same
+Rust/Chrome environment. `cargo test --locked` passed 45 non-browser tests and one doctest;
+the separate ignored-browser run passed all four Chrome tests.
+
+- Five model tests cover literal query routes, exact shared shells, shared style lookup,
+  local font/image references, ambiguity of query-bearing mirror paths, external assets,
+  original runtime observations, and exact content reconstruction from prototype plus props.
+  Checks enforce non-overlapping selections. Prop text includes
+  Unicode strings longer than the old analysis snippet limit.
+- Rebuilding frozen evidence produces identical JSON bytes, including via the actual
+  `model-project` CLI. Local candidate asset changes alter the input fingerprint. A component
+  moving between viewport positions cannot establish reuse by itself; incompatible semantic
+  attribute values prevent alignment.
+- Invalid source identities/style/component/layout/navigation references and changed embedded
+  content fail model validation. Incomplete captures, corrupt PNGs, oversized local assets,
+  and symlinked asset/output paths fail rebuilding without replacing the prior model.
+- The real two-route/two-viewport Chromium fixture also builds and validates the model,
+  preserves the 12px/20px style variants and query states, resolves `site/style.css` as a local
+  candidate, and produces identical output on rerun. Existing clone/edit/serve/cache fixtures
+  remain green. This establishes fixture behavior, not arbitrary-site export fidelity.
+
+Formatting, Clippy with warnings denied, workflow linting, local documentation links and
+`git diff --check` also passed. Final asset-reference validation changes were rechecked
+with all five model tests, Clippy and formatting after the full regression run.
+
+Source emission, framework builds, semantic token naming, Base UI control reconstruction,
+and Jev calls are still unimplemented. These checks are local; no new package publication,
+GitHub release, or hosted CI result is implied.

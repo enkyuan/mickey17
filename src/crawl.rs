@@ -1,4 +1,4 @@
-use crate::{analysis, edit, mirror, trackers};
+use crate::{analysis, edit, evidence, mirror, trackers};
 use anyhow::{Context, Result, ensure};
 use headless_chrome::{Browser, LaunchOptions};
 use regex::Regex;
@@ -141,7 +141,44 @@ pub fn clone_with_options(
     options: &Options,
     pipeline: &PipelineOptions,
 ) -> Result<mirror::MirrorReport> {
+    clone_internal(start, out, options, pipeline, None)
+}
+
+/// Add richer source evidence without changing existing clone option structs.
+pub fn clone_with_evidence(
+    start: &str,
+    out: &Path,
+    options: &Options,
+    pipeline: &PipelineOptions,
+    source: &evidence::CaptureOptions,
+) -> Result<mirror::MirrorReport> {
+    clone_internal(start, out, options, pipeline, Some(source))
+}
+
+fn discovered_page(u: Url, base: &Url, source: bool) -> Option<Url> {
+    let query = u.query().map(str::to_owned);
+    let mut page = page_key(u, base)?;
+    if source {
+        page.set_query(query.as_deref());
+    }
+    Some(page)
+}
+
+fn clone_internal(
+    start: &str,
+    out: &Path,
+    options: &Options,
+    pipeline: &PipelineOptions,
+    source: Option<&evidence::CaptureOptions>,
+) -> Result<mirror::MirrorReport> {
     ensure!(options.max_pages > 0, "max-pages must be positive");
+    if let Some(source) = source {
+        source.validate()?;
+        ensure!(
+            options.max_pages <= 1000 / source.viewports.len(),
+            "source capture exceeds 1000 snapshot budget; reduce max-pages or viewports"
+        );
+    }
     ensure!(
         (1..=16).contains(&pipeline.jobs),
         "jobs must be between 1 and 16"
@@ -156,7 +193,7 @@ pub fn clone_with_options(
         "expected HTTP(S) URL"
     );
     ensure!(
-        !pipeline.analyze || base.as_str().len() <= 8192,
+        !(pipeline.analyze || source.is_some()) || base.as_str().len() <= 8192,
         "analysis URL exceeds 8 KiB"
     );
     ensure!(
@@ -200,7 +237,8 @@ pub fn clone_with_options(
         }
         _ => anyhow::bail!("robots.txt unavailable; retry or use --ignore-robots"),
     };
-    let first = page_key(base.clone(), &base).context("start URL is not a page")?;
+    let first = discovered_page(base.clone(), &base, source.is_some())
+        .context("start URL is not a page")?;
     let mut queue = VecDeque::from([first.clone()]);
     let mut seen = BTreeSet::from([first]);
     let loc = Regex::new(r"<loc>\s*(.*?)\s*</loc>")?;
@@ -221,7 +259,7 @@ pub fn clone_with_options(
         {
             for cap in loc.captures_iter(&String::from_utf8_lossy(&bytes)) {
                 if let Ok(u) = base.join(&html_escape::decode_html_entities(&cap[1]))
-                    && let Some(u) = page_key(u, &base)
+                    && let Some(u) = discovered_page(u, &base, source.is_some())
                     && seen.len() < 100_000
                     && seen.insert(u.clone())
                 {
@@ -263,6 +301,7 @@ pub fn clone_with_options(
     let mut pages = Vec::new();
     let mut metadata = Vec::new();
     let mut skipped = Vec::new();
+    let mut capture_number = 0;
     while let Some(u) = queue.pop_front() {
         if pages.len() >= options.max_pages {
             break;
@@ -278,6 +317,8 @@ pub fn clone_with_options(
             continue;
         }
         println!("  [{}] {u}", pages.len() + 1);
+        let evidence_number = capture_number;
+        capture_number += 1;
         let result = (|| -> Result<()> {
             navigate_dom(&tab, &u)?;
             let status = tab
@@ -346,7 +387,7 @@ pub fn clone_with_options(
                 for link in links {
                     if let Some(href) = link["href"].as_str()
                         && let Ok(v) = Url::parse(href)
-                        && let Some(v) = page_key(v, &base)
+                        && let Some(v) = discovered_page(v, &base, source.is_some())
                         && seen.len() < 100_000
                         && seen.insert(v.clone())
                     {
@@ -375,8 +416,13 @@ pub fn clone_with_options(
                     .join(format!("page-{:05}.json", pages.len()));
                 crate::util::write(out, &path, raw.as_bytes())?;
             }
+            let source_paths = if let Some(source) = source {
+                evidence::capture_page(&tab, out, evidence_number, source, &base)?
+            } else {
+                Vec::new()
+            };
             metadata
-                .push(json!({"url":u,"final_url":final_url,"status":status,"title":data["title"]}));
+                .push(json!({"url":u,"final_url":final_url,"status":status,"title":data["title"],"source_evidence":source_paths}));
             pages.push(u.clone());
             Ok(())
         })();
@@ -430,6 +476,14 @@ pub fn clone_with_options(
             analysis.pages.len(),
             analysis.templates.len(),
             analysis.component_candidates.len()
+        );
+    }
+    if source.is_some() {
+        let evidence = evidence::inspect(out)?;
+        println!(
+            "Source evidence: {}/{} captures complete within the recorded initial light-DOM/CSSOM scope (reconstruction/report.json)",
+            evidence.complete,
+            evidence.captures.len()
         );
     }
     Ok(report)

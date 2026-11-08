@@ -45,7 +45,7 @@ jobs:
           # Cold hosted runners can render the document near the old 20s cutoff.
           timeout --kill-after=5s 60s "$MOCHI_CHROME" --headless --disable-gpu \
             --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
-      - run: cargo test --locked --test browser -- --ignored
+      - run: cargo test --locked --test browser --test source_browser -- --ignored
       - run: cargo run --locked --release --example heap_profile
   audit:
     runs-on: ubuntu-latest

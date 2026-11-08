@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mochi::{analysis, crawl, edit, serve, trackers, util};
+use mochi::{analysis, crawl, edit, evidence, project, serve, trackers, util};
 use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
@@ -36,9 +36,19 @@ enum Command {
         /// Revalidate and reuse public asset bodies in this shared cache directory.
         #[arg(long)]
         cache_dir: Option<PathBuf>,
+        /// Preserve richer text, CSS, fonts, and viewport screenshots for future source export.
+        #[arg(long)]
+        source_evidence: bool,
+        /// Explicit source capture sizes; defaults to 375x812,768x1024,1440x900.
+        #[arg(long, value_delimiter = ',', requires = "source_evidence")]
+        source_viewports: Vec<evidence::Viewport>,
     },
     /// Recompute structural analysis from a clone captured with --analyze, without network access.
     Analyze { site: PathBuf },
+    /// Validate saved source evidence and screenshot integrity offline; fail if incomplete.
+    CheckEvidence { site: PathBuf },
+    /// Derive an offline source model from complete evidence; does not emit an app.
+    ModelProject { site: PathBuf },
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -76,6 +86,8 @@ fn main() -> Result<()> {
             analyze,
             jobs,
             cache_dir,
+            source_evidence,
+            source_viewports,
         } => {
             let out = out.unwrap_or_else(|| {
                 url::Url::parse(&if url.contains("://") {
@@ -90,21 +102,29 @@ fn main() -> Result<()> {
                 })
                 .unwrap_or_else(|| "clone".into())
             });
-            let report = crawl::clone_with_options(
-                &url,
-                &out,
-                &crawl::Options {
-                    max_pages,
-                    extract,
-                    keep_trackers,
-                    ignore_robots,
-                },
-                &crawl::PipelineOptions {
-                    analyze,
-                    jobs: jobs.into(),
-                    cache_dir,
-                },
-            )?;
+            let options = crawl::Options {
+                max_pages,
+                extract,
+                keep_trackers,
+                ignore_robots,
+            };
+            let pipeline = crawl::PipelineOptions {
+                analyze,
+                jobs: jobs.into(),
+                cache_dir,
+            };
+            let report = if source_evidence {
+                let source = if source_viewports.is_empty() {
+                    evidence::CaptureOptions::default()
+                } else {
+                    evidence::CaptureOptions {
+                        viewports: source_viewports,
+                    }
+                };
+                crawl::clone_with_evidence(&url, &out, &options, &pipeline, &source)?
+            } else {
+                crawl::clone_with_options(&url, &out, &options, &pipeline)?
+            };
             println!(
                 "Saved {} pages and {} assets to {} ({} failures; see manifest.json)",
                 report.saved_pages,
@@ -120,6 +140,28 @@ fn main() -> Result<()> {
                 report.nodes_analyzed,
                 report.templates.len(),
                 report.component_candidates.len()
+            );
+        }
+        Command::CheckEvidence { site } => {
+            let report = evidence::inspect(&site)?;
+            println!(
+                "Source evidence: {}/{} captures complete (reconstruction/report.json)",
+                report.complete,
+                report.captures.len()
+            );
+            anyhow::ensure!(
+                report.complete == report.captures.len(),
+                "source evidence is incomplete; inspect reconstruction/report.json"
+            );
+        }
+        Command::ModelProject { site } => {
+            let project = project::build(&site)?;
+            println!(
+                "Modeled {} literal routes, {} observations, {} component candidates, {} shared shells (reconstruction/project.json)",
+                project.routes.len(),
+                project.observations.len(),
+                project.components.len(),
+                project.layouts.len()
             );
         }
         Command::Serve { site, port } => {
