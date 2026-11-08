@@ -1,4 +1,5 @@
 /target/
+/.mochi/
 /dhat-heap.json
 *.trace
 # Generated website snapshots

@@ -18,6 +18,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
       - uses: browser-actions/setup-chrome@v2
         if: runner.os == 'macOS'
         id: chrome
@@ -45,7 +48,7 @@ jobs:
           # Cold hosted runners can render the document near the old 20s cutoff.
           timeout --kill-after=5s 60s "$MOCHI_CHROME" --headless --disable-gpu \
             --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
-      - run: cargo test --locked --test browser --test source_browser -- --ignored
+      - run: cargo test --locked --test browser --test source_browser --test export_browser --test recover_browser --test authored_browser -- --ignored
       - run: cargo run --locked --release --example heap_profile
   audit:
     runs-on: ubuntu-latest

@@ -19,5 +19,6 @@ jobs:
         with:
           name: mochi-${{ runner.os }}
           path: |
-            target/release/mochi
-            target/release/mochi.exe
+            .mochi/target/release/mochi
+            .mochi/target/release/mochi.exe
+          include-hidden-files: true

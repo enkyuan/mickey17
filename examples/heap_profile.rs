@@ -14,7 +14,10 @@ fn workload() {
 }
 fn main() {
     let record = std::env::args().any(|a| a == "--record");
-    let builder = dhat::Profiler::builder().file_name("target/dhat-heap.json");
+    if record {
+        std::fs::create_dir_all(".mochi").expect("create artifact directory");
+    }
+    let builder = dhat::Profiler::builder().file_name(".mochi/dhat-heap.json");
     let _profiler = if record {
         builder.build()
     } else {

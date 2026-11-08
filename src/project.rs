@@ -209,7 +209,15 @@ fn tree(observation: &Observation) -> Result<Tree> {
                     })
                     .collect();
                 attrs.sort();
-                shape[i] = hash(&(tag, namespace, attrs, control.is_some(), child_shape))?;
+                shape[i] = hash(&(
+                    tag,
+                    namespace,
+                    attrs,
+                    control.is_some(),
+                    child_shape,
+                    capture.surfaces.get(&i),
+                    capture.animation_states.get(&i),
+                ))?;
                 let pseudos: BTreeMap<_, _> = pseudo
                     .iter()
                     .map(|(k, &v)| (k, &observation.style_ids[v]))
@@ -222,6 +230,8 @@ fn tree(observation: &Observation) -> Result<Tree> {
                     pseudos,
                     control,
                     child_exact,
+                    capture.surfaces.get(&i),
+                    capture.animation_states.get(&i),
                 ))?;
             }
         }
@@ -691,6 +701,28 @@ impl Write for BoundedWriter {
 /// Build and atomically save `reconstruction/project.json`, without network or AI calls.
 /// Incomplete or changed evidence leaves any previous project untouched.
 pub fn build(root: &Path) -> Result<Project> {
+    let project = derive(root)?;
+    let root = root.canonicalize()?;
+    let path = util::checked_path(&root, &root.join("reconstruction/project.json"))?;
+    let mut writer = BoundedWriter {
+        bytes: Vec::new(),
+        limit: OUTPUT_BYTES,
+    };
+    serde_json::to_writer(&mut writer, &project)?;
+    if path.exists() {
+        util::atomic_replace(&path, &writer.bytes)?;
+    } else {
+        let mut file =
+            tempfile::NamedTempFile::new_in(path.parent().context("project parent missing")?)?;
+        file.write_all(&writer.bytes)?;
+        file.as_file().sync_all()?;
+        file.persist_noclobber(&path)?;
+    }
+    Ok(project)
+}
+
+/// Derive and verify a project without modifying source captures or saved reports.
+pub fn derive(root: &Path) -> Result<Project> {
     let root = root.canonicalize()?;
     let inventory = evidence::inventory(&root)?;
     ensure!(
@@ -769,21 +801,6 @@ pub fn build(root: &Path) -> Result<Project> {
         hash(&collect_assets(&root, &project.observations)?)? == hash(&project.assets)?,
         "local assets changed while building project"
     );
-    let path = util::checked_path(&root, &root.join("reconstruction/project.json"))?;
-    let mut writer = BoundedWriter {
-        bytes: Vec::new(),
-        limit: OUTPUT_BYTES,
-    };
-    serde_json::to_writer(&mut writer, &project)?;
-    if path.exists() {
-        util::atomic_replace(&path, &writer.bytes)?;
-    } else {
-        let mut file =
-            tempfile::NamedTempFile::new_in(path.parent().context("project parent missing")?)?;
-        file.write_all(&writer.bytes)?;
-        file.as_file().sync_all()?;
-        file.persist_noclobber(&path)?;
-    }
     Ok(project)
 }
 

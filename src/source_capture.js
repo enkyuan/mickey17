@@ -1,6 +1,8 @@
 async (limits) => {
-  const nodes = [], styles = [], sheets = [], fonts = [], resources = [], issues = [];
-  const styleIds = new Map(), seenSheets = new Set();
+  window.__mochiCapturedNodes=[];
+  const nodes = [], styles = [], sheets = [], fonts = [], resources = [], issues = [], surfaces = {}, animation_states = {};
+  const styleIds = new Map(), seenSheets = new Set(), strings = [], stringIds = new Map();
+  const internString = value => { if(stringIds.has(value)) return stringIds.get(value); const id=strings.length; if(!charge(value)) return null; strings.push(value); stringIds.set(value,id); return id; };
   const encoder = new TextEncoder();
   let bytes = 1024, ruleCount = 0, rootRuleCount = 0;
   const issue = (code, detail, node = null) => {
@@ -25,6 +27,24 @@ async (limits) => {
   } finally { clearTimeout(timer); }
   if (document.fonts.status !== 'loaded') issue('fonts_pending', 'Font readiness deadline exceeded');
 
+  const imageLoads=[...document.images].map(image=>{
+    const previous=image.getAttribute('loading');image.loading='eager';
+    const done=image.decode().catch(()=>{}).finally(()=>{if(previous===null)image.removeAttribute('loading');else image.setAttribute('loading',previous)});
+    return done;
+  });
+  await Promise.race([Promise.all(imageLoads),new Promise(resolve=>setTimeout(resolve,5000))]);
+  const animationDeadline=performance.now()+8000;
+  for(let pass=0;pass<6 && performance.now()<animationDeadline;pass++) {
+    const finite=document.getAnimations().filter(animation=>{
+      const timing=animation.effect?.getComputedTiming();
+      return ['running','pending'].includes(animation.playState) && timing && Number.isFinite(timing.endTime) && timing.endTime<=10000;
+    });
+    if(!finite.length)break;
+    let timeout;
+    try{await Promise.race([Promise.all(finite.map(animation=>animation.finished.catch(()=>{}))),new Promise(resolve=>{timeout=setTimeout(resolve,Math.max(0,animationDeadline-performance.now()))})])}
+    finally{clearTimeout(timeout)}
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  }
   const metadata = {title: document.title, base_url: document.baseURI,
     lang: document.documentElement?.lang || '', doctype: document.doctype?.name || null,
     canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') || null,
@@ -50,16 +70,26 @@ async (limits) => {
     const key = JSON.stringify(style);
     if (styleIds.has(key)) return styleIds.get(key);
     if (styles.length >= limits.styles) { issue('style_limit', 'Distinct style budget reached'); return null; }
-    if (!charge(style)) return null;
+    const map = [];
+    for(const [name,value] of Object.entries(style)) {const k=internString(name),v=internString(value);if(k===null||v===null)return null;map.push([k,v]);}
+    if (!charge(map)) return null;
     const index = styles.length;
-    styles.push(style); styleIds.set(key, index);
+    styles.push(map); styleIds.set(key, index);
     return index;
   };
+  const scopedCss = root => {
+    const result=[];
+    for(const sheet of [...(root.styleSheets || []),...(root.adoptedStyleSheets || [])]) {
+      try { for(const rule of sheet.cssRules) {if(!bounded(rule.cssText))continue;result.push(rule.cssText);} }
+      catch {issue('stylesheet_unavailable','Scoped stylesheet cannot be read');}
+    }
+    return result;
+  };
   const omit = new Set(['script', 'style', 'noscript', 'template', 'meta', 'link']);
-  const stack = document.documentElement ? [[document.documentElement, null, 0]] : [];
+  const stack = document.documentElement ? [[document.documentElement, null, 0, 0, 0, false]] : [];
   if (!stack.length) issue('missing_document', 'Document has no root element');
   while (stack.length) {
-    const [node, parent, depth] = stack.pop();
+    const [node, parent, depth, offsetX, offsetY, scopedChild] = stack.pop();
     if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE) continue;
     if (node.nodeType === Node.ELEMENT_NODE && omit.has(node.localName.toLowerCase())) continue;
     if (nodes.length >= limits.nodes) { issue('node_limit', 'Node budget reached'); break; }
@@ -105,22 +135,52 @@ async (limits) => {
       }
       record = {parent, kind: 'element', tag: node.localName, namespace: node.namespaceURI || '',
         attributes, style, pseudo, control,
-        bounds: {x: rect.x, y: rect.y, width: rect.width, height: rect.height}};
-      if (node.shadowRoot) issue('shadow_document', 'Open shadow root contents are not captured', nodes.length);
-      if (['iframe', 'frame', 'canvas', 'video'].includes(node.localName))
-        issue('embedded_content', `${node.localName} internals are not captured`, nodes.length);
+        bounds: {x: rect.x+offsetX, y: rect.y+offsetY, width: rect.width, height: rect.height}};
+      const animated={};
+      for(const animation of node.getAnimations?.()||[]) {
+        if('animationName' in animation || 'transitionProperty' in animation || animation.effect?.target!==node || animation.effect?.pseudoElement) continue;
+        for(const frame of animation.effect.getKeyframes()) for(const key of Object.keys(frame)) {
+          if(['offset','computedOffset','easing','composite'].includes(key))continue;
+          const property=key.replace(/[A-Z]/g,c=>'-'+c.toLowerCase());
+          const value=getComputedStyle(node).getPropertyValue(property);
+          if(value && bounded(value))animated[property]=value;
+        }
+      }
+      if(Object.keys(animated).length && charge(animated))animation_states[nodes.length]=animated;
+      const shadow = node.shadowRoot || window.__mochiShadowRoots?.get(node);
+      if (shadow) {
+        const css=scopedCss(shadow);
+        surfaces[nodes.length]={kind:'shadow',mode:shadow.mode,css,base_url:node.baseURI,children:[],image:null,bounds:record.bounds};
+      }
+      if (['iframe','frame','canvas','video'].includes(node.localName)) {
+        const hidden = getComputedStyle(node).display==='none' || (!rect.width && !rect.height);
+        let child=null;
+        if(['iframe','frame'].includes(node.localName)) {try{child=node.contentDocument;}catch{}}
+        const computed=getComputedStyle(node);
+        const left=(parseFloat(computed.borderLeftWidth)||0)+(parseFloat(computed.paddingLeft)||0),top=(parseFloat(computed.borderTopWidth)||0)+(parseFloat(computed.paddingTop)||0);
+        const right=(parseFloat(computed.borderRightWidth)||0)+(parseFloat(computed.paddingRight)||0),bottom=(parseFloat(computed.borderBottomWidth)||0)+(parseFloat(computed.paddingBottom)||0);
+        surfaces[nodes.length]={kind:hidden?'nonvisual':child?.documentElement?'frame':'raster',mode:'open',css:child?scopedCss(child):[],base_url:/^https?:/.test(child?.baseURI||'')?child.baseURI:node.baseURI,children:[],image:null,
+          bounds:{x:rect.x+offsetX+left,y:rect.y+offsetY+top,width:Math.max(0,rect.width-left-right),height:Math.max(0,rect.height-top-bottom)}};
+      }
     }
     if (!charge(record)) break;
-    const index = nodes.length; nodes.push(record);
-    if (node.nodeType === Node.ELEMENT_NODE)
-      for (let i = node.childNodes.length - 1; i >= 0; i--) stack.push([node.childNodes[i], index, depth + 1]);
+    const index = nodes.length; nodes.push(record); window.__mochiCapturedNodes[index]=node;
+    if(scopedChild && surfaces[parent]) surfaces[parent].children.push(index);
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const surface=surfaces[index];
+      if(surface && !charge(surface)) break;
+      const shadow=node.shadowRoot || window.__mochiShadowRoots?.get(node);
+      let frame=null; if(surface?.kind==='frame') {try{frame=node.contentDocument.documentElement;}catch{}}
+      const children=shadow?[...[...node.childNodes].map(n=>[n,false]),...[...shadow.childNodes].map(n=>[n,true])]:frame?[[frame,true]]:[...node.childNodes].map(n=>[n,false]);
+      for(let i=children.length-1;i>=0;i--) stack.push([children[i][0],index,depth+1,frame?record.bounds.x+node.clientLeft:offsetX,frame?record.bounds.y+node.clientTop:offsetY,children[i][1]]);
+    }
   }
 
   const queue = [...document.styleSheets, ...document.adoptedStyleSheets].map(sheet => [sheet, 0]);
   for (const link of document.querySelectorAll('link[rel~="stylesheet"]'))
     if (!link.disabled && !link.sheet) issue('stylesheet_unavailable', link.href || 'Stylesheet has not loaded');
   for (const image of document.images)
-    if (!image.complete || (image.currentSrc && !image.naturalWidth)) issue('image_unavailable', image.currentSrc || image.src);
+    if (image.getClientRects().length && (!image.complete || (image.currentSrc && !image.naturalWidth))) issue('image_unavailable', image.currentSrc || image.src);
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const [sheet, importDepth] = queue[cursor];
     if (seenSheets.has(sheet)) continue;
@@ -132,7 +192,14 @@ async (limits) => {
     if (!charge({...record, rules: []})) break;
     sheets.push(record);
     try {
-      const rules = sheet.cssRules;
+      let rules;
+      try { rules = sheet.cssRules; }
+      catch(error) {
+        const text = window.__mochiStylesheetResponses?.[sheet.href];
+        if(typeof text!=='string' || /@import\b/i.test(text))throw error;
+        const parsed = new CSSStyleSheet();parsed.replaceSync(text);rules=parsed.cssRules;
+        record.text_source='devtools_loaded_stylesheet';
+      }
       for (const rule of rules) {
         if (rootRuleCount >= limits.rules) { issue('rule_limit', 'CSS rule count budget reached'); break; }
         const text = rule.cssText;
@@ -178,11 +245,13 @@ async (limits) => {
     if (resources.length >= 10000) { issue('resource_limit', 'Resource observation budget reached'); break; }
     resources.push(record);
   }
+  for(const collection of [surfaces,animation_states]) for(const id of Object.keys(collection)) if(Number(id)>=nodes.length) delete collection[id];
   const result = {schema_version: 1, url: location.href, metadata,
     viewport: {width: innerWidth, height: innerHeight}, color_scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
     state: 'initial', scope: 'light-dom-cssom-before-after',
-    nodes, styles, stylesheets: sheets, fonts, resources, screenshot: null,
+    nodes, surfaces, animation_states, styles:{strings,maps:styles}, stylesheets: sheets, fonts, resources, screenshot: null,
     complete: issues.length === 0, issues: issues.map(item => ({...item, node: item.node !== null && item.node < nodes.length ? item.node : null}))};
+  window.__mochiFramesFrozen=true;
   const output = JSON.stringify(result);
   if (encoder.encode(output).length > limits.bytes) throw new Error('Source evidence exceeds final byte budget');
   return output;

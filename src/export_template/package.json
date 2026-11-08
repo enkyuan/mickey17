@@ -1,0 +1,36 @@
+{
+  "name": "mochi-reconstructed",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": ">=1.4.4"
+  },
+  "scripts": {
+    "dev": "bun --bun vite --host 127.0.0.1",
+    "build": "bun --bun vite build",
+    "check": "bun --bun tsc --noEmit",
+    "start": "bun .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-start": "1.169.5",
+    "@tanstack/react-router": "1.170.46",
+    "@base-ui/react": "1.9.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "style-to-object": "2.0.2",
+    "motion": "14.10.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.2.1",
+    "vite": "8.3.6",
+    "nitro": "3.0.261103-rc",
+    "typescript": "7.0.2",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tailwindcss": "4.3.5",
+    "@tailwindcss/vite": "4.3.5"
+  },
+  "packageManager": "bun@1.4.4"
+}

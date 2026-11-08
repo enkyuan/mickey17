@@ -1,0 +1,15 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "../";
+
+/* Semantic aliases resolve in the element's theme scope. */
+@theme inline {
+  --color-ink: var(--ink, #181817);
+  --color-surface: var(--surface, #fff);
+  --color-action: var(--action-surface, #181817);
+  --color-action-hover: var(--action-hover, #333);
+  --font-heading: var(--font-serif, Georgia, serif);
+  --font-code: var(--font-mono, monospace);
+  --spacing-gutter: var(--page-gutter, 1.5rem);
+}

@@ -25,6 +25,7 @@ mochi analyze example-analyzed
 mochi clone https://example.com -o example-source --source-evidence --max-pages 20
 mochi check-evidence example-source
 mochi model-project example-source
+mochi export example-source -o example-app --framework tanstack-start
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
@@ -61,14 +62,13 @@ example/
     project.json          # offline model, after model-project
 ```
 
-It does not generate components, hooks, framework source routes, or a buildable frontend
-project. CSS and same-site fonts are copied as assets; there is no component-library,
-token, Tailwind, or StyleX source generator. External assets can still depend on their
-original hosts.
+Ordinary clone output stays a deployed-file mirror. The separate `export` command generates
+an editable TanStack Start project from a saved source model. CSS and same-site fonts are
+copied as mirror assets; unavailable or ambiguous export assets remain explicit in the report.
 
-[Editable source project design](docs/SOURCE_PROJECTS.md) describes the proposed reconstruction
-pipeline, framework-specific layouts, component primitives, fonts, and styling adapters.
-That pipeline is not implemented yet.
+[Editable source projects](docs/SOURCE_PROJECTS.md) describes the reconstruction pipeline
+and remaining framework/styling adapters. See [the implemented exporter](docs/EXPORT.md)
+for its current boundaries and toolchain.
 
 ## Structural analysis
 
@@ -119,7 +119,7 @@ viewport manifests and the clone inventory, verifies screenshot hashes and dimen
 and refreshes `reconstruction/report.json` atomically. Missing/changed files or invalid
 graphs fail validation without replacing the previous report. Inspectable incomplete
 captures are reported, and the command exits unsuccessfully until every expected capture
-is complete within its declared initial light-DOM/CSSOM scope. Files are created without
+is complete within its declared initial source-capture scope. Files are created without
 overwriting existing captures. Old `--analyze` snapshots do not count as source evidence;
 the library exposes an explicitly lossy projection from complete source captures to the
 existing analysis schema.
@@ -152,9 +152,60 @@ The model has a 64 MiB aggregate source JSON budget, 128 MiB output budget, 256 
 local asset budget, and at most 256 selected component candidates. Failed validation or an
 input changing during a rebuild preserves the previous model. See [the model contract](docs/PROJECT_MODEL.md).
 
-These are capture, validation, and modeling features for the development checkout. The source
-exporter, semantic token naming, Base UI generation, and Jev interpretation remain future
-steps; capture, inspection, analysis, and model building make no AI calls.
+These capture, validation, modeling, and initial export features are in the development
+checkout. Semantic token naming, richer control mappings and other framework/styling adapters
+remain future steps. These capture/model/export commands make no AI calls.
+
+`plan-interpretation <clone>` prepares bounded typed Jev requests locally. `interpret <clone>`
+defaults to offline replay; `--live` requires explicit request/token/cost/rate/deadline limits
+and a locally configured TypeSafe key. All semantic results require review and calibration
+remains unqualified. `export --interpretation` attaches validated saved proposals as comments
+and metadata without changing mechanical names or behavior. The adapter, replay and budgets
+have controlled local tests; live access, billing and model quality have not been qualified.
+See [semantic interpretation](docs/INTERPRETATION.md).
+
+## Compatibility source export
+
+`export <clone> -o <new-project> --framework tanstack-start` reads a saved model, checks it
+against the current source evidence/assets, and generates JSX, structural component candidates,
+shared layout candidates, physical route files, compatibility CSS, local images/fonts,
+and a project-owned Base UI button wrapper when buttons are present. It refuses existing
+output paths and publishes through a staging directory without replacing edited projects.
+Open/recorded closed shadow roots, sandboxed readable frames, viewport-specific markup,
+and explicit canvas/WebGL snapshot components are supported on initial-state routes.
+`--recover-client-route /` opts a selected path into client-source recovery from supported
+captured Turbopack/Flight, split Vite/TanStack, or native custom-element ESM builds. Those routes run formatted recovered
+React code, preserving drawing algorithms and event handlers. Repeat the flag for additional
+paths. Unsupported source formats fail explicitly; other routes keep their initial-state
+representation. See [the export contract](docs/EXPORT.md) for the narrow adapter boundaries.
+
+The source clone and its reports are not modified. Generation runs offline and does not
+install dependencies or execute the original site's scripts.
+
+```sh
+cd example-app
+bun install --frozen-lockfile
+bun run build
+bun run check
+bun start
+```
+
+Use Bun 1.4.4; dependencies and `bun.lock` are pinned. The generated report
+`.mochi/export.json` lists captured paths, component provenance, unresolved resources and
+limitations. Each new export starts with runtime verification marked `not_run`.
+
+The adapter preserves captured CSS selectors and cascade in per-document global CSS
+under `src/styles/compat`. It retains CSS variables, media conditions, font-face rules
+and pseudo-elements; it does not infer breakpoints or recover original StyleX/Tailwind code.
+Semantic reconstruction, component-local selector extraction and Base UI interaction conversion
+remain subsequent work. See [the authored-source architecture](docs/designs/AUTHORED_SOURCE.md).
+Generated `EDITING.md` identifies edit locations and compatibility debt; `tokens.css` is an
+owner-authored override surface, not an inferred design system.
+Local captures/trials/builds live in ignored `.mochi/`; required app source and assets stay versioned. Literal query strings remain opaque,
+including repeated keys and `%20` versus `+`; uncaptured states return 404. Multi-origin
+mapping, dynamic route parameters, DOM/CSSOM that changes between sampled viewports,
+CSS imports, unsupported CSS URL grammar, and several control/tag mappings are refused.
+See [the export contract](docs/EXPORT.md) before claiming support for a particular site.
 
 ## Capabilities
 
@@ -194,3 +245,5 @@ isolate concurrent local filesystem changes. Edits are atomic per file, not acro
 ## License
 
 [MIT](LICENSE).
+
+New exports use Bun, Base UI, Tailwind v4 and Motion. `components/ui` is reserved for Base UI primitives; styled compositions live in `components/compositions`. For editable typed components and scoped tokens, see the [authored source export](docs/AUTHORED_EXPORT.md). It consumes a reviewed semantic specification; automated semantic inference remains unfinished.

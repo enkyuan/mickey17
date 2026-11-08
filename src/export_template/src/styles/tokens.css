@@ -1,0 +1,6 @@
+/* Owner-authored design tokens and scoped overrides.
+ * Loaded AFTER each document's compatibility CSS, including responsive variants.
+ * Captured declarations remain in styles/compat until their consumers are migrated.
+ * See .mochi/style-audit.json for values and viewport/theme context.
+ * Do not equate an observed value with an inferred semantic design token.
+ */

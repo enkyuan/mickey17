@@ -69,6 +69,15 @@ pub fn refs(text: &str, base: &Url) -> BTreeSet<Url> {
             .or(c.get(4))
             .map_or("", |m| m.as_str())
             .trim();
+        if c.get(3).is_some()
+            && base
+                .path()
+                .rsplit('.')
+                .next()
+                .is_some_and(|ext| matches!(ext, "js" | "mjs"))
+        {
+            continue;
+        }
         if val.starts_with("data:") {
             continue;
         }
@@ -113,6 +122,12 @@ pub fn refs(text: &str, base: &Url) -> BTreeSet<Url> {
                 }
             }
         }
+    }
+    if matches!(
+        Path::new(base.path()).extension().and_then(|s| s.to_str()),
+        Some("js" | "mjs")
+    ) {
+        out.extend(crate::recover::module_references(text, base));
     }
     out
 }
@@ -187,6 +202,26 @@ pub fn mirror_with_options(
     assets: BTreeSet<Url>,
     root: &Path,
     options: &DownloadOptions,
+) -> Result<MirrorReport> {
+    mirror_inner(client, pages, assets, root, options, false)
+}
+/// Preserve bounded exact client-module responses for source-project recovery.
+pub fn mirror_with_client_sources(
+    client: &Client,
+    pages: &[Url],
+    assets: BTreeSet<Url>,
+    root: &Path,
+    options: &DownloadOptions,
+) -> Result<MirrorReport> {
+    mirror_inner(client, pages, assets, root, options, true)
+}
+fn mirror_inner(
+    client: &Client,
+    pages: &[Url],
+    assets: BTreeSet<Url>,
+    root: &Path,
+    options: &DownloadOptions,
+    preserve_sources: bool,
 ) -> Result<MirrorReport> {
     ensure!(
         (1..=16).contains(&options.jobs),
@@ -263,6 +298,8 @@ pub fn mirror_with_options(
             }
         }
     }
+    let mut source_bytes = 0usize;
+    let mut source_count = 0usize;
     while !queue.todo.is_empty() {
         let mut batch = Vec::new();
         while batch.len() < options.jobs {
@@ -318,6 +355,25 @@ pub fn mirror_with_options(
                 report.cache_revalidations += usize::from(reused);
                 if mime.contains("text/html") && Path::new(u.path()).extension().is_none() {
                     return Ok(());
+                }
+                // Preserve exact fetched module bytes by full URL identity, before
+                // path collisions or mirror URL edits. The non-text extension
+                // keeps localization/tracker editing away from these receipts.
+                if preserve_sources
+                    && (mime.contains("javascript")
+                        || u.path().ends_with(".js")
+                        || u.path().ends_with(".mjs"))
+                    && bytes.len() <= 16 * 1024 * 1024
+                    && source_count < 512
+                    && source_bytes + bytes.len() <= 128 * 1024 * 1024
+                {
+                    let source = root.join(".mochi-source").join(format!(
+                        "{}.blob",
+                        crate::cache::fingerprint(u.as_str().as_bytes())
+                    ));
+                    util::write(root, &source, &bytes)?;
+                    source_bytes += bytes.len();
+                    source_count += 1;
                 }
                 let p = output_path(root, &u, false)?;
                 ensure!(!p.is_dir(), "asset path collides with directory");

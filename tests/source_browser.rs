@@ -86,7 +86,7 @@ async fn rich_capture_preserves_text_css_controls_queries_and_viewport_screensho
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires installed Chrome; run cargo test --test source_browser -- --ignored"]
-async fn capture_budgets_and_inaccessible_css_are_explicit_incomplete_evidence() {
+async fn capture_budgets_and_cross_origin_stylesheets_preserve_evidence() {
     use axum::{Router, response::Html, routing::get};
     let remote = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let remote_url = format!("http://{}/style.css", remote.local_addr().unwrap());
@@ -96,13 +96,14 @@ async fn capture_budgets_and_inaccessible_css_are_explicit_incomplete_evidence()
             Router::new().route(
                 "/style.css",
                 get(|| async { ([("content-type", "text/css")], CSS) }),
-            ),
+            ).route("/frame",get(||async{Html("<!doctype html><style>body{margin:0;background:rgb(30,60,90)}</style><p>Opaque frame</p>")})),
         )
         .await
         .unwrap()
     });
+    let frame_url = remote_url.replace("/style.css", "/frame");
     let html = format!(
-        r#"<!doctype html><title>Blocked CSS</title><link rel="stylesheet" href="{remote_url}"><div id="shadow"></div><script>document.querySelector('#shadow').attachShadow({{mode:'open'}}).innerHTML='<p>inside</p>'</script>"#
+        r#"<!doctype html><iframe title="Opaque" style="width:120px;height:60px;border:0" src="{frame_url}"></iframe><title>Blocked CSS</title><link rel="stylesheet" href="{remote_url}"><div id="shadow"></div><script>document.querySelector('#shadow').attachShadow({{mode:'open'}}).innerHTML='<p>inside</p>'</script>"#
     );
     let app = Router::new()
         .route("/", get(|| async { Html(document()) }))
@@ -134,9 +135,12 @@ async fn capture_budgets_and_inaccessible_css_are_explicit_incomplete_evidence()
         tab.navigate_to(&format!("{url}blocked")).unwrap().wait_until_navigated().unwrap();
         let root=tempfile::tempdir().unwrap();let paths=evidence::capture_page(&tab,root.path(),0,&evidence::CaptureOptions{viewports:vec!["375x812".parse().unwrap()]},&url::Url::parse(&url).unwrap()).unwrap();
         let capture=evidence::load(root.path(),std::path::Path::new(&paths[0])).unwrap();
-        assert!(!capture.complete);assert!(capture.issues.iter().any(|i|i.code=="stylesheet_unavailable"));
-        assert!(capture.issues.iter().any(|i|i.code=="shadow_document"));
-        assert_eq!(evidence::inspect(root.path()).unwrap().complete,0);
+        assert!(capture.complete,"{:?}",capture.issues);
+        assert!(capture.stylesheets.iter().any(|s|s.href.as_deref()==Some(&remote_url)&&s.text_source.as_deref()==Some("devtools_loaded_stylesheet")&&s.rules.iter().any(|r|r.contains("--brand"))));
+        assert!(capture.surfaces.values().any(|s|s.kind==evidence::SurfaceKind::Shadow));
+        assert!(capture.surfaces.values().any(|s|s.kind==evidence::SurfaceKind::Raster&&s.image.is_some()));
+        assert!(capture.nodes.iter().any(|n|matches!(&n.content,evidence::Content::Text{value} if value=="inside")));
+        assert_eq!(evidence::inspect(root.path()).unwrap().complete,1);
         let before=std::fs::read(root.path().join(&paths[0])).unwrap();
         assert!(evidence::capture_page(&tab,root.path(),0,&evidence::CaptureOptions{viewports:vec!["375x812".parse().unwrap()]},&url::Url::parse(&url).unwrap()).is_err());
         assert_eq!(before,std::fs::read(root.path().join(&paths[0])).unwrap());

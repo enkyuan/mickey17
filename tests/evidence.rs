@@ -276,3 +276,43 @@ fn symlinked_evidence_or_screenshot_cannot_escape_the_clone() {
     std::os::unix::fs::symlink(outside.path().join("keep"), &input).unwrap();
     assert!(evidence::inspect(root.path()).is_err());
 }
+
+#[test]
+fn surface_pixels_are_required_bound_and_integrity_checked() {
+    let root = tempfile::tempdir().unwrap();
+    let mut value = fixture();
+    value["nodes"][3]["tag"] = json!("canvas");
+    let surface = json!({"kind":"raster","mode":"open","css":[],"base_url":"https://example.test/","children":[],"image":null,"bounds":{"x":0,"y":0,"width":200,"height":200}});
+    value["surfaces"] = json!({"3":surface});
+    let capture: evidence::Capture = serde_json::from_value(value.clone()).unwrap();
+    assert!(
+        capture
+            .require_complete()
+            .unwrap_err()
+            .to_string()
+            .contains("pixels")
+    );
+    let png = include_bytes!("fixtures/source-reference.png");
+    value["surfaces"]["3"]["image"] =
+        json!({"path":"reconstruction/surfaces/scene.png","sha256":fingerprint(png)});
+    save(root.path(), &value);
+    std::fs::create_dir(root.path().join("reconstruction/surfaces")).unwrap();
+    std::fs::write(root.path().join("reconstruction/surfaces/scene.png"), png).unwrap();
+    evidence::load(root.path(), Path::new("reconstruction/pages/one.json"))
+        .unwrap()
+        .require_complete()
+        .unwrap();
+    std::fs::write(
+        root.path().join("reconstruction/surfaces/scene.png"),
+        b"changed",
+    )
+    .unwrap();
+    assert!(evidence::load(root.path(), Path::new("reconstruction/pages/one.json")).is_err());
+    value["surfaces"]["3"]["children"] = json!([999]);
+    assert!(
+        serde_json::from_value::<evidence::Capture>(value)
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+}

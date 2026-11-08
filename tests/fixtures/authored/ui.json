@@ -1,0 +1,772 @@
+{
+  "schema_version": 1,
+  "input_sha256": "fixture",
+  "routes": [
+    {
+      "path": "/catalog",
+      "title": "Authored UI fixture",
+      "component": "CatalogPage",
+      "props": {
+        "heading": "Editable catalog",
+        "links": [
+          {
+            "label": "Catalog",
+            "href": "/catalog"
+          },
+          {
+            "label": "Section",
+            "href": "#section"
+          }
+        ]
+      }
+    }
+  ],
+  "components": {
+    "SiteNavigation": {
+      "feature": "ui",
+      "purpose": "Reusable primary navigation using direct Base UI parts.",
+      "evidence": [
+        {
+          "observation": "fixture",
+          "node": 2
+        }
+      ],
+      "props": {
+        "links": {
+          "type": "list",
+          "item": {
+            "type": "object",
+            "fields": {
+              "label": {
+                "type": "text"
+              },
+              "href": {
+                "type": "href"
+              }
+            }
+          }
+        }
+      },
+      "state": {},
+      "body": {
+        "kind": "primitive",
+        "name": "NavigationMenu.Root",
+        "props": {
+          "aria-label": {
+            "kind": "literal",
+            "value": "Primary"
+          }
+        },
+        "classes": [],
+        "children": [
+          {
+            "kind": "primitive",
+            "name": "NavigationMenu.List",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "primitive",
+                "name": "NavigationMenu.Item",
+                "props": {},
+                "classes": [],
+                "children": [
+                  {
+                    "kind": "primitive",
+                    "name": "NavigationMenu.Trigger",
+                    "props": {},
+                    "classes": [
+                      "trigger"
+                    ],
+                    "children": [
+                      {
+                        "kind": "text",
+                        "value": {
+                          "kind": "literal",
+                          "value": "Explore"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "primitive",
+                    "name": "NavigationMenu.Content",
+                    "props": {},
+                    "classes": [
+                      "content"
+                    ],
+                    "children": [
+                      {
+                        "kind": "repeat",
+                        "each": {
+                          "kind": "ref",
+                          "path": "props.links"
+                        },
+                        "binding": "link",
+                        "key": {
+                          "kind": "ref",
+                          "path": "link.href"
+                        },
+                        "body": {
+                          "kind": "primitive",
+                          "name": "NavigationMenu.Link",
+                          "props": {
+                            "render": {
+                              "kind": "link",
+                              "href": {
+                                "kind": "ref",
+                                "path": "link.href"
+                              }
+                            }
+                          },
+                          "classes": [
+                            "link"
+                          ],
+                          "children": [
+                            {
+                              "kind": "text",
+                              "value": {
+                                "kind": "ref",
+                                "path": "link.label"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "primitive",
+            "name": "NavigationMenu.Portal",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "primitive",
+                "name": "NavigationMenu.Positioner",
+                "props": {
+                  "sideOffset": {
+                    "kind": "literal",
+                    "value": 8
+                  }
+                },
+                "classes": [],
+                "children": [
+                  {
+                    "kind": "primitive",
+                    "name": "NavigationMenu.Popup",
+                    "props": {},
+                    "classes": [
+                      "popup"
+                    ],
+                    "children": [
+                      {
+                        "kind": "primitive",
+                        "name": "NavigationMenu.Viewport",
+                        "props": {},
+                        "classes": [],
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        {
+          "selector": ".trigger",
+          "declarations": {
+            "padding": "12px"
+          }
+        },
+        {
+          "selector": ".content",
+          "declarations": {
+            "padding": "16px"
+          }
+        },
+        {
+          "selector": ".link",
+          "declarations": {
+            "display": "block",
+            "padding": "8px"
+          }
+        },
+        {
+          "selector": ".popup",
+          "declarations": {
+            "background": "var(--surface)",
+            "border": "1px solid var(--ink)",
+            "border-radius": "8px"
+          }
+        }
+      ]
+    },
+    "PreviewActions": {
+      "feature": "ui",
+      "purpose": "Local preview action menu.",
+      "evidence": [
+        {
+          "observation": "fixture",
+          "node": 2
+        }
+      ],
+      "props": {},
+      "state": {
+        "selection": {
+          "value_type": {
+            "type": "text"
+          },
+          "initial": "No selection"
+        }
+      },
+      "body": {
+        "kind": "element",
+        "tag": "section",
+        "props": {},
+        "classes": [],
+        "children": [
+          {
+            "kind": "primitive",
+            "name": "Menu.Root",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "primitive",
+                "name": "Menu.Trigger",
+                "props": {},
+                "classes": [],
+                "children": [
+                  {
+                    "kind": "text",
+                    "value": {
+                      "kind": "literal",
+                      "value": "Actions"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "primitive",
+                "name": "Menu.Portal",
+                "props": {},
+                "classes": [],
+                "children": [
+                  {
+                    "kind": "primitive",
+                    "name": "Menu.Positioner",
+                    "props": {},
+                    "classes": [],
+                    "children": [
+                      {
+                        "kind": "primitive",
+                        "name": "Menu.Popup",
+                        "props": {},
+                        "classes": [
+                          "popup"
+                        ],
+                        "children": [
+                          {
+                            "kind": "primitive",
+                            "name": "Menu.Item",
+                            "props": {
+                              "onClick": {
+                                "kind": "set",
+                                "state": "selection",
+                                "value": "Preview chosen"
+                              }
+                            },
+                            "classes": [],
+                            "children": [
+                              {
+                                "kind": "text",
+                                "value": {
+                                  "kind": "literal",
+                                  "value": "Choose preview"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "element",
+            "tag": "p",
+            "props": {
+              "role": {
+                "kind": "literal",
+                "value": "status"
+              }
+            },
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "ref",
+                  "path": "selection"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        {
+          "selector": ".popup",
+          "declarations": {
+            "background": "var(--surface)",
+            "padding": "12px",
+            "border": "1px solid var(--ink)"
+          }
+        }
+      ]
+    },
+    "PreviewDialog": {
+      "feature": "ui",
+      "purpose": "Accessible controlled details dialog.",
+      "evidence": [
+        {
+          "observation": "fixture",
+          "node": 2
+        }
+      ],
+      "props": {},
+      "state": {
+        "open": {
+          "value_type": {
+            "type": "boolean"
+          },
+          "initial": false
+        }
+      },
+      "body": {
+        "kind": "primitive",
+        "name": "Dialog.Root",
+        "props": {
+          "open": {
+            "kind": "ref",
+            "path": "open"
+          },
+          "onOpenChange": {
+            "kind": "setter",
+            "state": "open"
+          }
+        },
+        "classes": [],
+        "children": [
+          {
+            "kind": "primitive",
+            "name": "Dialog.Trigger",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "literal",
+                  "value": "Open details"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "primitive",
+            "name": "Dialog.Portal",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "primitive",
+                "name": "Dialog.Backdrop",
+                "props": {},
+                "classes": [
+                  "backdrop"
+                ],
+                "children": []
+              },
+              {
+                "kind": "primitive",
+                "name": "Dialog.Popup",
+                "props": {},
+                "classes": [
+                  "popup"
+                ],
+                "children": [
+                  {
+                    "kind": "primitive",
+                    "name": "Dialog.Title",
+                    "props": {},
+                    "classes": [],
+                    "children": [
+                      {
+                        "kind": "text",
+                        "value": {
+                          "kind": "literal",
+                          "value": "Preview details"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "primitive",
+                    "name": "Dialog.Description",
+                    "props": {},
+                    "classes": [],
+                    "children": [
+                      {
+                        "kind": "text",
+                        "value": {
+                          "kind": "literal",
+                          "value": "A locally editable test composition."
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "primitive",
+                    "name": "Dialog.Close",
+                    "props": {},
+                    "classes": [],
+                    "children": [
+                      {
+                        "kind": "text",
+                        "value": {
+                          "kind": "literal",
+                          "value": "Close details"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        {
+          "selector": ".backdrop",
+          "declarations": {
+            "position": "fixed",
+            "inset": "0",
+            "background": "rgb(0 0 0 / .4)"
+          }
+        },
+        {
+          "selector": ".popup",
+          "declarations": {
+            "position": "fixed",
+            "top": "50%",
+            "left": "50%",
+            "transform": "translate(-50%, -50%)",
+            "background": "var(--surface)",
+            "padding": "24px"
+          }
+        }
+      ]
+    },
+    "ContactForm": {
+      "feature": "ui",
+      "purpose": "Owned fixture form with explicit local submission, no backend.",
+      "evidence": [
+        {
+          "observation": "fixture",
+          "node": 2
+        }
+      ],
+      "props": {},
+      "state": {
+        "status": {
+          "value_type": {
+            "type": "text"
+          },
+          "initial": "Not submitted"
+        }
+      },
+      "body": {
+        "kind": "primitive",
+        "name": "Form",
+        "props": {
+          "onSubmit": {
+            "kind": "set",
+            "state": "status",
+            "value": "Locally submitted",
+            "prevent_default": true
+          }
+        },
+        "classes": [
+          "form"
+        ],
+        "children": [
+          {
+            "kind": "primitive",
+            "name": "Field.Root",
+            "props": {
+              "name": {
+                "kind": "literal",
+                "value": "email"
+              }
+            },
+            "classes": [
+              "field"
+            ],
+            "children": [
+              {
+                "kind": "primitive",
+                "name": "Field.Label",
+                "props": {},
+                "classes": [],
+                "children": [
+                  {
+                    "kind": "text",
+                    "value": {
+                      "kind": "literal",
+                      "value": "Email"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "primitive",
+                "name": "Field.Control",
+                "props": {
+                  "type": {
+                    "kind": "literal",
+                    "value": "email"
+                  },
+                  "required": {
+                    "kind": "literal",
+                    "value": true
+                  }
+                },
+                "classes": [],
+                "children": []
+              },
+              {
+                "kind": "primitive",
+                "name": "Field.Error",
+                "props": {},
+                "classes": [],
+                "children": []
+              }
+            ]
+          },
+          {
+            "kind": "primitive",
+            "name": "Button",
+            "props": {
+              "type": {
+                "kind": "literal",
+                "value": "submit"
+              }
+            },
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "literal",
+                  "value": "Submit locally"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "element",
+            "tag": "p",
+            "props": {
+              "role": {
+                "kind": "literal",
+                "value": "status"
+              }
+            },
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "ref",
+                  "path": "status"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        {
+          "selector": ".form",
+          "declarations": {
+            "display": "grid",
+            "gap": "12px",
+            "max-width": "400px"
+          }
+        },
+        {
+          "selector": ".field",
+          "declarations": {
+            "display": "grid",
+            "gap": "8px"
+          }
+        }
+      ]
+    },
+    "CatalogPage": {
+      "feature": "catalog",
+      "purpose": "Catalog route composition and typed content.",
+      "evidence": [
+        {
+          "observation": "fixture",
+          "node": 2
+        }
+      ],
+      "props": {
+        "heading": {
+          "type": "text"
+        },
+        "links": {
+          "type": "list",
+          "item": {
+            "type": "object",
+            "fields": {
+              "label": {
+                "type": "text"
+              },
+              "href": {
+                "type": "href"
+              }
+            }
+          }
+        }
+      },
+      "state": {},
+      "body": {
+        "kind": "element",
+        "tag": "main",
+        "props": {},
+        "classes": [
+          "page"
+        ],
+        "children": [
+          {
+            "kind": "component",
+            "name": "SiteNavigation",
+            "props": {
+              "links": {
+                "kind": "ref",
+                "path": "props.links"
+              }
+            }
+          },
+          {
+            "kind": "element",
+            "tag": "h1",
+            "props": {},
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "ref",
+                  "path": "props.heading"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "component",
+            "name": "PreviewActions",
+            "props": {}
+          },
+          {
+            "kind": "component",
+            "name": "PreviewDialog",
+            "props": {}
+          },
+          {
+            "kind": "component",
+            "name": "ContactForm",
+            "props": {}
+          },
+          {
+            "kind": "element",
+            "tag": "section",
+            "props": {
+              "id": {
+                "kind": "literal",
+                "value": "section"
+              }
+            },
+            "classes": [],
+            "children": [
+              {
+                "kind": "text",
+                "value": {
+                  "kind": "literal",
+                  "value": "Editable section"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        {
+          "selector": ".page",
+          "declarations": {
+            "padding": "32px",
+            "color": "var(--ink)"
+          }
+        }
+      ]
+    }
+  },
+  "assets": {},
+  "tokens": {
+    "surface": "#ffffff",
+    "ink": "#18232d"
+  },
+  "token_scopes": [
+    {
+      "selector": ":root",
+      "media": "(max-width: 500px)",
+      "values": {
+        "ink": "#25394d"
+      }
+    }
+  ],
+  "fonts": [],
+  "globals": [
+    {
+      "selector": "body",
+      "declarations": {
+        "margin": "0",
+        "font-family": "Arial, sans-serif"
+      }
+    },
+    {
+      "selector": "*",
+      "declarations": {
+        "box-sizing": "border-box"
+      }
+    }
+  ],
+  "gaps": [
+    "Owned behavior fixture only; no external form service."
+  ]
+}

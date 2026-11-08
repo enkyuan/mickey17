@@ -14,7 +14,7 @@ use url::Url;
 
 // Library wait_until_navigated waits for networkAlmostIdle; long-polling pages
 // need only their own document's DOMContentLoaded event before extraction.
-fn navigate_dom(tab: &headless_chrome::Tab, url: &Url) -> Result<()> {
+pub(crate) fn navigate_dom(tab: &headless_chrome::Tab, url: &Url) -> Result<()> {
     use headless_chrome::protocol::cdp::{Page, types::Event};
     let frame = tab
         .call_method(Page::GetFrameTree(None))?
@@ -62,6 +62,22 @@ fn navigate_dom(tab: &headless_chrome::Tab, url: &Url) -> Result<()> {
     })();
     tab.remove_event_listener(&listener)?;
     result
+}
+
+fn needs_webgl(url: &Url) -> Result<bool> {
+    let mut launch = LaunchOptions::default_builder();
+    launch
+        .window_size(Some((1440, 900)))
+        .idle_browser_timeout(Duration::from_secs(60));
+    if let Some(path) = std::env::var_os("MOCHI_CHROME") {
+        launch.path(Some(path.into()));
+    }
+    let browser = Browser::new(launch.build().map_err(|e| anyhow::anyhow!(e))?)?;
+    let tab = browser.new_tab()?;
+    tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument{source:"(()=>{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(kind,options){if(/^webgl2?$|^experimental-webgl$/.test(kind))window.__mochiUsesWebgl=true;return get.call(this,kind,options)}})()".into(),world_name:None,include_command_line_api:None,run_immediately:None})?;
+    navigate_dom(&tab, url)?;
+    tab.evaluate("new Promise(resolve=>setTimeout(resolve,1500))", true)?;
+    Ok(tab.evaluate("window.__mochiUsesWebgl===true", false)?.value == Some(json!(true)))
 }
 
 pub struct Options {
@@ -268,10 +284,32 @@ fn clone_internal(
             }
         }
     }
+    let may_probe = options.ignore_robots
+        || robotstxt::DefaultMatcher::default().one_agent_allowed_by_robots(
+            &robots,
+            "mochi",
+            base.as_str(),
+        );
+    let software_gpu =
+        source.is_some() && may_probe && needs_webgl(&base).context("detect rendering backend")?;
     let mut launch = LaunchOptions::default_builder();
     launch
         .window_size(Some((1440, 900)))
-        .ignore_certificate_errors(false);
+        .idle_browser_timeout(Duration::from_secs(180))
+        .ignore_certificate_errors(false)
+        .enable_gpu(software_gpu)
+        .args(if software_gpu {
+            vec![
+                std::ffi::OsStr::new("--hide-scrollbars"),
+                std::ffi::OsStr::new("--use-gl=angle"),
+                std::ffi::OsStr::new("--use-angle=swiftshader"),
+                std::ffi::OsStr::new("--enable-unsafe-swiftshader"),
+            ]
+        } else if source.is_some() {
+            vec![std::ffi::OsStr::new("--hide-scrollbars")]
+        } else {
+            vec![]
+        });
     if let Some(path) = std::env::var_os("MOCHI_CHROME") {
         launch.path(Some(path.into()));
     }
@@ -279,6 +317,11 @@ fn clone_internal(
         .context("launch Chromium; install Chrome or set MOCHI_CHROME")?;
     let tab = browser.new_tab()?;
     tab.set_default_timeout(Duration::from_secs(45));
+    if source.is_some() {
+        tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
+            source:"(()=>{const raf=window.requestAnimationFrame.bind(window);window.__mochiPaint=()=>new Promise(resolve=>raf(()=>raf(resolve)));window.requestAnimationFrame=callback=>raf(time=>{if(!window.__mochiFramesFrozen)callback(time)});const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(kind,options){return get.call(this,kind,/^webgl2?$|^experimental-webgl$/.test(kind)?{...options,preserveDrawingBuffer:true}:kind==='2d'?{...options,willReadFrequently:true}:options)};const roots=new WeakMap();Object.defineProperty(window,'__mochiShadowRoots',{value:roots});const attach=Element.prototype.attachShadow;Element.prototype.attachShadow=function(options){const root=attach.call(this,options);roots.set(this,root);return root}})()".into(),world_name:None,include_command_line_api:None,run_immediately:None,
+        })?;
+    }
     let assets = Arc::new(Mutex::new(BTreeSet::new()));
     let external = Arc::new(Mutex::new(BTreeSet::new()));
     let (a, e, b) = (assets.clone(), external.clone(), base.clone());
@@ -320,7 +363,26 @@ fn clone_internal(
         let evidence_number = capture_number;
         capture_number += 1;
         let result = (|| -> Result<()> {
-            navigate_dom(&tab, &u)?;
+            let mut stable = false;
+            for _ in 0..2 {
+                navigate_dom(&tab, &u).context("navigate source document")?;
+                for _ in 0..10 {
+                    std::thread::sleep(Duration::from_millis(300));
+                    if tab
+                        .evaluate("document.readyState==='complete'", false)
+                        .ok()
+                        .and_then(|r| r.value)
+                        == Some(json!(true))
+                    {
+                        stable = true;
+                        break;
+                    }
+                }
+                if stable {
+                    break;
+                }
+            }
+            ensure!(stable, "source document did not settle after navigation");
             let status = tab
                 .evaluate(
                     "performance.getEntriesByType('navigation')[0]?.responseStatus || 0",
@@ -336,9 +398,14 @@ fn clone_internal(
                     == Some(json!(true)),
                 "not an HTML document"
             );
-            tab.evaluate("(async()=>{for(let y=0,n=0;y<(document.body?.scrollHeight||0)&&n<200;y+=600,n++){scrollTo(0,y);await new Promise(r=>setTimeout(r,120))}scrollTo(0,0);await new Promise(r=>setTimeout(r,400))})()",true)?;
+            tab.evaluate("new Promise(r=>setTimeout(r,800))", true)
+                .context("settle source document")?;
+            if source.is_none() {
+                tab.evaluate("(async()=>{for(let y=0,n=0;y<(document.body?.scrollHeight||0)&&n<200;y+=600,n++){scrollTo(0,y);await new Promise(r=>setTimeout(r,120))}scrollTo(0,0);await new Promise(r=>setTimeout(r,400))})()",true)?;
+            }
             let data = tab
-                .evaluate(EXTRACT, false)?
+                .evaluate(EXTRACT, false)
+                .context("extract source document")?
                 .value
                 .context("missing page data")?;
             let data: Value = serde_json::from_str(data.as_str().context("invalid page data")?)?;
@@ -417,7 +484,8 @@ fn clone_internal(
                 crate::util::write(out, &path, raw.as_bytes())?;
             }
             let source_paths = if let Some(source) = source {
-                evidence::capture_page(&tab, out, evidence_number, source, &base)?
+                evidence::capture_page(&tab, out, evidence_number, source, &base)
+                    .context("capture source viewport")?
             } else {
                 Vec::new()
             };
@@ -427,7 +495,7 @@ fn clone_internal(
             Ok(())
         })();
         if let Err(err) = result {
-            skipped.push(json!({"url":u,"reason":err.to_string()}))
+            skipped.push(json!({"url":u,"reason":format!("{err:#}")}))
         }
     }
     tab.deregister_response_handling_all()?;
@@ -439,7 +507,12 @@ fn clone_internal(
         .map_err(|_| anyhow::anyhow!("capture lock poisoned"))?
         .clone();
     let site = out.join("site");
-    let report = mirror::mirror_with_options(
+    let mirror = if source.is_some() {
+        mirror::mirror_with_client_sources
+    } else {
+        mirror::mirror_with_options
+    };
+    let report = mirror(
         &client,
         &pages,
         assets,
@@ -456,7 +529,7 @@ fn clone_internal(
     std::fs::write(
         out.join("manifest.json"),
         serde_json::to_vec_pretty(
-            &json!({"source":base,"pages":metadata,"assets_fetched":report.assets_fetched,"cache_revalidations":report.cache_revalidations,"failures":report.failures,"skipped":skipped,"external_hosts":*external.lock().map_err(|_|anyhow::anyhow!("capture lock poisoned"))?}),
+            &json!({"source":base,"render_backend":if software_gpu{"swiftshader"}else{"default"},"hide_scrollbars":source.is_some(),"pages":metadata,"assets_fetched":report.assets_fetched,"cache_revalidations":report.cache_revalidations,"failures":report.failures,"skipped":skipped,"external_hosts":*external.lock().map_err(|_|anyhow::anyhow!("capture lock poisoned"))?}),
         )?,
     )?;
     ensure!(

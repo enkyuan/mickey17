@@ -1,0 +1,6 @@
+node_modules/
+.mochi/
+.output/
+dist/
+.tanstack/
+src/routeTree.gen.ts

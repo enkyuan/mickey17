@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mochi::{analysis, crawl, edit, evidence, project, serve, trackers, util};
+use mochi::{
+    analysis, authored, crawl, edit, evidence, export, interpret, project, serve, trackers, util,
+};
 use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
@@ -49,6 +51,64 @@ enum Command {
     CheckEvidence { site: PathBuf },
     /// Derive an offline source model from complete evidence; does not emit an app.
     ModelProject { site: PathBuf },
+    /// Prepare evidence for a reviewed semantic source specification, without model calls.
+    PlanSource {
+        site: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Save bounded Jev request payloads locally; sends nothing to a provider.
+    PlanInterpretation {
+        site: PathBuf,
+        #[arg(long, default_value_t = 64)]
+        max_candidates: usize,
+        #[arg(long, default_value_t = 8)]
+        max_text_props: usize,
+        #[arg(long, default_value_t = 3)]
+        examples: usize,
+        #[arg(long, default_value_t = 4)]
+        batch_candidates: usize,
+    },
+    /// Replay semantic proposals offline, or explicitly enable budgeted live TypeSafe calls.
+    Interpret {
+        site: PathBuf,
+        #[arg(long, conflicts_with = "replay")]
+        live: bool,
+        #[arg(long, conflicts_with = "live")]
+        replay: bool,
+        #[arg(long, value_enum, default_value = "typesafe")]
+        provider: InterpreterProvider,
+        #[arg(long, requires = "live")]
+        max_requests: Option<u32>,
+        #[arg(long, requires = "live")]
+        max_input_tokens: Option<u64>,
+        #[arg(long, requires = "live")]
+        max_cost_usd: Option<String>,
+        #[arg(long, requires = "live")]
+        input_price_per_million_usd: Option<String>,
+        #[arg(long, requires = "live")]
+        deadline_seconds: Option<u64>,
+        #[arg(long, requires = "live")]
+        max_retries: Option<u8>,
+    },
+    /// Generate a new editable TanStack Start project from a saved source model.
+    Export {
+        site: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+        #[arg(long, value_enum, default_value = "tanstack-start")]
+        framework: Framework,
+        /// Generate typed source from a reviewed semantic specification, without recovered bundles.
+        #[arg(long, conflicts_with_all = ["interpretation", "recover_client_routes"])]
+        authored_spec: Option<PathBuf>,
+        /// Attach saved semantic proposals as review-required comments; never calls AI.
+        #[arg(long)]
+        interpretation: bool,
+        /// Recover a captured public client root for this literal path as editable code.
+        /// The generated app executes recovered code; unsupported modules are refused.
+        #[arg(long = "recover-client-route")]
+        recover_client_routes: Vec<String>,
+    },
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -73,6 +133,14 @@ enum Command {
     },
     /// Remove recognized analytics tags and script loaders.
     StripTrackers { site: PathBuf },
+}
+#[derive(Clone, clap::ValueEnum)]
+enum Framework {
+    TanstackStart,
+}
+#[derive(Clone, clap::ValueEnum)]
+enum InterpreterProvider {
+    Typesafe,
 }
 fn main() -> Result<()> {
     match Cli::parse().command {
@@ -133,6 +201,13 @@ fn main() -> Result<()> {
                 report.failures.len()
             );
         }
+        Command::PlanSource { site, out } => {
+            authored::plan(&site, &out)?;
+            println!(
+                "Saved semantic evidence plan to {}. Authored decisions and qualification remain required.",
+                out.display()
+            );
+        }
         Command::Analyze { site } => {
             let report = analysis::analyze(&site)?;
             println!(
@@ -162,6 +237,120 @@ fn main() -> Result<()> {
                 project.observations.len(),
                 project.components.len(),
                 project.layouts.len()
+            );
+        }
+        Command::PlanInterpretation {
+            site,
+            max_candidates,
+            max_text_props,
+            examples,
+            batch_candidates,
+        } => {
+            let plan = interpret::save_plan(
+                &site,
+                interpret::PlanConfig {
+                    max_candidates,
+                    max_text_props,
+                    examples,
+                    batch_candidates,
+                },
+            )?;
+            println!(
+                "Planned {} bounded requests for {} ({} skipped items). No provider calls made; inspect reconstruction/interpretation/plan.json before enabling live interpretation.",
+                plan.entries.len(),
+                interpret::MODEL,
+                plan.skipped.len()
+            );
+        }
+        Command::Interpret {
+            site,
+            live,
+            replay: _,
+            provider: InterpreterProvider::Typesafe,
+            max_requests,
+            max_input_tokens,
+            max_cost_usd,
+            input_price_per_million_usd,
+            deadline_seconds,
+            max_retries,
+        } => {
+            use anyhow::Context;
+            let outcome = if live {
+                let limits = interpret::Limits {
+                    max_requests: max_requests.context("--max-requests is required for --live")?,
+                    max_input_tokens: max_input_tokens
+                        .context("--max-input-tokens is required for --live")?,
+                    max_cost_microusd: interpret::usd_micros(
+                        &max_cost_usd.context("--max-cost-usd is required for --live")?,
+                    )?,
+                    input_price_microusd_per_million: interpret::usd_micros(
+                        &input_price_per_million_usd.context(
+                            "--input-price-per-million-usd is required for live cost accounting",
+                        )?,
+                    )?,
+                    deadline_seconds: deadline_seconds
+                        .context("--deadline-seconds is required for --live")?,
+                    max_retries: max_retries.unwrap_or(0),
+                };
+                limits.validate()?;
+                let key=std::env::var("TYPESAFE_API_KEY").map_err(|_| anyhow::anyhow!("configure TYPESAFE_API_KEY locally for --live; never pass the key as a CLI argument"))?;
+                interpret::interpret_live(&site, &interpret::TypeSafe::new(&key)?, limits)?
+            } else {
+                interpret::replay(&site)?
+            };
+            let proposals = outcome
+                .report
+                .decisions
+                .iter()
+                .filter(|d| d.status == interpret::Status::ProposalNeedsReview)
+                .count();
+            let abstentions = outcome
+                .report
+                .decisions
+                .iter()
+                .filter(|d| d.status == interpret::Status::Abstained)
+                .count();
+            println!(
+                "Saved {proposals} review-required semantic proposals and {abstentions} abstentions; {} provider attempts, {} cache hits. Calibration unqualified; no changes applied. Journal: {}",
+                outcome.summary.attempts,
+                outcome.summary.cache_hits,
+                outcome.journal.display()
+            );
+        }
+        Command::Export {
+            site,
+            out,
+            framework: Framework::TanstackStart,
+            authored_spec,
+            interpretation,
+            recover_client_routes,
+        } => {
+            if let Some(specification) = authored_spec {
+                let report = authored::generate(&site, &specification, &out)?;
+                println!(
+                    "Generated authored candidate: {} routes, {} typed components, no recovered modules. Verification not run; see .mochi/authored-report.json and EDITING.md.",
+                    report.routes, report.components
+                );
+                return Ok(());
+            }
+            let report = if !recover_client_routes.is_empty() {
+                export::tanstack_start_with_clients(
+                    &site,
+                    &out,
+                    interpretation,
+                    &recover_client_routes.into_iter().collect(),
+                )?
+            } else if interpretation {
+                export::tanstack_start_with_interpretation(&site, &out)?
+            } else {
+                export::tanstack_start(&site, &out)?
+            };
+            println!(
+                "Generated compatibility source: {} routes, {} structural components and {} shared layouts in {}. Runtime verification not run; see .mochi/export.json and EDITING.md.",
+                report.routes,
+                report.components,
+                report.layouts,
+                out.display()
             );
         }
         Command::Serve { site, port } => {

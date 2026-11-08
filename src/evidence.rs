@@ -4,7 +4,7 @@ use crate::{analysis, cache::fingerprint, util};
 use anyhow::{Context, Result, ensure};
 use headless_chrome::{
     Tab,
-    protocol::cdp::{Emulation, Page},
+    protocol::cdp::{CSS, DOM, Emulation, Page, types::Event},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,8 +12,11 @@ use std::{
     io::{Read, Write},
     path::Path,
     str::FromStr,
+    sync::{Arc, Mutex},
 };
 
+mod compact;
+mod raster;
 pub const CAPTURE_SCRIPT: &str = include_str!("source_capture.js");
 pub const MAX_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_NODES: usize = 20_000;
@@ -186,6 +189,8 @@ pub struct Stylesheet {
     pub media: String,
     pub rules: Vec<String>,
     pub readable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_source: Option<String>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Font {
@@ -210,6 +215,25 @@ pub struct Screenshot {
     pub sha256: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceKind {
+    Shadow,
+    Frame,
+    Raster,
+    Nonvisual,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Surface {
+    pub kind: SurfaceKind,
+    pub mode: String,
+    pub css: Vec<String>,
+    pub base_url: String,
+    pub children: Vec<usize>,
+    pub image: Option<Screenshot>,
+    pub bounds: Bounds,
+}
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Capture {
     pub schema_version: u32,
@@ -220,10 +244,15 @@ pub struct Capture {
     pub state: String,
     pub scope: String,
     pub nodes: Vec<Node>,
+    #[serde(with = "compact")]
     pub styles: Vec<BTreeMap<String, String>>,
     pub stylesheets: Vec<Stylesheet>,
     pub fonts: Vec<Font>,
     pub resources: Vec<Resource>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub surfaces: BTreeMap<usize, Surface>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub animation_states: BTreeMap<usize, BTreeMap<String, String>>,
     pub screenshot: Option<Screenshot>,
     pub complete: bool,
     pub issues: Vec<Issue>,
@@ -287,6 +316,65 @@ impl Capture {
                     && issue.node.is_none_or(|id| id < self.nodes.len()),
                 "invalid source issue"
             );
+        }
+        for (&node, state) in &self.animation_states {
+            ensure!(
+                node < self.nodes.len()
+                    && matches!(self.nodes[node].content, Content::Element { .. }),
+                "invalid animated node"
+            );
+            fields(state)?;
+        }
+        ensure!(self.surfaces.len() <= 512, "surface count limit exceeded");
+        for (&node, surface) in &self.surfaces {
+            ensure!(
+                node < self.nodes.len()
+                    && matches!(self.nodes[node].content, Content::Element { .. }),
+                "invalid surface node"
+            );
+            ensure!(
+                matches!(surface.mode.as_str(), "open" | "closed"),
+                "invalid shadow mode"
+            );
+            http_url(&surface.base_url)?;
+            ensure!(
+                surface.css.len() <= MAX_RULES && surface.css.iter().all(|r| r.len() <= MAX_VALUE),
+                "surface stylesheet limit"
+            );
+            let mut unique = BTreeSet::new();
+            ensure!(
+                surface
+                    .children
+                    .iter()
+                    .all(|&child| child < self.nodes.len()
+                        && self.nodes[child].parent == Some(node)
+                        && unique.insert(child)),
+                "invalid surface child"
+            );
+            ensure!(
+                [
+                    surface.bounds.x,
+                    surface.bounds.y,
+                    surface.bounds.width,
+                    surface.bounds.height
+                ]
+                .iter()
+                .all(|n| n.is_finite())
+                    && surface.bounds.width >= 0.0
+                    && surface.bounds.height >= 0.0,
+                "invalid surface bounds"
+            );
+            if let Some(image) = &surface.image {
+                ensure!(
+                    image.path.starts_with("reconstruction/surfaces/")
+                        && Path::new(&image.path)
+                            .components()
+                            .all(|c| matches!(c, std::path::Component::Normal(_)))
+                        && image.sha256.len() == 64
+                        && image.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "invalid surface image"
+                );
+            }
         }
         ensure!(self.metadata.meta.len() <= 256, "metadata limit exceeded");
         for value in [&self.metadata.title, &self.metadata.lang]
@@ -461,6 +549,12 @@ impl Capture {
                 .join(", ")
         );
         ensure!(
+            self.surfaces
+                .values()
+                .all(|s| s.kind != SurfaceKind::Raster || s.image.is_some()),
+            "rendered surface has no captured pixels"
+        );
+        ensure!(
             self.screenshot.is_some(),
             "source evidence has no reference screenshot"
         );
@@ -624,6 +718,18 @@ pub(crate) fn load_with_digest(root: &Path, relative: &Path) -> Result<(Capture,
             "screenshot dimensions disagree with viewport"
         );
     }
+    for surface in capture.surfaces.values() {
+        if let Some(image) = &surface.image {
+            let path = util::checked_path(&root, &root.join(&image.path))?;
+            let png = bounded_read(&path, 64 * 1024 * 1024)?;
+            ensure!(
+                fingerprint(&png) == image.sha256
+                    && png.len() >= 24
+                    && &png[..8] == b"\x89PNG\r\n\x1a\n",
+                "surface image integrity mismatch"
+            );
+        }
+    }
     Ok((capture, digest))
 }
 
@@ -667,16 +773,73 @@ pub fn capture_page(
         "({CAPTURE_SCRIPT})({})",
         serde_json::json!({"bytes": MAX_BYTES, "nodes": MAX_NODES, "depth": 256, "styles": 4096, "rules": MAX_RULES, "value_bytes": MAX_VALUE})
     );
+    // The DevTools CSS domain reads the actual loaded response even when CSSOM
+    // access is denied by the page's origin policy. Do not refetch a potentially
+    // changed stylesheet or change its placement in the live cascade.
+    let headers = Arc::new(Mutex::new(BTreeMap::new()));
+    let received = Arc::clone(&headers);
+    let listener = tab.add_event_listener(Arc::new(move |event: &Event| {
+        if let Event::CSSStyleSheetAdded(event) = event
+            && let Ok(mut headers) = received.lock()
+            && headers.len() < 128
+        {
+            let header = &event.params.header;
+            headers.insert(header.source_url.clone(), header.style_sheet_id.clone());
+        }
+    }))?;
+    tab.call_method(DOM::Enable {
+        include_whitespace: None,
+    })?;
+    tab.call_method(CSS::Enable(None))?;
     let result = (|| -> Result<Vec<String>> {
         let mut paths = Vec::new();
         for viewport in &options.viewports {
+            headers
+                .lock()
+                .map_err(|_| anyhow::anyhow!("stylesheet header lock"))?
+                .clear();
             let metrics: Emulation::SetDeviceMetricsOverride = serde_json::from_value(
                 serde_json::json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": 1, "mobile": false}),
             )?;
-            tab.call_method(metrics)?;
-            tab.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,400))))", true)?;
+            crate::crawl::navigate_dom(tab, &url::Url::parse("about:blank")?)
+                .context("reset document before viewport change")?;
+            tab.call_method(metrics).context("set capture viewport")?;
+            crate::crawl::navigate_dom(tab, &url::Url::parse(&page_url)?)
+                .context("load document at capture viewport")?;
+            tab.evaluate("new Promise(resolve=>setTimeout(resolve,800))", true)
+                .context("settle new viewport document")?;
+            tab.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,400))))", true).context("settle capture viewport")?;
+            let headers = headers
+                .lock()
+                .map_err(|_| anyhow::anyhow!("stylesheet header lock"))?
+                .clone();
+            let mut texts = BTreeMap::new();
+            let mut bytes = 0;
+            for (url, id) in headers {
+                if let Ok(url) = url::Url::parse(&url)
+                    && matches!(url.scheme(), "http" | "https")
+                    && url.origin() != url::Url::parse(&page_url)?.origin()
+                    && let Ok(text) = tab.call_method(CSS::GetStyleSheetText { style_sheet_id: id })
+                    && text.text.len() <= MAX_VALUE
+                {
+                    bytes += text.text.len();
+                    ensure!(
+                        bytes <= MAX_BYTES as usize,
+                        "stylesheet response budget exceeded"
+                    );
+                    texts.insert(url.to_string(), text.text);
+                }
+            }
+            tab.evaluate(
+                &format!(
+                    "window.__mochiStylesheetResponses={}",
+                    serde_json::to_string(&texts)?
+                ),
+                false,
+            )?;
             let raw = tab
-                .evaluate(&script, true)?
+                .evaluate(&script, true)
+                .context("evaluate capture script")?
                 .value
                 .context("missing source evidence")?;
             let raw = raw.as_str().context("invalid source evidence")?;
@@ -685,6 +848,43 @@ pub fn capture_page(
                 "source evidence byte limit exceeded"
             );
             let mut capture: Capture = serde_json::from_str(raw)?;
+            capture.validate()?;
+            for (&node, surface) in &mut capture.surfaces {
+                if surface.kind != SurfaceKind::Raster {
+                    continue;
+                }
+                let b = &surface.bounds;
+                if b.width < 0.5 || b.height < 0.5 {
+                    surface.kind = SurfaceKind::Nonvisual;
+                    continue;
+                }
+                ensure!(
+                    b.width * b.height <= 16_777_216.0,
+                    "surface pixel budget exceeded"
+                );
+                let image = format!(
+                    "reconstruction/surfaces/page-{page:05}-{}x{}-node-{node}.png",
+                    viewport.width, viewport.height
+                );
+                let pixels=tab.evaluate(&format!("(()=>{{const element=window.__mochiCapturedNodes?.[{node}];if(element?.localName!=='canvas')return null;try{{return element.toDataURL('image/png')}}catch{{return null}}}})()"),false).context("read isolated canvas pixels")?.value.and_then(|value|value.as_str().map(str::to_owned));
+                let png = if let Some(data) = pixels {
+                    use base64::Engine;
+                    ensure!(data.len() <= 90 * 1024 * 1024, "canvas encoding byte limit");
+                    let encoded = data
+                        .strip_prefix("data:image/png;base64,")
+                        .context("invalid canvas PNG encoding")?;
+                    base64::engine::general_purpose::STANDARD.decode(encoded)?
+                } else {
+                    raster::isolated(tab, node, b)
+                        .with_context(|| format!("isolate rendered surface {node}"))?
+                };
+                ensure!(png.len() <= 64 * 1024 * 1024, "surface image byte limit");
+                surface.image = Some(Screenshot {
+                    path: image.clone(),
+                    sha256: fingerprint(&png),
+                });
+                write_new(root, Path::new(&image), &png)?;
+            }
             capture.validate()?;
             ensure!(
                 capture.url == page_url,
@@ -698,6 +898,7 @@ pub fn capture_page(
                 capture.viewport == *viewport,
                 "source viewport override did not take effect"
             );
+            tab.evaluate("window.__mochiPaint ? window.__mochiPaint() : new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",true).context("present captured surface frame")?;
             let name = format!("page-{page:05}-{}x{}", viewport.width, viewport.height);
             let image = format!("reconstruction/screens/{name}.png");
             let png = tab.capture_screenshot(
@@ -740,6 +941,8 @@ pub fn capture_page(
         write_new(root, Path::new(&manifest), &serde_json::to_vec(&record)?)?;
         Ok(paths)
     })();
+    tab.remove_event_listener(&listener)?;
+    tab.call_method(CSS::Disable(None))?;
     let restored = tab.call_method(Emulation::ClearDeviceMetricsOverride(None));
     match result {
         Err(error) => Err(error),

@@ -1,23 +1,34 @@
 # Editable source projects
 
-Status: full source export remains a design proposal. Structural capture, subtree hashing,
-exact template clustering, bounded asset concurrency, and opt-in revalidated asset caching
-are implemented locally. Research checked on 2026-11-07.
+Current source-quality decisions: [Authored source architecture](designs/AUTHORED_SOURCE.md). Current exports are compatibility reconstructions with physical TanStack routes and Bun; semantic components, Base UI interaction conversion and token reconstruction remain pending. Earlier design choices below are historical where they conflict.
+
+Status: the first bounded TanStack Start source exporter is implemented locally, alongside
+capture, structural analysis and the project model. Additional framework/styling adapters
+remain design work. Typed semantic interpretation is implemented locally with controlled
+responses; live provider access and model quality remain unqualified. Research checked on
+2026-11-07/08.
 
 The development checkout also implements bounded initial-state source evidence via
 `clone --source-evidence` and offline `check-evidence`: full ordered text, CSSOM rules,
 computed styles, font declarations, viewport screenshots, and explicit completeness issues.
-This is the first capture contract, not an editable source exporter or verified visual parity.
+These are source observations; capture completeness alone does not establish reconstructed
+application behavior or visual parity.
 
 `model-project <clone>` now adds a deterministic [project model](PROJECT_MODEL.md): literal
 routes, full observations, exact style pooling, structural candidates with prop bindings,
 shared-shell candidates, navigation references, and an asset registry. This remains data;
-it does not emit framework files or recover application behavior.
+it does not itself emit framework files or recover application behavior.
+
+`export <clone> -o <new-project> --framework tanstack-start` now consumes that saved model
+and emits editable JSX, prop bindings, shared layouts, explicit literal route files, captured
+CSS Modules and local candidate assets. It provides a Base UI native-button wrapper and
+preserves other supported native control defaults. See [the export contract](EXPORT.md)
+for qualified scope, refusal conditions, the pinned toolchain and runtime checks.
 
 The [source-exporter decision map](designs/SOURCE_EXPORTER.md) records the proposed next
 milestone, including TypeSafe Jev's bounded interpretation role, model-independent code
-generation, adapter choices, and acceptance checks. The exporter and Jev integration remain
-planned; the mechanical project-model stage is implemented locally.
+generation, adapter choices, and acceptance checks. The first mechanical exporter and bounded
+interpretation pipeline are implemented locally; broader adapters remain planned.
 
 The intended output is an editable frontend project with reusable components and native
 framework routing. The existing Rust CLI captures deployed HTML and assets. Its Next.js
@@ -35,36 +46,48 @@ Flight editing and preview helpers do not reconstruct React source or run a Next
   a representative page. Repeated subtrees become ranked candidates with source references.
   Content and asset URL differences are potential future props, not automatically inferred props.
 - `src/evidence.rs` validates the richer source schema, expected viewport manifests, and
-  screenshot integrity. It rejects incomplete input for legacy projection and future export.
+  screenshot integrity. It rejects incomplete input for legacy projection and source export.
   `src/source_capture.js` preserves full text and readable CSS while recording unsupported
   content and capture limits; it observes initial states without interacting with controls.
 - `src/cache.rs` revalidates opt-in cached public asset bodies with the origin. Cache
   objects use content hashes; URL identities preserve query variants. Bounded download
   batches preserve deterministic output writes and existing collision reporting.
+- `src/project.rs` aligns richer observations into a validated project model and extracts
+  varying content/control slots as props, retaining source/style references.
+- `src/export.rs` emits the bounded TanStack Start project with source/asset checks and
+  atomic output publication. Runtime verification remains separate from emission.
 - `src/edit.rs` rewrites captured text and URLs, including Flight payloads.
 - `src/serve.rs` serves the captured files with clean URLs and Next.js image/RSC handling.
 
-There is no generated `package.json`, `ui/`, `hooks/`, router source, Base UI/shadcn
-dependency, Tailwind configuration, StyleX compiler, or token extraction. Styles survive
-as compiled CSS, inline styles, or original runtime behavior when their assets are captured.
-External font/CDN dependencies may remain remote. This is not verified compatibility with
-every framework or CSS engine.
+Ordinary mirrors have no framework project. The separate exporter now creates `package.json`,
+route/component/layout source and Base UI button wrappers under `components/ui/` when needed.
+It does not invent hooks, a backend, a shadcn theme, Tailwind configuration, StyleX source or
+semantic token names. Captured CSS selectors/variables survive through the initial global
+compatibility backend. Shadow content and readable frames now preserve their boundaries;
+canvas/WebGL scenes have explicit captured assets in editable components. Viewport-specific
+DOM and observed CSS animation declarations are emitted as well. Original canvas programs
+and input/animation logic remain separate from this initial-state preservation. External/unresolved font/CDN resources may remain remote; this does
+not establish compatibility with every site, framework or CSS engine.
 
 ## AI-assisted interpretation
 
-The implemented structural analysis makes no model calls. It produces observations such
-as: an `article` subtree with a particular structure occurs on 40 pages, and these are its
-source nodes and captured styles. A future model could interpret representative examples
-as a `ProductCard`, propose `title`, `price`, and `image` props, and suggest boundaries between
-that component and its surrounding list. Those are proposals requiring validation.
+The structural analysis and mechanical exporter make no model calls. Algorithms identify
+repeated subtrees, align content slots and emit source. The optional Jev interpreter receives
+bounded examples and fixed choices for component/text roles, plus a separate applicability
+question. Rust validates the returned IDs, choices, probabilities and usage. Attribute roles
+supported directly by evidence stay deterministic.
 
-Interpretation should consume bounded candidate examples and shared template representatives,
-then return structured component/prop/behavior proposals with evidence references and unresolved
-questions. It should not regenerate every page independently or claim the original hooks,
-backend, or route definitions were recovered. Framework code generation and visual/interaction
-verification remain separate stages. No provider, paid model integration, approximate template
-matching, automatic source exporter, or adaptive crawl selection is implemented yet. Current
-clustering analyzes the pages already visited and does not reduce crawl coverage.
+`plan-interpretation` saves reviewable request payloads locally; `interpret` defaults to cache
+replay. Explicit `--live` requires a local key and positive request/token/cost/rate/deadline
+limits. The model is pinned to `jev-1.14.0`. Every proposal requires review; unknown or
+unfavorable applicability abstains. Saved interpretations can be attached to exports as
+comments and metadata without changing neutral names, routes, content or primitive mappings.
+
+Controlled local tests verify transport, replay, reservations, recovery and export annotations.
+No live Jev access, accuracy, calibration or billing is established. See the
+[interpretation contract](INTERPRETATION.md) for payload limits, accounting assumptions and
+qualification gaps. Approximate template matching and adaptive crawl selection remain future
+work; the current pipeline analyzes the pages already visited.
 
 ## Architecture for reconstruction
 
