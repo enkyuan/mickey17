@@ -1,5 +1,5 @@
 //! Run with: cargo run --release --example heap_profile
-use perfectclone::{edit::Replacer, flight, trackers};
+use mosha::{edit::Replacer, flight, trackers};
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 fn workload() {

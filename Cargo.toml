@@ -1,10 +1,13 @@
 [package]
-name = "perfectclone"
+name = "mosha"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 description = "Browser-rendered website mirroring and hydration-aware editing"
 license = "MIT"
+repository = "https://github.com/enkyuan/mosha"
+readme = "README.md"
+exclude = ["/.github/**", "/.gstack/**", "/.editorconfig"]
 
 [dependencies]
 anyhow = "1"

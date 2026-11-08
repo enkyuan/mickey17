@@ -4,22 +4,22 @@ Clone a website's frontend with Chromium, then edit and serve the local copy. Wr
 
 ## Use
 
-Requires Rust 1.99.1 and Chrome or Chromium. The executable is currently named `perfectclone`.
+Requires Rust 1.99.1 and Chrome or Chromium.
 
 ```sh
 cargo install --path . --locked
 
-perfectclone clone https://example.com -o example
-perfectclone serve example
-perfectclone replace example 'Example' 'Demo'
-perfectclone rehost example https://example.com https://demo.example
-perfectclone strip-trackers example
+mosha clone https://example.com -o example
+mosha serve example
+mosha replace example 'Example' 'Demo'
+mosha rehost example https://example.com https://demo.example
+mosha strip-trackers example
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
 manifest for failed resources. `--extract` adds text, metadata and screenshots; `--max-pages`
 defaults to 200. Trackers and robots rules can be overridden with `--keep-trackers` and
-`--ignore-robots`. Set `PERFECTCLONE_CHROME` if browser discovery fails.
+`--ignore-robots`. Set `MOSHA_CHROME` if browser discovery fails.
 
 ## Capabilities
 
