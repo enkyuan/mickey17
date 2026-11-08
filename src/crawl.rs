@@ -138,7 +138,7 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
     }
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
-        .user_agent("mosha/0.2")
+        .user_agent("mochi/0.2")
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 10 {
                 attempt.error("too many redirects")
@@ -201,11 +201,11 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
     launch
         .window_size(Some((1440, 900)))
         .ignore_certificate_errors(false);
-    if let Some(path) = std::env::var_os("MOSHA_CHROME") {
+    if let Some(path) = std::env::var_os("MOCHI_CHROME") {
         launch.path(Some(path.into()));
     }
     let browser = Browser::new(launch.build().map_err(|e| anyhow::anyhow!(e))?)
-        .context("launch Chromium; install Chrome or set MOSHA_CHROME")?;
+        .context("launch Chromium; install Chrome or set MOCHI_CHROME")?;
     let tab = browser.new_tab()?;
     tab.set_default_timeout(Duration::from_secs(45));
     let assets = Arc::new(Mutex::new(BTreeSet::new()));
@@ -237,7 +237,7 @@ pub fn clone_site(start: &str, out: &Path, options: &Options) -> Result<mirror::
         if !options.ignore_robots
             && !robotstxt::DefaultMatcher::default().one_agent_allowed_by_robots(
                 &robots,
-                "mosha",
+                "mochi",
                 u.as_str(),
             )
         {
