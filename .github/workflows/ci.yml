@@ -37,12 +37,13 @@ jobs:
             # to create its sandbox, but not a downloaded tool-cache binary.
             CHROME_PATH="$(command -v google-chrome)"
           fi
-          echo "MOSHA_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
+          echo "MOCHI_CHROME=$CHROME_PATH" >> "$GITHUB_ENV"
           "$CHROME_PATH" --version
       - name: Check Linux browser startup
         if: runner.os == 'Linux'
         run: |
-          timeout 20s "$MOSHA_CHROME" --headless --disable-gpu \
+          # Cold hosted runners can render the document near the old 20s cutoff.
+          timeout --kill-after=5s 60s "$MOCHI_CHROME" --headless --disable-gpu \
             --no-first-run --user-data-dir="$(mktemp -d)" --dump-dom about:blank
       - run: cargo test --locked --test browser -- --ignored
       - run: cargo run --locked --release --example heap_profile

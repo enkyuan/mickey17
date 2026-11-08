@@ -1,9 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mosha::{crawl, edit, serve, trackers, util};
+use mochi::{crawl, edit, serve, trackers, util};
 use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
+    name = "mochi",
     version,
     about = "Mirror websites with Chromium; edit and serve them with Rust"
 )]

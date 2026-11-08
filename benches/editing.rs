@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use mosha::{edit::Replacer, flight};
+use mochi::{edit::Replacer, flight};
 use std::hint::black_box;
 fn editing(c: &mut Criterion) {
     let r = Replacer::new("Acme", "Globex", true, true).expect("replacer");
