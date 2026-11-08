@@ -17,15 +17,17 @@ mochi replace example 'Example' 'Demo'
 mochi rehost example https://example.com https://demo.example
 mochi strip-trackers example
 
-# Development checkout installed with --path . (not registry 0.2.0):
+# Structural analysis:
 mochi clone https://example.com -o example-analyzed --analyze --jobs 4 --cache-dir ../mochi-cache
 mochi analyze example-analyzed
 
-# Richer evidence for the source-export pipeline (development checkout):
+# Evidence for editable source projects:
 mochi clone https://example.com -o example-source --source-evidence --max-pages 20
 mochi check-evidence example-source
 mochi model-project example-source
-mochi export example-source --compatibility -o example-app --framework tanstack-start
+mochi plan-source example-source -o example-plan.json
+# Review the evidence and author a specification (see docs/AUTHORED_EXPORT.md).
+mochi export example-source --authored-spec example-authored.json -o example-app
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the
@@ -72,8 +74,7 @@ for its current boundaries and toolchain.
 
 ## Structural analysis
 
-These options are available in the development checkout; the published 0.2.0 release
-predates this analysis pipeline. Install the checkout with `cargo install --path . --locked`.
+These options are included in mochi-web 0.3.0 and later.
 
 `clone --analyze` captures rendered DOM after JavaScript and lazy loading, then produces
 `analysis/report.json`. `mochi analyze <clone>` rebuilds that report offline from the saved
@@ -152,21 +153,36 @@ The model has a 64 MiB aggregate source JSON budget, 128 MiB output budget, 256 
 local asset budget, and at most 256 selected component candidates. Failed validation or an
 input changing during a rebuild preserves the previous model. See [the model contract](docs/PROJECT_MODEL.md).
 
-These capture, validation, modeling, and initial export features are in the development
-checkout. Semantic token naming, richer control mappings and other framework/styling adapters
-remain future steps. These capture/model/export commands make no AI calls.
+Authored export accepts reviewed semantic components, tokens, fonts, local artwork,
+and graphics modules. TanStack Start and Tailwind v4 are the implemented output
+adapters. Capture/model/export commands make no AI calls.
 
 `plan-interpretation <clone>` prepares bounded typed Jev requests locally. `interpret <clone>`
 defaults to offline replay; `--live` requires explicit request/token/cost/rate/deadline limits
 and a locally configured TypeSafe key. All semantic results require review and calibration
-remains unqualified. `export --interpretation` attaches validated saved proposals as comments
+remains unqualified. `export --compatibility --interpretation` attaches validated saved proposals as comments
 and metadata without changing mechanical names or behavior. The adapter, replay and budgets
 have controlled local tests; live access, billing and model quality have not been qualified.
 See [semantic interpretation](docs/INTERPRETATION.md).
 
+## Authored source export
+
+`export --authored-spec <specification.json>` emits typed components, physical
+TanStack routes, reusable Base UI compositions, scoped fonts/tokens, CSS Modules,
+Tailwind v4, and Motion. Reviewed TypeScript, shader, and local asset modules support
+custom graphics. Source filenames describe their purpose; generated reports and
+build artifacts stay in dot directories. Bun is the default runtime and toolchain.
+
+This path requires an evidence-bound reviewed specification. `plan-source` prepares
+evidence, and Jev can classify proposals, but neither automatically authors a complete
+application. No recovered controller is emitted by authored export. An export without
+an authored specification or an explicit `--compatibility` flag fails with guidance.
+See [authored export](docs/AUTHORED_EXPORT.md) and
+[deterministic qualification](docs/DETERMINISTIC_RECONSTRUCTION.md).
+
 ## Compatibility source export
 
-`export <clone> -o <new-project> --framework tanstack-start` reads a saved model, checks it
+`export <clone> --compatibility -o <new-project> --framework tanstack-start` reads a saved model, checks it
 against the current source evidence/assets, and generates JSX, structural component candidates,
 shared layout candidates, physical route files, compatibility CSS, local images/fonts,
 and a project-owned Base UI button wrapper when buttons are present. It refuses existing
