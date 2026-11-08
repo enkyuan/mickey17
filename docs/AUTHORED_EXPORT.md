@@ -43,7 +43,7 @@ specification. Existing output directories and plan files are never overwritten.
 - Known reconstruction gaps, retained in the generated report and editing guide.
 
 The initial primitive set covers NavigationMenu, Menu, Dialog, Field, Form, Input,
-Button, Switch and Tabs. It is an explicit subset of Base UI's APIs. Add supported
+Button, Switch and Tabs. Owned modules also support Accordion. It is an explicit subset of Base UI's APIs. Add supported
 parts and semantic expressions as observed behavior needs them; do not silently
 fall back to executing an old controller. The semantic tree has no arbitrary
 JavaScript expressions, raw HTML, or inline style bags. Custom algorithms use
@@ -119,6 +119,7 @@ Each external component is a named export with an explicit typed prop contract:
 Use a node with `kind: "external"`, the named export, and typed `props` to mount it.
 Declare every imported local module; the complete graph must be reachable from
 used entries. Ordinary relative and `@/` imports, literal lazy imports, CSS Modules,
+named `assets/vectors/*.ts` geometry, global design definitions under `styles/`,
 and `assets/shaders/*.glsl?raw` imports are supported. React, TanStack Router and
 direct Base UI are available; opting into `three` pins Three and its types to
 0.183.0 with a separate frozen Bun lock. Bundled framework runtimes, explicit
@@ -194,10 +195,44 @@ Motion implements reveal effects and frame scheduling; `MotionConfig` follows th
 shared system/user reduced-motion preference. Custom WebGL scenes retain explicit
 resource ownership and cleanup. Motion is an approved owned-source import.
 
-The three trial projects have this starter. Natural's hero and Garden's intro now
-use Motion; Microsoft `/models/` uses Motion reveals and Base UI compositions.
-Remaining recovered controllers have not been semantically converted by this change.
+The Natural, Infinite Garden, and Microsoft AI source packs use owned modules for
+their nine captured routes, including their graphics and interactions. The CLI
+exports these reviewed inputs without recovered controllers. These local source
+packs are qualification inputs, not bundled site templates or proof of automatic
+semantic interpretation. Follow the [deterministic qualification method](DETERMINISTIC_RECONSTRUCTION.md)
+before treating an authored candidate as a faithful reconstruction.
 
 References: [Base UI setup](https://base-ui.com/react/overview/quick-start),
 [Tailwind Vite integration](https://tailwindcss.com/docs/installation/using-vite),
 [Motion animation controls](https://motion.dev/docs/animate).
+
+## Reviewed local artwork
+
+`source_assets` declares passive assets used directly by owned modules or styles.
+Each key is a descriptive path under `assets/images`, `assets/vectors`,
+`assets/fonts`, or `assets/videos`. Each entry supplies `file`, `sha256`, `purpose`,
+and `evidence`. File paths are relative to the specification. PNG, JPEG, WebP,
+AVIF, GIF, SVG, ICO, WOFF/WOFF2, TTF/OTF, MP4 and WebM are accepted. Assets are copied
+byte-for-byte, checked against their declared SHA-256, and rechecked before atomic
+publication. Files must be reachable through a declared source import or local CSS
+`url()`; unused assets, remote CSS URLs, traversal, and hash mismatches are refused.
+The budgets are 256 local assets, 16 MiB per asset and 256 MiB in total.
+
+This supports reviewed artwork recovered from an SVG or shader, and media retrieved
+during interpretation that was absent from the original capture. Evidence references
+record the observed source context; they do not prove the author's reconstruction is
+visually equivalent. The source report records asset hashes alongside module hashes.
+
+Component names, source paths, asset paths, feature groups and content filenames
+reject compiler identities such as `Client72b310ddae8ef28e`, `Module123`,
+`Component19` and hash-suffixed names. Descriptive route slugs and names such as
+`ClientLogos` and `WebGL2Scene` remain valid. Production bundlers still fingerprint
+built filenames inside `.output`; that is separate from editable source naming.
+
+## Explicit compatibility migration
+
+An export without `--authored-spec` now stops with instructions to prepare semantic
+source. To intentionally obtain the older structural replay output, pass
+`--compatibility`, including with `--interpretation` or `--recover-client-route`.
+Compatibility output remains a diagnostic baseline and does not claim semantic
+conversion. Existing projects are never silently rewritten.

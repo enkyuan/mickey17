@@ -307,6 +307,7 @@ fn valid_controlled_results_replay_without_calls_and_export_only_review_annotati
     let cli_out = parent.path().join("cli");
     let cli = std::process::Command::new(env!("CARGO_BIN_EXE_mochi"))
         .arg("export")
+        .arg("--compatibility")
         .arg(&root)
         .arg("--interpretation")
         .arg("-o")

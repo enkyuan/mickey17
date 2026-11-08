@@ -160,3 +160,128 @@ fn owned_graphics_are_typed_reachable_modules_with_explicit_imports() {
     std::fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
     assert!(authored::generate(&root, &input, &bad).is_err());
 }
+
+#[test]
+fn reviewed_local_assets_and_styles_have_closed_import_graphs() {
+    use sha2::{Digest, Sha256};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("capture");
+    let mut spec = support::fixture(&root);
+    let evidence = spec["components"]["CatalogPage"]["evidence"].clone();
+    let picture =
+        b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'><circle r='1'/></svg>";
+    let source = "import image from '@/assets/vectors/catalog.svg'; import '@/styles/catalog-fonts.css'; import {Accordion} from '@/components/ui/accordion'; export function CatalogArt(){return <Accordion.Root><img src={image} alt='Catalog'/></Accordion.Root>}";
+    std::fs::write(temp.path().join("art.tsx"), source).unwrap();
+    std::fs::write(temp.path().join("catalog.svg"), picture).unwrap();
+    std::fs::write(
+        temp.path().join("theme.css"),
+        ":root { --catalog-ink: black; }",
+    )
+    .unwrap();
+    spec["source_modules"] = json!({
+        "features/catalog/catalog-art.tsx":{"file":"art.tsx","purpose":"Catalog artwork","evidence":evidence},
+        "styles/catalog-fonts.css":{"file":"theme.css","purpose":"Catalog theme","evidence":evidence}
+    });
+    spec["source_assets"] = json!({"assets/vectors/catalog.svg":{"file":"catalog.svg","sha256":format!("{:x}",Sha256::digest(picture)),"purpose":"Owned catalog vector","evidence":evidence}});
+    spec["external_components"] =
+        json!({"CatalogArt":{"module":"features/catalog/catalog-art.tsx"}});
+    spec["components"]["CatalogPage"]["body"]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind":"external","name":"CatalogArt"}));
+    let input = temp.path().join("spec.json");
+    std::fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+    let out = temp.path().join("app");
+    let report = authored::generate(&root, &input, &out).unwrap();
+    assert_eq!(report.source_assets.len(), 1);
+    assert_eq!(
+        std::fs::read(out.join("src/assets/vectors/catalog.svg")).unwrap(),
+        picture
+    );
+    assert!(out.join("src/components/ui/accordion.tsx").exists());
+    let bad = temp.path().join("bad");
+    std::fs::write(temp.path().join("catalog.svg"), b"changed").unwrap();
+    assert!(
+        authored::generate(&root, &input, &bad)
+            .unwrap_err()
+            .to_string()
+            .contains("hash mismatch")
+    );
+    assert!(!bad.exists());
+    std::fs::write(temp.path().join("catalog.svg"), picture).unwrap();
+    std::fs::write(
+        temp.path().join("art.tsx"),
+        source.replace(
+            "import image from '@/assets/vectors/catalog.svg';",
+            "const image='';",
+        ),
+    )
+    .unwrap();
+    assert!(
+        authored::generate(&root, &input, &bad)
+            .unwrap_err()
+            .to_string()
+            .contains("unreachable")
+    );
+    assert!(!bad.exists());
+    std::fs::write(temp.path().join("art.tsx"), source).unwrap();
+    std::fs::write(
+        temp.path().join("theme.css"),
+        ".art{background:url(https://example.test/remote.svg)}",
+    )
+    .unwrap();
+    assert!(authored::generate(&root, &input, &bad).is_err());
+    assert!(!bad.exists());
+}
+
+#[test]
+fn cli_requires_an_explicit_compatibility_choice() {
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("app");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_mochi"))
+        .args(["export", "missing-capture", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--authored-spec"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn owned_pages_use_direct_file_routes_and_single_design_definitions() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("capture");
+    let mut spec = support::fixture(&root);
+    let evidence = spec["components"]["CatalogPage"]["evidence"].clone();
+    spec["components"] = json!({"CatalogPage":{"feature":"catalog","purpose":"Catalog page","evidence":evidence,"body":{"kind":"external","name":"CatalogScreen"}}});
+    spec["routes"][0]["props"] = json!({});
+    spec["tokens"] = json!({});
+    spec["token_scopes"] = json!([]);
+    spec["globals"] = json!([]);
+    spec["source_modules"] = json!({
+        "features/catalog/catalog-screen.tsx":{"file":"screen.tsx","purpose":"Typed catalog page","evidence":evidence},
+        "styles/tokens.css":{"file":"tokens.css","purpose":"Single owned token definition","evidence":evidence}
+    });
+    spec["external_components"] =
+        json!({"CatalogScreen":{"module":"features/catalog/catalog-screen.tsx"}});
+    std::fs::write(temp.path().join("screen.tsx"),"import '@/styles/tokens.css'; export function CatalogScreen(){return <main><h1>Catalog</h1></main>}").unwrap();
+    std::fs::write(temp.path().join("tokens.css"), ":root { --ink: #123; }").unwrap();
+    let input = temp.path().join("spec.json");
+    std::fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+    let out = temp.path().join("app");
+    authored::generate(&root, &input, &out).unwrap();
+    let route = std::fs::read_to_string(out.join("src/routes/catalog/index.tsx")).unwrap();
+    assert!(route.contains("component: CatalogScreen"));
+    assert!(!out.join("src/features/catalog/catalog-page.tsx").exists());
+    assert!(!out.join("src/features/catalog/catalog-content.ts").exists());
+    assert!(!out.join("src/lib/assets.ts").exists());
+    assert!(
+        std::fs::read_to_string(out.join("src/styles/tokens.css"))
+            .unwrap()
+            .contains("#123")
+    );
+    spec["tokens"] = json!({"ink":"black"});
+    std::fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+    assert!(authored::generate(&root, &input, &temp.path().join("bad")).is_err());
+}

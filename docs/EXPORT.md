@@ -8,7 +8,7 @@ model; it does not embed a DOM-JSON interpreter or replay original JavaScript bu
 mochi clone https://example.com -o captured --source-evidence --max-pages 20
 mochi check-evidence captured
 mochi model-project captured
-mochi export captured -o reconstructed --framework tanstack-start
+mochi export captured --compatibility -o reconstructed --framework tanstack-start
 cd reconstructed
 bun install --frozen-lockfile
 bun run build
@@ -24,7 +24,7 @@ and mirror editing retain their existing behavior. Registry version 0.2.0 predat
 ## Recovering client behavior as editable source
 
 ```sh
-mochi export captured -o reconstructed --recover-client-route /
+mochi export captured --compatibility -o reconstructed --recover-client-route /
 ```
 
 The opt-in adapters recover public React client components from supported saved

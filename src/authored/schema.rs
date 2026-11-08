@@ -13,6 +13,8 @@ pub struct Specification {
     #[serde(default)]
     pub source_modules: BTreeMap<String, SourceModule>,
     #[serde(default)]
+    pub source_assets: BTreeMap<String, SourceAsset>,
+    #[serde(default)]
     pub external_components: BTreeMap<String, ExternalComponent>,
     #[serde(default)]
     pub libraries: Vec<String>,
@@ -236,4 +238,13 @@ pub struct ExternalComponent {
     pub module: String,
     #[serde(default)]
     pub props: BTreeMap<String, Type>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceAsset {
+    pub file: String,
+    pub sha256: String,
+    pub purpose: String,
+    pub evidence: Vec<SourceRef>,
 }

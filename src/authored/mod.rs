@@ -1,7 +1,9 @@
 //! Semantic source synthesis from a bounded, evidence-bound program. No model
 //! calls, bundle loading, or guessed backend behavior. Custom algorithms are
 //! explicit reviewed typed modules with a validated import graph.
+mod assets;
 mod emit;
+mod names;
 mod schema;
 mod source;
 mod validate;
@@ -22,12 +24,14 @@ pub struct Report {
     pub component_paths: BTreeMap<String, String>,
     pub recovered_modules: usize,
     pub source_modules: BTreeMap<String, String>,
+    pub source_assets: BTreeMap<String, String>,
     pub gaps: Vec<String>,
     pub verification: String,
 }
 pub(crate) fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    let file = std::fs::File::open(path)?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("read authored input {}", path.display()))?;
     ensure!(
         file.metadata()?.is_file() && file.metadata()?.len() <= max,
         "authored input exceeds byte budget"
@@ -84,12 +88,14 @@ pub fn generate(root: &Path, specification: &Path, out: &Path) -> Result<Report>
         serde_json::from_slice(&bytes).context("parse authored specification")?;
     let model = project::derive(&root)?;
     validate::specification(&spec, &model)?;
+    let source_assets = assets::load(specification, &spec, &model)?;
     let sources = source::load(specification, &spec, &model)?;
     let parent = out
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."))
-        .canonicalize()?;
+        .canonicalize()
+        .context("authored output parent must already exist")?;
     let destination = util::checked_path(
         &parent,
         &parent.join(out.file_name().context("output directory name missing")?),
@@ -114,6 +120,7 @@ pub fn generate(root: &Path, specification: &Path, out: &Path) -> Result<Report>
         &model,
         &fingerprint(&bytes),
         &sources,
+        &source_assets,
     )?;
     ensure!(
         read(specification, 8 * 1024 * 1024)? == bytes,
@@ -126,6 +133,10 @@ pub fn generate(root: &Path, specification: &Path, out: &Path) -> Result<Report>
     ensure!(
         source::load(specification, &spec, &model)? == sources,
         "owned source changed during export"
+    );
+    ensure!(
+        assets::load(specification, &spec, &model)? == source_assets,
+        "owned assets changed during export"
     );
     crate::export::publish(stage.path(), &destination)?;
     Ok(report)

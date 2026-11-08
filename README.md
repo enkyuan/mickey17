@@ -25,7 +25,7 @@ mochi analyze example-analyzed
 mochi clone https://example.com -o example-source --source-evidence --max-pages 20
 mochi check-evidence example-source
 mochi model-project example-source
-mochi export example-source -o example-app --framework tanstack-start
+mochi export example-source --compatibility -o example-app --framework tanstack-start
 ```
 
 Clones contain `site/` and `manifest.json`. Use a new or empty output directory and check the

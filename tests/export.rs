@@ -101,6 +101,7 @@ fn emits_real_jsx_props_shared_layouts_literal_routes_and_reproducible_lockfile(
     let cli = root.path().join("cli");
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_mochi"))
         .arg("export")
+        .arg("--compatibility")
         .arg(&source)
         .args(["--framework", "tanstack-start", "-o"])
         .arg(&cli)

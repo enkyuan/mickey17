@@ -33,7 +33,7 @@ targets, skipped items, configuration, evidence digest, question version and pin
 
 ```sh
 mochi interpret ./capture --replay
-mochi export ./capture -o ./app --interpretation
+mochi export ./capture --compatibility -o ./app --interpretation
 ```
 
 `interpret` defaults to replay. It requires a complete, valid local cache, reads no API key

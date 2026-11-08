@@ -122,8 +122,9 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
     let mut metadata = BTreeMap::new();
     let mut total = 0;
     let path_pattern = regex::Regex::new(
-        r"^(?:features|components|hooks|lib|types|assets/shaders)/[a-z0-9][a-z0-9/_.-]*\.(?:ts|tsx|glsl|module\.css)$",
+        r"^(?:features|components|hooks|lib|types|assets/shaders|assets/vectors|styles)/[a-z0-9][a-z0-9/_.-]*\.(?:ts|tsx|glsl|css)$",
     )?;
+    let urls = regex::Regex::new(r#"url\(\s*["']?([^\s'"\)]+)["']?\s*\)"#)?;
     let mut portable = BTreeSet::new();
     for (path, module) in &s.source_modules {
         ensure!(
@@ -131,6 +132,7 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                 && !path.starts_with("components/ui/")
                 && !path.split('/').any(|p| p == ".." || p == ".")
                 && !path.contains("//")
+                && path.split('/').all(super::names::meaningful)
                 && portable.insert(path.to_lowercase()),
             "invalid owned module path"
         );
@@ -185,11 +187,21 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                 "invalid owned source {path}: {:?}",
                 info.errors
             );
-        } else if path.ends_with(".module.css") {
+        } else if path.ends_with(".css") {
             ensure!(
-                !text.contains("@import") && !text.contains(":global"),
+                !text.contains("@import")
+                    && !text.contains(":global")
+                    && (path.ends_with(".module.css") || path.starts_with("styles/")),
                 "owned component CSS must stay scoped"
             );
+            for capture in urls.captures_iter(&text) {
+                let url = &capture[1];
+                ensure!(
+                    url.starts_with('.') || url.starts_with("@/"),
+                    "owned CSS assets must be explicit local imports"
+                );
+                info.imports.insert(url.into());
+            }
         } else {
             ensure!(
                 path.starts_with("assets/shaders/") && !text.contains("#include \""),
@@ -215,6 +227,8 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                 .find(|p| files.contains_key(p));
                 if let Some(target) = target {
                     dependencies.insert(target);
+                } else if s.source_assets.contains_key(&resolved) {
+                    dependencies.insert(resolved);
                 } else {
                     ensure!(
                         matches!(
@@ -230,6 +244,7 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                                 | "components/ui/navigation-menu"
                                 | "components/ui/switch"
                                 | "components/ui/tabs"
+                                | "components/ui/accordion"
                         ),
                         "owned import {import} in {path} is unresolved"
                     );
@@ -252,6 +267,9 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
             }
         }
         edges.insert(path.clone(), dependencies);
+    }
+    for path in s.source_assets.keys() {
+        edges.insert(path.clone(), BTreeSet::new());
     }
     let mut used = BTreeSet::new();
     fn entries(n: &Node, out: &mut BTreeSet<String>) {
@@ -303,7 +321,7 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
         }
     }
     ensure!(
-        reached.len() == files.len(),
+        reached.len() == files.len() + s.source_assets.len(),
         "unreachable owned modules are refused"
     );
     Ok(files)

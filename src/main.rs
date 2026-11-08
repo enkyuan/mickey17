@@ -101,6 +101,9 @@ enum Command {
         /// Generate typed source from a reviewed semantic specification, without recovered bundles.
         #[arg(long, conflicts_with_all = ["interpretation", "recover_client_routes"])]
         authored_spec: Option<PathBuf>,
+        /// Explicitly export structural compatibility source, which can contain recovered controllers.
+        #[arg(long, conflicts_with = "authored_spec")]
+        compatibility: bool,
         /// Attach saved semantic proposals as review-required comments; never calls AI.
         #[arg(long)]
         interpretation: bool,
@@ -322,6 +325,7 @@ fn main() -> Result<()> {
             out,
             framework: Framework::TanstackStart,
             authored_spec,
+            compatibility,
             interpretation,
             recover_client_routes,
         } => {
@@ -333,6 +337,10 @@ fn main() -> Result<()> {
                 );
                 return Ok(());
             }
+            anyhow::ensure!(
+                compatibility,
+                "Editable source requires --authored-spec <spec.json>. Run plan-source to prepare evidence for semantic authoring. Structural replay is available only with explicit --compatibility; it is not a semantic reconstruction."
+            );
             let report = if !recover_client_routes.is_empty() {
                 export::tanstack_start_with_clients(
                     &site,

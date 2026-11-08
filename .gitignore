@@ -8,3 +8,6 @@
 # Generated structural evidence; source directories named analysis remain visible.
 **/analysis/pages/page-*.json
 **/analysis/report.json
+
+# macOS directory metadata
+.DS_Store

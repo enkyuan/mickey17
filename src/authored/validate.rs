@@ -715,7 +715,10 @@ pub(super) fn specification(s: &Specification, model: &project::Project) -> Resu
         "authored project budget exceeded"
     );
     for (k, url) in &s.assets {
-        ensure!(identifier(k), "invalid asset name");
+        ensure!(
+            identifier(k) && super::names::meaningful(k),
+            "invalid asset name"
+        );
         ensure!(
             model
                 .assets
@@ -795,8 +798,7 @@ pub(super) fn specification(s: &Specification, model: &project::Project) -> Resu
         ensure!(
             identifier(name)
                 && name.starts_with(char::is_uppercase)
-                && !name.starts_with("Component")
-                && !name.starts_with("Client")
+                && super::names::meaningful(name)
                 && !matches!(
                     name.as_str(),
                     "Fragment"
@@ -814,11 +816,16 @@ pub(super) fn specification(s: &Specification, model: &project::Project) -> Resu
             "component needs a meaningful PascalCase name"
         );
         ensure!(
-            c.group.as_ref().is_none_or(|g| token(g)),
+            c.group
+                .as_ref()
+                .is_none_or(|g| token(g) && super::names::meaningful(g)),
             "invalid component group"
         );
         ensure!(
-            token(&c.feature) && !c.purpose.trim().is_empty() && !c.evidence.is_empty(),
+            token(&c.feature)
+                && super::names::meaningful(&c.feature)
+                && !c.purpose.trim().is_empty()
+                && !c.evidence.is_empty(),
             "component needs ownership, purpose and provenance"
         );
         ensure!(
@@ -916,6 +923,7 @@ pub(super) fn specification(s: &Specification, model: &project::Project) -> Resu
         ensure!(
             identifier(name)
                 && name.starts_with(char::is_uppercase)
+                && super::names::meaningful(name)
                 && !s.components.contains_key(name)
                 && !reserved_runtime_binding(name),
             "owned component name collides or is invalid"
@@ -956,7 +964,9 @@ pub(super) fn specification(s: &Specification, model: &project::Project) -> Resu
             .context("route component missing")?;
         let content = super::emit::content_name(r);
         ensure!(
-            token(&content) && content_files.insert(format!("{}/{}", c.feature, content)),
+            token(&content)
+                && super::names::meaningful(&content)
+                && content_files.insert(format!("{}/{}", c.feature, content)),
             "duplicate or invalid content filename; provide data_name"
         );
         data(

@@ -573,6 +573,7 @@ pub(super) fn project(
     model: &project::Project,
     specification_sha256: &str,
     sources: &super::source::Files,
+    source_assets: &super::assets::Files,
 ) -> Result<Report> {
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     for &(path, text) in crate::export::TEMPLATE {
@@ -580,6 +581,11 @@ pub(super) fn project(
             files.insert(path.into(), text.into());
         }
     }
+    files.insert(
+        "package.json".into(),
+        include_str!("template/package.json").into(),
+    );
+    files.insert("bun.lock".into(), include_str!("template/bun.lock").into());
     files.insert(
         "src/styles/tailwind.css".into(),
         include_str!("../export_template/src/styles/tailwind.css").replace(
@@ -601,6 +607,7 @@ pub(super) fn project(
         ("Button", "button"),
         ("Switch", "switch"),
         ("Tabs", "tabs"),
+        ("Accordion", "accordion"),
     ] {
         if !used_primitives.contains(name)
             && !sources
@@ -729,6 +736,13 @@ pub(super) fn project(
                 .join(",")
         ),
     );
+    if s.assets.is_empty()
+        && !sources
+            .values()
+            .any(|source| source.contains("@/lib/assets"))
+    {
+        files.remove("src/lib/assets.ts");
+    }
     let mut tokens = String::from(
         "/* Reference and semantic tokens. Keep scoped overrides with their context. */\n:root {\n",
     );
@@ -767,7 +781,34 @@ pub(super) fn project(
     files.insert("src/styles/fonts.css".into(), fonts);
     files.insert("src/styles/globals.css".into(), css(&s.globals));
     let mut component_paths = BTreeMap::new();
+    let mut direct_routes = BTreeMap::new();
+    for route in &s.routes {
+        let c = &s.components[&route.component];
+        if let Node::External { name, props } = &c.body {
+            let used_by_component = s.components.values().any(|other| {
+                let mut names = BTreeSet::new();
+                dependencies(&other.body, &mut names, &mut BTreeSet::new());
+                names.contains(&route.component)
+            });
+            if c.props.is_empty()
+                && props.is_empty()
+                && c.state.is_empty()
+                && c.styles.is_empty()
+                && c.behaviors.is_empty()
+                && !used_by_component
+            {
+                direct_routes.insert(route.component.clone(), name.clone());
+            }
+        }
+    }
     for (name, c) in &s.components {
+        if let Some(entry) = direct_routes.get(name) {
+            component_paths.insert(
+                name.clone(),
+                format!("src/{}", s.external_components[entry].module),
+            );
+            continue;
+        }
         let path = component_path(name, c);
         let mut localized = c.clone();
         localize_node(&mut localized.body, s);
@@ -781,6 +822,15 @@ pub(super) fn project(
         component_paths.insert(name.clone(), path);
     }
     for route in &s.routes {
+        if let Some(entry) = direct_routes.get(&route.component) {
+            let module = s.external_components[entry]
+                .module
+                .trim_end_matches(".tsx")
+                .trim_end_matches(".ts");
+            let id = format!("{}/", route.path.trim_end_matches('/'));
+            files.insert(format!("src/routes/{}", structure::route_file(&route.path)), format!("import {{createFileRoute}} from '@tanstack/react-router';\nimport {{{entry}}} from '@/{module}';\nexport const Route=createFileRoute({})({{head:()=>({{meta:[{{title:{}}}]}}),component:{entry}}});\n",js(&id),js(&route.title)));
+            continue;
+        }
         let directory = format!("src/features/{}/", s.components[&route.component].feature);
         let data_name = content_name(route);
         let props = data_expression(
@@ -813,12 +863,17 @@ pub(super) fn project(
         files.insert(format!("src/routes/{}",structure::route_file(&route.path)),format!("import {{createFileRoute}} from '@tanstack/react-router'\nimport {{{0}}} from '@/{component_import}'\nimport {{content}} from '@/{1}{data_name}'\nexport const Route=createFileRoute({2})({{head:()=>({{meta:[{{title:{3}}}]}}),component:RouteComponent}})\nfunction RouteComponent(){{return <{0} {{...content}} />}}\n",route.component,directory.trim_start_matches("src/"),js(&id),js(&route.title)));
     }
     for (path, source) in sources {
+        let owned_design = match path.as_str() {
+            "styles/tokens.css" => s.tokens.is_empty() && s.token_scopes.is_empty(),
+            "styles/fonts.css" => s.fonts.is_empty(),
+            "styles/globals.css" => s.globals.is_empty(),
+            _ => false,
+        };
         ensure!(
-            files
-                .insert(format!("src/{path}"), source.clone())
-                .is_none(),
+            owned_design || !files.contains_key(&format!("src/{path}")),
             "owned source collides with generated file: {path}"
         );
+        files.insert(format!("src/{path}"), source.clone());
     }
     if s.libraries.iter().any(|l| l == "three") {
         let mut package: serde_json::Value = serde_json::from_str(&files["package.json"])?;
@@ -830,7 +885,7 @@ pub(super) fn project(
         );
         files.insert(
             "bun.lock".into(),
-            include_str!("../export_template/bun-graphics.lock").into(),
+            include_str!("template/bun-graphics.lock").into(),
         );
     }
     let source_modules = sources
@@ -853,6 +908,10 @@ pub(super) fn project(
         component_paths,
         recovered_modules: 0,
         source_modules,
+        source_assets: source_assets
+            .iter()
+            .map(|(path, bytes)| (path.clone(), fingerprint(bytes)))
+            .collect(),
         gaps: s.gaps.clone(),
         verification: "not_run".into(),
     };
@@ -883,6 +942,14 @@ pub(super) fn project(
         }
     }
     files.insert("EDITING.md".into(), editing);
+    for (path, bytes) in source_assets {
+        ensure!(
+            !out.join(format!("src/{path}")).exists()
+                && !files.contains_key(&format!("src/{path}")),
+            "owned asset collides with generated file"
+        );
+        util::write(out, &out.join(format!("src/{path}")), bytes)?;
+    }
     let mut total = 0;
     let mut portable = BTreeSet::new();
     for (path, source) in files {
