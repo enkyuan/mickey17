@@ -10,7 +10,7 @@ async fn get(
     if let Some((k, v)) = header {
         req = req.header(k, v)
     }
-    let res = perfectclone::serve::router(root.to_path_buf())
+    let res = mosha::serve::router(root.to_path_buf())
         .oneshot(req.body(Body::empty()).unwrap())
         .await
         .unwrap();
@@ -58,10 +58,7 @@ async fn routes_ranges_head_and_symlinks() {
         .uri("/hero.png")
         .body(Body::empty())
         .unwrap();
-    let res = perfectclone::serve::router(p.into())
-        .oneshot(req)
-        .await
-        .unwrap();
+    let res = mosha::serve::router(p.into()).oneshot(req).await.unwrap();
     assert_eq!(res.status(), 200);
     assert!(
         res.into_body()
