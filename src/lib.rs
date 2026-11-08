@@ -8,6 +8,7 @@ pub mod evidence;
 pub mod export;
 pub mod flight;
 pub mod interpret;
+pub mod lift;
 pub mod mirror;
 pub mod parity;
 pub mod project;

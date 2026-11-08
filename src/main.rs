@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mochi::{
-    analysis, authored, crawl, edit, evidence, export, interpret, parity, project, serve, trackers,
-    util,
+    analysis, authored, crawl, edit, evidence, export, interpret, lift, parity, project, serve,
+    trackers, util,
 };
 use std::path::PathBuf;
 #[derive(Parser)]
@@ -52,6 +52,25 @@ enum Command {
     CheckEvidence { site: PathBuf },
     /// Derive an offline source model from complete evidence; does not emit an app.
     ModelProject { site: PathBuf },
+    /// Lift closed functions from a recovered controller into a typed TypeScript module
+    /// with per-function provenance. Refuses functions that capture outside state.
+    Lift {
+        spec: PathBuf,
+        /// New TypeScript module path; must not exist.
+        #[arg(long)]
+        out: PathBuf,
+        /// New provenance manifest path; must not exist.
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// List function bindings in a recovered controller and whether each can be lifted.
+    LiftSurvey {
+        source: PathBuf,
+        #[arg(long, requires = "end_line")]
+        start_line: Option<usize>,
+        #[arg(long, requires = "start_line")]
+        end_line: Option<usize>,
+    },
     /// Prepare evidence for a reviewed semantic source specification, without model calls.
     PlanSource {
         site: PathBuf,
@@ -233,6 +252,36 @@ fn main() -> Result<()> {
             println!(
                 "Matched declared parity contract; scope and input hashes: {}",
                 out.display()
+            );
+        }
+        Command::Lift {
+            spec,
+            out,
+            manifest,
+        } => {
+            let report = lift::lift(&spec, &out, &manifest)?;
+            println!(
+                "Lifted {} functions to {}; provenance in {}; {} functions in the requested region remain unlifted.",
+                report.functions.len(),
+                out.display(),
+                manifest.display(),
+                report.unlifted.len()
+            );
+        }
+        Command::LiftSurvey {
+            source,
+            start_line,
+            end_line,
+        } => {
+            let region = start_line
+                .zip(end_line)
+                .map(|(start_line, end_line)| lift::Region {
+                    start_line,
+                    end_line,
+                });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&lift::survey(&source, region)?)?
             );
         }
         Command::PlanSource { site, out } => {

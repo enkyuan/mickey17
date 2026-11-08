@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.3.0",
+  "source": "source.js",
+  "source_sha256": "1dcdfd40213e1043bbe9af8bd34e73c8f8c6b1d995e67b73ba84845e406ca356",
+  "module_sha256": "f79ec0d713fba54669b11b1bfa8fa3f626e90a24c4df2b6c18c88c1a32eba8da",
+  "functions": [
+    {
+      "export": "clamp01",
+      "original": {
+        "name": "clamp",
+        "line": 1,
+        "kind": "arrow-declarator",
+        "start": 14,
+        "end": 48,
+        "sha256": "ec71c0efbafac7cd1fd933062a52ba9ee5706e6e126d1b8459c70df9fabe6e7a"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "e",
+          "name": "value",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "mix",
+      "original": {
+        "name": "lerp",
+        "line": 3,
+        "kind": "arrow-declarator",
+        "start": 74,
+        "end": 102,
+        "sha256": "4e7623c6fbec48327760f23f7143d61655d517f802422a9863d14ea07689e5a8"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "a",
+          "name": "start",
+          "type": "number"
+        },
+        {
+          "from": "b",
+          "name": "end",
+          "type": "number"
+        },
+        {
+          "from": "t",
+          "name": "amount",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "easeIn",
+      "original": {
+        "name": "ease",
+        "line": 4,
+        "kind": "function-declaration",
+        "start": 104,
+        "end": 170,
+        "sha256": "0d63266478498c86d8ae73149b712e02edd06b982f69126e0b7b03b97c9dc5a0"
+      },
+      "deps": [
+        "clamp01",
+        "mix"
+      ],
+      "params": [
+        {
+          "from": "e",
+          "name": "input",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    }
+  ],
+  "unlifted": [
+    {
+      "name": "bad",
+      "line": 8,
+      "reasons": [
+        "reads captured `z`"
+      ]
+    },
+    {
+      "name": "writes",
+      "line": 9,
+      "reasons": [
+        "writes captured `z`"
+      ]
+    },
+    {
+      "name": "usesThis",
+      "line": 10,
+      "reasons": [
+        "uses `this`"
+      ]
+    }
+  ]
+}

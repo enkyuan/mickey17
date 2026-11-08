@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "source.js",
+  "source_sha256": "1dcdfd40213e1043bbe9af8bd34e73c8f8c6b1d995e67b73ba84845e406ca356",
+  "region": { "start_line": 1, "end_line": 10 },
+  "functions": [
+    { "name": "clamp", "line": 1, "as": "clamp01", "params": [{ "from": "e", "name": "value", "type": "number" }], "returns": "number" },
+    { "name": "lerp", "line": 3, "as": "mix", "params": [{ "from": "a", "name": "start", "type": "number" }, { "from": "b", "name": "end", "type": "number" }, { "from": "t", "name": "amount", "type": "number" }], "returns": "number" },
+    { "name": "ease", "line": 4, "as": "easeIn", "locals": { "t": "clamped" }, "params": [{ "from": "e", "name": "input", "type": "number" }], "returns": "number" }
+  ]
+}
