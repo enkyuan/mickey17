@@ -1,5 +1,5 @@
 import { MotionConfig } from 'motion/react';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 const storageKey = 'mochi:accessibility-mode';
 type MotionPreference = {
@@ -42,12 +42,14 @@ export function MotionPreferenceProvider({ children }: { children: ReactNode }) 
     };
   }, [reducedMotion]);
 
-  function setAccessibilityMode(enabled: boolean) {
+  const setAccessibilityMode = useCallback((enabled: boolean) => {
     setEnabled(enabled);
     try { localStorage.setItem(storageKey, String(enabled)); } catch { /* The in-memory choice still applies. */ }
-  }
+  }, []);
+  const preference = useMemo(() => ({ accessibilityMode, reducedMotion, setAccessibilityMode }),
+    [accessibilityMode, reducedMotion, setAccessibilityMode]);
 
-  return <MotionContext.Provider value={{ accessibilityMode, reducedMotion, setAccessibilityMode }}><MotionConfig reducedMotion={reducedMotion ? "always" : "never"}>{children}</MotionConfig></MotionContext.Provider>;
+  return <MotionContext.Provider value={preference}><MotionConfig reducedMotion={reducedMotion ? "always" : "never"}>{children}</MotionConfig></MotionContext.Provider>;
 }
 
 export function useMotionPreference(): MotionPreference {

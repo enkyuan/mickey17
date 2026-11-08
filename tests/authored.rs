@@ -14,6 +14,10 @@ fn semantic_components_replace_controllers_and_keep_typed_routes() {
     assert_eq!(report.recovered_modules, 0);
     assert_eq!(report.components, 5);
     assert_eq!(report.verification, "not_run");
+    let package: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("package.json")).unwrap()).unwrap();
+    assert!(package["dependencies"]["motion"].is_string());
+    assert!(package["dependencies"].get("framer-motion").is_none());
     assert!(!out.join("src/compat").exists());
     assert!(!out.join("src/lib/runtime.ts").exists());
     let nav = std::fs::read_to_string(out.join("src/components/compositions/site-navigation.tsx"))
@@ -136,6 +140,9 @@ fn owned_graphics_are_typed_reachable_modules_with_explicit_imports() {
         source.replace("CatalogArt", "WrongExport"),
         source.replace("catalog.glsl", "missing.glsl"),
         source.replace("label:string", "label:any"),
+        format!("import {{motion}} from 'framer-motion';\n{source}"),
+        format!("export * from 'framer-motion/m';\n{source}"),
+        format!("const legacy = import('framer-motion');\n{source}"),
     ] {
         std::fs::write(temp.path().join("art.tsx"), invalid).unwrap();
         assert!(authored::generate(&root, &input, &bad).is_err());

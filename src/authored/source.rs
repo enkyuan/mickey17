@@ -251,6 +251,10 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                 }
             } else {
                 ensure!(
+                    import != "framer-motion" && !import.starts_with("framer-motion/"),
+                    "authored animations must import motion or motion/react, not {import}"
+                );
+                ensure!(
                     matches!(
                         import.as_str(),
                         "react"
@@ -258,6 +262,7 @@ pub(super) fn load(spec_path: &Path, s: &Specification, model: &project::Project
                             | "@tanstack/react-router"
                             | "motion"
                             | "motion/react"
+                            | "motion/react-m"
                             | "motion/mini"
                     ) || import.starts_with("@base-ui/react/")
                         || (s.libraries.iter().any(|l| l == "three")
