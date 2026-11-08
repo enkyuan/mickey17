@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { inspectSource } from "../src/source-audit";
+import { inspectSource, auditSource } from "../src/source-audit";
 import { fingerprint } from "../src/fingerprint";
 import { mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,6 +45,30 @@ test("fingerprint catches new/deleted/changed files and rejects symlinks", async
         expect((await fingerprint(root)).sha256).not.toBe(a.sha256);
         await symlink(join(root, "source.ts"), join(root, "alias.ts"));
         await expect(fingerprint(root)).rejects.toThrow("Symlink");
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("index-route IDs map to served paths without weakening URL checks", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "mochi-route-audit-"));
+    try {
+        await mkdir(join(root, "src/routes"), { recursive: true });
+        await writeFile(
+            join(root, "package.json"),
+            JSON.stringify({ dependencies: { motion: "14.10.1" } }),
+        );
+        await writeFile(
+            join(root, "src/routes/catalog.tsx"),
+            "export const Route=createFileRoute('/catalog/')({});",
+        );
+        expect((await auditSource(root, ["/catalog"])).routeCoverage).toBe(
+            true,
+        );
+        expect(
+            (await auditSource(root, ["/catalog", "/missing"])).routeCoverage,
+        ).toBe(false);
     } finally {
         await rm(root, { recursive: true, force: true });
     }

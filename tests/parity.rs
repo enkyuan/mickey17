@@ -122,10 +122,17 @@ fn gate_binds_reference_source_and_route_inventory() {
     std::fs::write(root.join("package.json"), "{}").unwrap();
     std::fs::write(
         root.join("src/routes/index.tsx"),
-        "// createFileRoute('/fake') must not create route evidence\nexport const Route = createFileRoute('/')({});",
+        "// createFileRoute('/fake') must not create route evidence\nexport const Route = createFileRoute('/catalog/')({});",
     )
     .unwrap();
-    let (mut contract, reference) = fixture();
+    let (mut contract, mut reference) = fixture();
+    contract["routes"] = json!(["/catalog"]);
+    for state in contract["states"].as_object_mut().unwrap().values_mut() {
+        state["route"] = json!("/catalog");
+    }
+    for state in reference["states"].as_object_mut().unwrap().values_mut() {
+        state["route"] = json!("/catalog");
+    }
     let mut candidate = reference.clone();
     let bytes = serde_json::to_vec(&reference).unwrap();
     contract["reference_sha256"] = format!("{:x}", Sha256::digest(&bytes)).into();

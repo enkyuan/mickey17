@@ -56,7 +56,9 @@ reference), and `states`. Each state contains its browser context, `inventory`,
 flattened scalar `facts`, `errors`, and `settled`. Every anchor needs measurements.
 Both captures must contain exactly the contract's states and facts. The current
 literal TanStack route declarations are parsed from TypeScript/JavaScript ASTs
-and must match the route inventory. Comments cannot stand in for route declarations. Source edits
+and must match the route inventory. A TanStack index-route ID’s trailing slash
+is normalized for this identity check only; recorded browser URLs remain exact.
+Comments cannot stand in for route declarations. Source edits
 and newly added files invalidate the candidate fingerprint.
 
 The output path must be new for every invocation. Invalid inputs return nonzero

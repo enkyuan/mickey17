@@ -359,7 +359,15 @@ pub fn check(
         );
     }
     ensure!(
-        routes == contract.routes,
+        routes
+            .iter()
+            .map(|route| route.trim_end_matches('/'))
+            .collect::<BTreeSet<_>>()
+            == contract
+                .routes
+                .iter()
+                .map(|route| route.trim_end_matches('/'))
+                .collect::<BTreeSet<_>>(),
         "contract does not cover every current generated route"
     );
     ensure!(

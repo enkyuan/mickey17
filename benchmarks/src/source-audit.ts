@@ -122,8 +122,14 @@ export async function auditSource(project: string, requiredRoutes: string[]) {
         .filter((f) => relative(root, f.path).startsWith("src/routes/"))
         .flatMap((f) => f.inspection.routes)
         .sort();
+    // TanStack index-route IDs end in '/', even when trailingSlash: 'never'
+    // serves the path without it. This is route identity, not URL normalization:
+    // capture still checks the observed browser URL exactly.
+    const routeIdentity = (route: string) =>
+        route === "/" ? route : route.replace(/\/$/, "");
     const routeCoverage =
-        JSON.stringify(routes) === JSON.stringify([...requiredRoutes].sort());
+        JSON.stringify([...new Set(routes.map(routeIdentity))].sort()) ===
+        JSON.stringify([...new Set(requiredRoutes.map(routeIdentity))].sort());
     const recoveredImports = files.flatMap((f) =>
         f.inspection.imports
             .filter((i) => /(?:^|\/)(?:compat|recovered)(?:\/|$)/.test(i))
