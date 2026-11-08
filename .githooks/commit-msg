@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+subject=$(sed -n '1p' "$1")
+if ! printf '%s\n' "$subject" | LC_ALL=C grep -Eq '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9_./-]+\))?!?: [^[:space:]].*$'; then
+    printf '%s\n' 'Commit subject must use Conventional Commits: type(scope): description' >&2
+    printf '%s\n' 'Types: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test.' >&2
+    printf '%s\n' 'Examples: feat: add source export; fix(capture): preserve query state.' >&2
+    exit 1
+fi

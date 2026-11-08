@@ -1,0 +1,27 @@
+name: Commit conventions
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  subjects:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Check real commits, rather than GitHub's synthetic PR merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate every commit subject
+        shell: bash
+        run: |
+          message="$(mktemp)"
+          trap 'rm "$message"' EXIT
+          failed=0
+          while IFS= read -r commit; do
+            git show -s --format=%B "$commit" > "$message"
+            if ! .githooks/commit-msg "$message"; then
+              echo "::error::Invalid commit subject in $commit"
+              failed=1
+            fi
+          done < <(git rev-list HEAD)
+          exit "$failed"
