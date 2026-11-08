@@ -1,4 +1,7 @@
-use crate::util;
+use crate::{
+    cache::{AssetCache, AssetResponse},
+    util,
+};
 use anyhow::{Context, Result, ensure};
 use regex::Regex;
 use reqwest::blocking::Client;
@@ -128,6 +131,11 @@ pub fn fetch(client: &Client, u: &Url, rsc: bool) -> Result<(Vec<u8>, String)> {
         request = request.header("RSC", "1")
     }
     let response = request.send()?.error_for_status()?;
+    ensure!(
+        response.status().is_success(),
+        "unexpected HTTP status {}",
+        response.status()
+    );
     let mime = response
         .headers()
         .get("content-type")
@@ -147,7 +155,22 @@ pub fn fetch(client: &Client, u: &Url, rsc: bool) -> Result<(Vec<u8>, String)> {
 pub struct MirrorReport {
     pub saved_pages: usize,
     pub assets_fetched: usize,
+    pub cache_revalidations: usize,
     pub failures: Vec<serde_json::Value>,
+}
+
+pub struct DownloadOptions {
+    pub jobs: usize,
+    pub cache_dir: Option<PathBuf>,
+}
+
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        Self {
+            jobs: 4,
+            cache_dir: None,
+        }
+    }
 }
 pub fn mirror(
     client: &Client,
@@ -155,15 +178,45 @@ pub fn mirror(
     assets: BTreeSet<Url>,
     root: &Path,
 ) -> Result<MirrorReport> {
+    mirror_with_options(client, pages, assets, root, &DownloadOptions::default())
+}
+
+pub fn mirror_with_options(
+    client: &Client,
+    pages: &[Url],
+    assets: BTreeSet<Url>,
+    root: &Path,
+    options: &DownloadOptions,
+) -> Result<MirrorReport> {
+    ensure!(
+        (1..=16).contains(&options.jobs),
+        "jobs must be between 1 and 16"
+    );
     std::fs::create_dir_all(root)?;
     ensure!(
         !root.symlink_metadata()?.file_type().is_symlink(),
         "output root is a symlink"
     );
+    let cache = options
+        .cache_dir
+        .clone()
+        .map(AssetCache::open)
+        .transpose()?;
+    if let Some(cache) = &cache {
+        let output = root.canonicalize()?;
+        ensure!(
+            !cache.root().starts_with(&output) && !output.starts_with(cache.root()),
+            "cache and mirrored site directories must not overlap"
+        );
+    }
     let mut report = MirrorReport::default();
     let mut queue = AssetQueue::new(MAX_ASSETS);
     queue.schedule(assets)?;
     let mut done = BTreeSet::new();
+    let page_paths: BTreeSet<_> = pages
+        .iter()
+        .map(|page| page.path().trim_end_matches('/'))
+        .collect();
     let base = pages.first().context("no pages to mirror")?;
     for u in pages {
         let result = (|| -> Result<()> {
@@ -210,43 +263,85 @@ pub fn mirror(
             }
         }
     }
-    while let Some(u) = queue.todo.pop_front() {
-        if done.contains(&u)
-            || pages
-                .iter()
-                .any(|p| p.path().trim_end_matches('/') == u.path().trim_end_matches('/'))
-            || u.path().contains("/cdn-cgi/")
-        {
-            continue;
+    while !queue.todo.is_empty() {
+        let mut batch = Vec::new();
+        while batch.len() < options.jobs {
+            let Some(u) = queue.todo.pop_front() else {
+                break;
+            };
+            if done.contains(&u)
+                || page_paths.contains(u.path().trim_end_matches('/'))
+                || u.path().contains("/cdn-cgi/")
+            {
+                continue;
+            }
+            done.insert(u.clone());
+            batch.push(u);
         }
-        done.insert(u.clone());
-        let result = (|| -> Result<()> {
-            let (bytes, mime) = fetch(client, &u, false)?;
-            if mime.contains("text/html") && Path::new(u.path()).extension().is_none() {
-                return Ok(());
+        let cache_ref = cache.as_ref();
+        let responses: Vec<_> = std::thread::scope(|scope| {
+            let workers: Vec<_> = batch
+                .iter()
+                .map(|u| {
+                    scope.spawn(move || {
+                        if let Some(cache) = cache_ref {
+                            cache.fetch(client, u)
+                        } else {
+                            fetch(client, u, false).map(|(bytes, content_type)| AssetResponse {
+                                bytes,
+                                content_type,
+                                reused: false,
+                            })
+                        }
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| {
+                    worker
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("asset worker panicked"))
+                        .and_then(|response| response)
+                })
+                .collect()
+        });
+        // Apply in discovery order even when downloads finish in a different order.
+        // This preserves collision handling and keeps all filesystem writes sequential.
+        for (u, response) in batch.into_iter().zip(responses) {
+            let result = (|| -> Result<()> {
+                let AssetResponse {
+                    bytes,
+                    content_type: mime,
+                    reused,
+                } = response?;
+                report.cache_revalidations += usize::from(reused);
+                if mime.contains("text/html") && Path::new(u.path()).extension().is_none() {
+                    return Ok(());
+                }
+                let p = output_path(root, &u, false)?;
+                ensure!(!p.is_dir(), "asset path collides with directory");
+                // Query variants cannot silently replace another response at the same path.
+                if p.exists() {
+                    ensure!(
+                        std::fs::read(&p)? == bytes,
+                        "query/path collision: {}",
+                        p.display()
+                    );
+                    return Ok(());
+                }
+                util::write(root, &p, &bytes)?;
+                report.assets_fetched += 1;
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    queue.schedule(refs(text, &u))?;
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                report
+                    .failures
+                    .push(serde_json::json!({"url":u,"error":e.to_string()}))
             }
-            let p = output_path(root, &u, false)?;
-            ensure!(!p.is_dir(), "asset path collides with directory");
-            // Query variants cannot silently replace another response at the same path.
-            if p.exists() {
-                ensure!(
-                    std::fs::read(&p)? == bytes,
-                    "query/path collision: {}",
-                    p.display()
-                );
-                return Ok(());
-            }
-            util::write(root, &p, &bytes)?;
-            report.assets_fetched += 1;
-            if let Ok(text) = std::str::from_utf8(&bytes) {
-                queue.schedule(refs(text, &u))?;
-            }
-            Ok(())
-        })();
-        if let Err(e) = result {
-            report
-                .failures
-                .push(serde_json::json!({"url":u,"error":e.to_string()}))
         }
     }
     Ok(report)
