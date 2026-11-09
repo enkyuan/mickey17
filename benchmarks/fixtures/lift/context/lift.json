@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "source": "source.js",
+  "source_sha256": "d206e9c0e0127dfecbfa556286f769a0cdab6fac862a3be0c27b52036d98c2fa",
+  "region": {
+    "start_line": 1,
+    "end_line": 40
+  },
+  "declarations": [
+    "export type Zone = { readonly span: number; readonly top: number };",
+    "export type Layout = { readonly key: string; readonly rows: Map<number, number[]>; readonly mid: number };"
+  ],
+  "contexts": {
+    "Inputs": {
+      "doc": "Captured controller state.",
+      "fields": [
+        {
+          "from": "w",
+          "name": "width",
+          "type": "number",
+          "doc": "Written by `resize`."
+        },
+        {
+          "from": "h",
+          "name": "height",
+          "type": "number",
+          "doc": "Written by `resize`."
+        },
+        {
+          "from": "table",
+          "name": "table",
+          "type": "readonly (readonly number[])[]"
+        },
+        {
+          "from": "settings.bias",
+          "name": "bias",
+          "type": "number"
+        },
+        {
+          "from": "settings.gap",
+          "name": "gap",
+          "type": "number"
+        },
+        {
+          "from": "geom.config.size",
+          "name": "size",
+          "type": "number"
+        },
+        {
+          "from": "sample()",
+          "name": "zone",
+          "type": "Zone",
+          "doc": "Sampled from the DOM."
+        }
+      ]
+    }
+  },
+  "functions": [
+    {
+      "name": "clamp",
+      "line": 1,
+      "as": "clamp01",
+      "params": [
+        {
+          "from": "e",
+          "name": "value",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "name": "lerp",
+      "line": 2,
+      "as": "mix",
+      "params": [
+        {
+          "from": "a",
+          "name": "start",
+          "type": "number"
+        },
+        {
+          "from": "b",
+          "name": "end",
+          "type": "number"
+        },
+        {
+          "from": "t",
+          "name": "amount",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "name": "scaleFor",
+      "line": 14,
+      "as": "fitScale",
+      "params": [],
+      "returns": "number",
+      "locals": {
+        "z": "zone"
+      },
+      "context": {
+        "type": "Inputs",
+        "param": "inputs"
+      }
+    },
+    {
+      "name": "layout",
+      "line": 18,
+      "as": "rowsFor",
+      "params": [],
+      "returns": "Map<number, number[]>",
+      "context": {
+        "type": "Inputs",
+        "param": "inputs"
+      },
+      "locals": {
+        "k": "key",
+        "s#1": "scale"
+      },
+      "memo": {
+        "cache": "cache",
+        "compute_as": "computeLayout",
+        "value_type": "Layout",
+        "result_local": "layout",
+        "coupled": [
+          {
+            "cache": "dom",
+            "sampler": "sample()"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mid",
+      "line": 31,
+      "as": "midline",
+      "params": [],
+      "returns": "number",
+      "context": {
+        "type": "Inputs",
+        "param": "inputs"
+      },
+      "memo_read": {
+        "cache": "cache",
+        "via": "rowsFor"
+      }
+    }
+  ]
+}

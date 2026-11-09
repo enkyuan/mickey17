@@ -11,550 +11,25 @@ use crate::cache::fingerprint;
 use anyhow::{Context, Result, bail, ensure};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
-use oxc_ast_visit::{Visit, walk};
-use oxc_parser::Parser;
-use oxc_semantic::{ScopeFlags, Scoping, SemanticBuilder};
-use oxc_span::{GetSpan, SourceType, Span};
-use serde::{Deserialize, Serialize};
+use oxc_ast_visit::Visit;
+use oxc_span::Span;
+use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Write,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
-const ALLOWED_GLOBALS: &[&str] = &[
-    "Math",
-    "Number",
-    "Infinity",
-    "NaN",
-    "undefined",
-    "isFinite",
-    "isNaN",
-    "Array",
-];
-const RESERVED: &[&str] = &[
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "debugger",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "false",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "import",
-    "in",
-    "instanceof",
-    "new",
-    "null",
-    "return",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
-    "let",
-    "static",
-    "await",
-    "async",
-    "arguments",
-    "eval",
-];
-const MAX_SOURCE: u64 = 16 * 1024 * 1024;
+mod analysis;
+mod emit;
+mod memo;
+mod resolve;
+mod spec;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Spec {
-    pub schema_version: u32,
-    /// Recovered source, relative to the specification file.
-    pub source: PathBuf,
-    /// Pins the reviewed names and signatures to exactly this source.
-    pub source_sha256: String,
-    /// Inclusive 1-based line range whose unlifted functions are reported.
-    pub region: Option<Region>,
-    /// Verbatim `import type` lines for names used in reviewed signatures.
-    #[serde(default)]
-    pub imports: Vec<String>,
-    pub functions: Vec<FunctionSpec>,
-}
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(deny_unknown_fields)]
-pub struct Region {
-    pub start_line: usize,
-    pub end_line: usize,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FunctionSpec {
-    /// Minified binding name in the source.
-    pub name: String,
-    /// 1-based line of that binding, to disambiguate reused minified names.
-    pub line: usize,
-    /// Exported semantic name.
-    #[serde(rename = "as")]
-    pub export: String,
-    pub doc: Option<String>,
-    pub params: Vec<ParamSpec>,
-    pub returns: String,
-    /// Optional renames for locals declared inside the body, by original name.
-    #[serde(default)]
-    pub locals: BTreeMap<String, String>,
-}
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct ParamSpec {
-    pub from: String,
-    pub name: String,
-    pub r#type: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Original {
-    pub name: String,
-    pub line: usize,
-    pub kind: &'static str,
-    /// Byte range of the function node (declaration, or the initializer of a
-    /// `const`/`let` declarator) in the pinned source.
-    pub start: u32,
-    pub end: u32,
-    pub sha256: String,
-}
-#[derive(Debug, Serialize)]
-pub struct LiftedFunction {
-    pub export: String,
-    pub original: Original,
-    pub deps: Vec<String>,
-    pub params: Vec<ParamSpec>,
-    pub returns: String,
-}
-#[derive(Debug, Serialize)]
-pub struct Unlifted {
-    pub name: String,
-    pub line: usize,
-    pub reasons: Vec<String>,
-}
-#[derive(Debug, Serialize)]
-pub struct Manifest {
-    pub schema_version: u32,
-    pub tool_version: &'static str,
-    pub source: String,
-    pub source_sha256: String,
-    pub module_sha256: String,
-    pub functions: Vec<LiftedFunction>,
-    /// Functions in the requested region that were not lifted, with reasons.
-    pub unlifted: Vec<Unlifted>,
-}
-
-struct Candidate {
-    name: String,
-    line: usize,
-    symbol: oxc_semantic::SymbolId,
-    node: Span,
-    kind: &'static str,
-    params: Vec<(String, oxc_semantic::SymbolId)>,
-    body: Span,
-    expression: bool,
-    blockers: BTreeSet<String>,
-    deps: BTreeSet<usize>,
-    closed: bool,
-}
-struct Ref {
-    span: Span,
-    symbol: Option<oxc_semantic::SymbolId>,
-    name: String,
-    write: bool,
-}
-struct Bind {
-    span: Span,
-    symbol: oxc_semantic::SymbolId,
-    name: String,
-}
-struct Collector<'s> {
-    scoping: &'s Scoping,
-    lines: &'s [usize],
-    candidates: Vec<Candidate>,
-    refs: Vec<Ref>,
-    binds: Vec<Bind>,
-    this_spans: Vec<Span>,
-    shorthand: Vec<Span>,
-}
-fn line_of(lines: &[usize], offset: u32) -> usize {
-    lines.partition_point(|start| *start <= offset as usize)
-}
-struct Shape {
-    node: Span,
-    kind: &'static str,
-    body: Span,
-    expression: bool,
-    /// `async` or generator, which this pass does not lift.
-    modifiers: bool,
-}
-impl Collector<'_> {
-    fn function_like(
-        &mut self,
-        id: &BindingIdentifier<'_>,
-        params: &FormalParameters<'_>,
-        shape: Shape,
-    ) {
-        let Shape {
-            node,
-            kind,
-            body,
-            expression,
-            modifiers,
-        } = shape;
-        let Some(symbol) = id.symbol_id.get() else {
-            return;
-        };
-        let mut blockers = BTreeSet::new();
-        let mut names = Vec::new();
-        if modifiers {
-            blockers.insert("async or generator function".to_owned());
-        }
-        if params.rest.is_some() {
-            blockers.insert("rest parameter".to_owned());
-        }
-        for item in &params.items {
-            match (&item.pattern, &item.initializer) {
-                (BindingPattern::BindingIdentifier(p), None) => {
-                    if let Some(s) = p.symbol_id.get() {
-                        names.push((p.name.to_string(), s));
-                    }
-                }
-                _ => {
-                    blockers.insert("destructured or defaulted parameter".to_owned());
-                }
-            }
-        }
-        self.candidates.push(Candidate {
-            name: id.name.to_string(),
-            line: line_of(self.lines, id.span.start),
-            symbol,
-            node,
-            kind,
-            params: names,
-            body,
-            expression,
-            blockers,
-            deps: BTreeSet::new(),
-            closed: false,
-        });
-    }
-}
-impl<'a> Visit<'a> for Collector<'_> {
-    fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
-        let reference = id.reference_id.get().map(|r| self.scoping.get_reference(r));
-        self.refs.push(Ref {
-            span: id.span,
-            symbol: reference.and_then(|r| r.symbol_id()),
-            name: id.name.to_string(),
-            write: reference.is_some_and(|r| r.is_write()),
-        });
-    }
-    fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
-        if let Some(symbol) = id.symbol_id.get() {
-            self.binds.push(Bind {
-                span: id.span,
-                symbol,
-                name: id.name.to_string(),
-            });
-        }
-    }
-    fn visit_this_expression(&mut self, it: &ThisExpression) {
-        self.this_spans.push(it.span);
-    }
-    fn visit_object_property(&mut self, p: &ObjectProperty<'a>) {
-        if p.shorthand {
-            self.shorthand.push(p.span);
-        }
-        walk::walk_object_property(self, p);
-    }
-    fn visit_binding_property(&mut self, p: &BindingProperty<'a>) {
-        if p.shorthand {
-            self.shorthand.push(p.span);
-        }
-        walk::walk_binding_property(self, p);
-    }
-    fn visit_function(&mut self, f: &Function<'a>, flags: ScopeFlags) {
-        if f.r#type == FunctionType::FunctionDeclaration
-            && let (Some(id), Some(body)) = (&f.id, &f.body)
-        {
-            self.function_like(
-                id,
-                &f.params,
-                Shape {
-                    node: f.span,
-                    kind: "function-declaration",
-                    body: body.span,
-                    expression: false,
-                    modifiers: f.r#async || f.generator,
-                },
-            );
-        }
-        walk::walk_function(self, f, flags);
-    }
-    fn visit_variable_declarator(&mut self, d: &VariableDeclarator<'a>) {
-        if let (BindingPattern::BindingIdentifier(id), Some(init)) = (&d.id, &d.init) {
-            match init {
-                Expression::ArrowFunctionExpression(f) => {
-                    let (body, expression) = match &f.body {
-                        ArrowFunctionBody::FunctionBody(b) => (b.span, false),
-                        other => (other.span(), true),
-                    };
-                    self.function_like(
-                        id,
-                        &f.params,
-                        Shape {
-                            node: f.span,
-                            kind: "arrow-declarator",
-                            body,
-                            expression,
-                            modifiers: f.r#async,
-                        },
-                    );
-                }
-                Expression::FunctionExpression(f) => {
-                    if let Some(body) = &f.body {
-                        self.function_like(
-                            id,
-                            &f.params,
-                            Shape {
-                                node: f.span,
-                                kind: "function-expression-declarator",
-                                body: body.span,
-                                expression: false,
-                                modifiers: f.r#async || f.generator,
-                            },
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-        walk::walk_variable_declarator(self, d);
-    }
-}
-fn within(inner: Span, outer: Span) -> bool {
-    inner.start >= outer.start && inner.end <= outer.end
-}
-
-struct Analysis {
-    candidates: Vec<Candidate>,
-    refs: Vec<Ref>,
-    binds: Vec<Bind>,
-    shorthand: Vec<Span>,
-    scoping_symbol_spans: BTreeMap<oxc_semantic::SymbolId, Span>,
-}
-fn analyze(source: &str) -> Result<Analysis> {
-    let arena = Allocator::default();
-    let parsed = Parser::new(&arena, source, SourceType::mjs()).parse();
-    ensure!(
-        parsed.diagnostics.is_empty(),
-        "source does not parse as a JavaScript module"
-    );
-    let sema = SemanticBuilder::new_compiler().build(&parsed.program);
-    ensure!(
-        sema.diagnostics.is_empty(),
-        "source has invalid bindings for semantic analysis"
-    );
-    let scoping = sema.semantic.scoping();
-    let mut lines = vec![0usize];
-    lines.extend(
-        source
-            .bytes()
-            .enumerate()
-            .filter_map(|(i, b)| (b == b'\n').then_some(i + 1)),
-    );
-    let mut collector = Collector {
-        scoping,
-        lines: &lines,
-        candidates: Vec::new(),
-        refs: Vec::new(),
-        binds: Vec::new(),
-        this_spans: Vec::new(),
-        shorthand: Vec::new(),
-    };
-    collector.visit_program(&parsed.program);
-    let Collector {
-        mut candidates,
-        refs,
-        binds,
-        this_spans,
-        shorthand,
-        ..
-    } = collector;
-    let by_symbol: BTreeMap<_, _> = candidates
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.symbol, i))
-        .collect();
-    let mut spans = BTreeMap::new();
-    for candidate in &mut candidates {
-        for r in refs.iter().filter(|r| within(r.span, candidate.node)) {
-            match r.symbol {
-                None if ALLOWED_GLOBALS.contains(&r.name.as_str()) => {}
-                None => {
-                    candidate.blockers.insert(format!("global `{}`", r.name));
-                }
-                Some(symbol) if symbol == candidate.symbol => {}
-                Some(symbol) => {
-                    let declared = *spans
-                        .entry(symbol)
-                        .or_insert_with(|| scoping.symbol_span(symbol));
-                    if within(declared, candidate.node) {
-                    } else if let Some(&dep) = by_symbol.get(&symbol) {
-                        candidate.deps.insert(dep);
-                    } else {
-                        candidate.blockers.insert(format!(
-                            "{} captured `{}`",
-                            if r.write { "writes" } else { "reads" },
-                            r.name
-                        ));
-                    }
-                }
-            }
-        }
-        if this_spans.iter().any(|s| within(*s, candidate.node)) {
-            candidate.blockers.insert("uses `this`".to_owned());
-        }
-        candidate.closed = candidate.blockers.is_empty();
-    }
-    loop {
-        let mut changed = false;
-        for i in 0..candidates.len() {
-            if !candidates[i].closed {
-                continue;
-            }
-            let broken: Vec<String> = candidates[i]
-                .deps
-                .iter()
-                .filter(|d| !candidates[**d].closed)
-                .map(|d| format!("depends on `{}`", candidates[*d].name))
-                .collect();
-            if !broken.is_empty() {
-                candidates[i].closed = false;
-                candidates[i].blockers.extend(broken);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    for candidate in &candidates {
-        spans
-            .entry(candidate.symbol)
-            .or_insert_with(|| scoping.symbol_span(candidate.symbol));
-    }
-    Ok(Analysis {
-        candidates,
-        refs,
-        binds,
-        shorthand,
-        scoping_symbol_spans: spans,
-    })
-}
-
-fn read_bounded(path: &Path) -> Result<Vec<u8>> {
-    let meta = std::fs::metadata(path).with_context(|| format!("read {}", path.display()))?;
-    ensure!(
-        meta.is_file() && meta.len() <= MAX_SOURCE,
-        "{} is not a regular file within the byte budget",
-        path.display()
-    );
-    Ok(std::fs::read(path)?)
-}
-fn valid_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-        && !RESERVED.contains(&name)
-}
-fn valid_type(text: &str) -> bool {
-    !text.trim().is_empty() && !text.contains(['\n', ';', '`'])
-}
-
-/// Counts leading whitespace characters.
-fn indent(line: &str) -> usize {
-    line.chars().take_while(|c| *c == '\t' || *c == ' ').count()
-}
-fn convert(line: &str, remove: usize) -> String {
-    let rest = &line[remove.min(line.len())..];
-    let width = indent(rest);
-    let tabs = rest[..width].chars().filter(|c| *c == '\t').count();
-    format!(
-        "{}{}",
-        "  ".repeat(tabs) + &" ".repeat(width - tabs),
-        &rest[width..]
-    )
-}
-fn reindent_block(inner: &str) -> String {
-    let lines: Vec<&str> = inner.lines().collect();
-    let min = lines
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| indent(l))
-        .min()
-        .unwrap_or(0);
-    lines
-        .iter()
-        .skip_while(|l| l.trim().is_empty())
-        .map(|l| {
-            if l.trim().is_empty() {
-                String::new()
-            } else {
-                format!("  {}", convert(l, min))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_owned()
-}
-fn reindent_expression(expression: &str) -> String {
-    let mut lines = expression.trim().lines();
-    let first = lines.next().unwrap_or("").trim();
-    let rest: Vec<&str> = lines.collect();
-    let min = rest
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| indent(l))
-        .min()
-        .unwrap_or(0);
-    let mut out = format!("  return {first}");
-    for line in rest {
-        out.push('\n');
-        if !line.trim().is_empty() {
-            out.push_str(&format!("  {}", convert(line, min)));
-        }
-    }
-    out.push(';');
-    out
-}
-
-struct Plan<'a> {
-    candidate: usize,
-    spec: &'a FunctionSpec,
-}
+use analysis::*;
+use emit::*;
+use memo::*;
+use resolve::*;
+pub use spec::*;
 
 /// Lifts the functions named by `spec_path`, writing a TypeScript module and a
 /// provenance manifest. Both output paths must not already exist.
@@ -581,8 +56,82 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
     );
     let source = std::str::from_utf8(&bytes).context("source is not UTF-8")?;
     let analysis = analyze(source)?;
+    let ref_by_start: BTreeMap<u32, usize> = analysis
+        .refs
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.span.start, i))
+        .collect();
+    let write_roots: BTreeSet<u32> = analysis.member_writes.iter().map(|w| w.start).collect();
+    for r in &analysis.refs {
+        let global = r.symbol.is_none()
+            && (ALLOWED_GLOBALS.contains(&r.name.as_str()) || r.name == "Object");
+        let through = write_roots.contains(&r.span.start)
+            && !(r.name == "Object" && analysis.mutator_roots.contains(&r.span.start));
+        ensure!(
+            !(global && (r.write || through)),
+            "the module writes to the standard global `{}` at line {}; lifted code would not see that change",
+            r.name,
+            line_of(&analysis.lines, r.span.start)
+        );
+    }
+    // Code the static checks cannot see through: direct `eval`/`Function` anywhere in the module,
+    // and (for memo proofs) ways to reach the prototype chain or patch `Object.freeze`.
+    {
+        let uses_context = spec.functions.iter().any(|f| f.context.is_some());
+        let uses_memo = spec.functions.iter().any(|f| f.memo.is_some());
+        for (at, eval_like, why) in &analysis.hazards {
+            ensure!(
+                !((*eval_like && uses_context) || uses_memo),
+                "{why} (line {}), which can change what the static proofs assume",
+                line_of(&analysis.lines, *at)
+            );
+        }
+    }
+    let mut context_fields: BTreeMap<&str, Vec<FieldDef<'_>>> = BTreeMap::new();
+    for (name, def) in &spec.contexts {
+        ensure!(
+            valid_identifier(name),
+            "`{name}` is not a usable context type name"
+        );
+        context_fields.insert(name, parse_fields(name, def)?);
+    }
+    let mut taken: BTreeSet<String> = BTreeSet::new();
+    for import in &spec.imports {
+        let Some(names) = import_names(import) else {
+            bail!("imports must be single-line `import type ...;` statements");
+        };
+        taken.extend(names);
+    }
+    for line in &spec.declarations {
+        let Some(name) = declaration_name(line) else {
+            bail!("declarations must be single-line `export type ...;` statements");
+        };
+        ensure!(
+            taken.insert(name.clone()),
+            "`{name}` is declared or imported twice"
+        );
+    }
+    for doc in spec
+        .contexts
+        .values()
+        .flat_map(|c| {
+            c.doc
+                .iter()
+                .chain(c.fields.iter().flat_map(|f| f.doc.iter()))
+        })
+        .chain(spec.functions.iter().filter_map(|f| f.doc.as_ref()))
+    {
+        ensure!(valid_doc(doc), "documentation text may not contain `*/`");
+    }
     let mut plans = Vec::new();
     let mut seen = BTreeSet::new();
+    for name in spec.contexts.keys() {
+        ensure!(
+            seen.insert(name.clone()) && !taken.contains(name),
+            "context type `{name}` collides with an import, declaration or export"
+        );
+    }
     for function in &spec.functions {
         ensure!(
             valid_identifier(&function.export),
@@ -615,16 +164,39 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
         );
         let candidate = &analysis.candidates[found[0]];
         ensure!(
-            candidate.closed,
+            candidate.fixed.is_empty(),
             "`{}` at line {} cannot be lifted: {}",
             function.name,
             function.line,
             candidate
-                .blockers
+                .fixed
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>()
                 .join("; ")
+        );
+        if let Some(usage) = &function.context {
+            ensure!(
+                context_fields.contains_key(usage.r#type.as_str()),
+                "`{}` names context `{}`, which the specification does not declare",
+                function.export,
+                usage.r#type
+            );
+            ensure!(
+                valid_identifier(&usage.param),
+                "`{}` is not a usable context parameter name",
+                usage.param
+            );
+        }
+        ensure!(
+            (function.memo.is_none() && function.memo_read.is_none()) || function.context.is_some(),
+            "`{}` declares a memo but no context",
+            function.export
+        );
+        ensure!(
+            function.memo.is_none() || function.memo_read.is_none(),
+            "`{}` declares both memo and memo_read",
+            function.export
         );
         ensure!(
             candidate.params.len() == function.params.len()
@@ -649,10 +221,349 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
                 param.name
             );
         }
+        if let Some(memo) = &function.memo {
+            for name in [&memo.compute_as, &memo.result_local] {
+                ensure!(valid_identifier(name), "`{name}` is not a usable memo name");
+            }
+            ensure!(
+                valid_type(&memo.value_type),
+                "memo value type of `{}` is empty or unsafe",
+                function.export
+            );
+            for a in &memo.reviewed_assumptions {
+                ensure!(
+                    valid_identifier(&a.root)
+                        && !a.reason.trim().is_empty()
+                        && valid_doc(&a.reason),
+                    "a reviewed assumption needs a captured variable name and a reason"
+                );
+            }
+            ensure!(
+                !seen.contains(&memo.compute_as),
+                "memo computation `{}` collides with an export",
+                memo.compute_as
+            );
+            seen.insert(memo.compute_as.clone());
+        }
         plans.push(Plan {
             candidate: found[0],
             spec: function,
         });
+    }
+    {
+        let mut reserved: BTreeSet<&str> = taken.iter().map(String::as_str).collect();
+        reserved.extend(ALLOWED_GLOBALS.iter().copied());
+        reserved.extend([
+            "Object",
+            "Function",
+            "Symbol",
+            "globalThis",
+            "Promise",
+            "Error",
+            "JSON",
+            "String",
+            "Boolean",
+            "Date",
+            "RegExp",
+            "Set",
+            "Reflect",
+            "Proxy",
+            "BigInt",
+            "WeakMap",
+        ]);
+        for plan in &plans {
+            let node = analysis.candidates[plan.candidate].node;
+            reserved.extend(
+                analysis
+                    .refs
+                    .iter()
+                    .filter(|r| r.symbol.is_none() && within(r.span, node))
+                    .map(|r| r.name.as_str()),
+            );
+        }
+        for plan in &plans {
+            for name in [
+                Some(&plan.spec.export),
+                plan.spec.memo.as_ref().map(|m| &m.compute_as),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                ensure!(
+                    !reserved.contains(name.as_str()),
+                    "export `{name}` collides with a global, import or declaration used in the module"
+                );
+            }
+        }
+        for name in spec.contexts.keys() {
+            ensure!(
+                !reserved.contains(name.as_str()),
+                "context type `{name}` collides with a global used in the module"
+            );
+        }
+    }
+    let planned: BTreeMap<usize, Option<&str>> = plans
+        .iter()
+        .map(|p| {
+            (
+                p.candidate,
+                p.spec.context.as_ref().map(|u| u.r#type.as_str()),
+            )
+        })
+        .collect();
+    let plan_specs: BTreeMap<usize, &FunctionSpec> =
+        plans.iter().map(|p| (p.candidate, p.spec)).collect();
+    // Resolve every captured read to a declared input.
+    let mut resolutions: BTreeMap<usize, Resolution> = BTreeMap::new();
+    for plan in &plans {
+        let usage = plan.spec.context.as_ref();
+        let fields = usage.map(|u| context_fields[u.r#type.as_str()].as_slice());
+        let exempt = plan.spec.memo.as_ref().map(|m| m.cache.as_str()).or(plan
+            .spec
+            .memo_read
+            .as_ref()
+            .map(|m| m.cache.as_str()));
+        let resolution = resolve(
+            &analysis,
+            plan.candidate,
+            usage.zip(fields),
+            &planned,
+            exempt,
+            &ref_by_start,
+        );
+        resolutions.insert(plan.candidate, resolution);
+    }
+    // One declared input stands for exactly one binding across every function that reads it.
+    {
+        let mut bound: BTreeMap<(String, usize), (oxc_semantic::SymbolId, String)> =
+            BTreeMap::new();
+        for plan in &plans {
+            let Some(usage) = &plan.spec.context else {
+                continue;
+            };
+            for (fi, symbol) in &resolutions[&plan.candidate].field_symbols {
+                let entry = bound
+                    .entry((usage.r#type.clone(), *fi))
+                    .or_insert((*symbol, plan.spec.export.clone()));
+                ensure!(
+                    entry.0 == *symbol,
+                    "context field `{}` refers to different bindings in `{}` and `{}`",
+                    context_fields[usage.r#type.as_str()][*fi].def.from,
+                    entry.1,
+                    plan.spec.export
+                );
+            }
+        }
+    }
+    // A context function must not hand declared data to a helper that edits its parameters.
+    for plan in &plans {
+        if plan.spec.context.is_none() {
+            continue;
+        }
+        let deps: Vec<usize> = closure_of(&resolutions, plan.candidate)
+            .into_iter()
+            .filter(|d| *d != plan.candidate)
+            .collect();
+        for dep in deps {
+            if let Some(at) =
+                first_aliasing_write(&analysis, &ref_by_start, analysis.candidates[dep].node)
+            {
+                resolutions
+                    .get_mut(&plan.candidate)
+                    .expect("resolved")
+                    .issues
+                    .push(format!(
+                        "calls `{}`, which writes through a value that may be a parameter (line {})",
+                        analysis.candidates[dep].name,
+                        line_of(&analysis.lines, at)
+                    ));
+            }
+        }
+    }
+    for plan in &plans {
+        let candidate = &analysis.candidates[plan.candidate];
+        let resolution = &resolutions[&plan.candidate];
+        ensure!(
+            resolution.issues.is_empty(),
+            "`{}` at line {} cannot be lifted: {}",
+            plan.spec.name,
+            plan.spec.line,
+            resolution.issues.join("; ")
+        );
+        for dep in &resolution.deps {
+            if planned.contains_key(dep) {
+                continue;
+            }
+            let target = &analysis.candidates[*dep];
+            bail!(
+                "`{}` at line {} depends on `{}` at line {}, which the specification must also name{}",
+                candidate.name,
+                candidate.line,
+                target.name,
+                target.line,
+                if target.closed {
+                    String::new()
+                } else {
+                    format!(
+                        " (it cannot be lifted on its own: {})",
+                        target
+                            .blockers
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )
+                }
+            );
+        }
+    }
+    // Memo caches: removed only when recomputation is provably output-neutral.
+    let mut memos: BTreeMap<usize, MemoInfo> = BTreeMap::new();
+    for plan in &plans {
+        let Some(memo) = &plan.spec.memo else {
+            continue;
+        };
+        let usage = plan.spec.context.as_ref().expect("checked above");
+        let fields = context_fields[usage.r#type.as_str()].as_slice();
+        if !resolutions[&plan.candidate].issues.is_empty() {
+            continue;
+        }
+        match prove_memo(
+            &analysis,
+            plan.candidate,
+            plan.spec,
+            memo,
+            fields,
+            source,
+            &resolutions,
+            &plan_specs,
+            &ref_by_start,
+        ) {
+            Ok(info) => {
+                memos.insert(plan.candidate, info);
+            }
+            Err(issues) => resolutions
+                .get_mut(&plan.candidate)
+                .expect("resolved")
+                .issues
+                .extend(issues),
+        }
+    }
+    let mut memo_reads: BTreeMap<usize, (Vec<Edit>, BTreeSet<u32>, MemoReadRecord)> =
+        BTreeMap::new();
+    for plan in &plans {
+        let Some(read) = &plan.spec.memo_read else {
+            continue;
+        };
+        let candidate = &analysis.candidates[plan.candidate];
+        let mut issues = Vec::new();
+        let via = plans
+            .iter()
+            .find(|p| p.spec.export == read.via && p.spec.memo.is_some());
+        let usage = plan.spec.context.as_ref().expect("checked above");
+        match (via, &candidate.seq_call) {
+            (None, _) => issues.push(format!(
+                "`via` names `{}`, which is not a memoizing function in the specification",
+                read.via
+            )),
+            (_, None) => issues.push(
+                "body is not `return F(), C.field` with `F` filling the cache first".to_owned(),
+            ),
+            (Some(via), Some(seq)) => {
+                let memo = via.spec.memo.as_ref().expect("filtered");
+                let info = memos.get(&via.candidate);
+                let via_candidate = &analysis.candidates[via.candidate];
+                let callee = ref_by_start
+                    .get(&seq.callee.start)
+                    .and_then(|i| analysis.refs[*i].symbol);
+                if via.spec.context.as_ref().map(|u| &u.r#type) != Some(&usage.r#type) {
+                    issues.push(
+                        "uses a different context than the function that fills the cache"
+                            .to_owned(),
+                    );
+                }
+                if callee != Some(via_candidate.symbol) {
+                    issues.push(format!(
+                        "first calls `{}`, not the function that fills the cache",
+                        seq.name
+                    ));
+                }
+                if read.cache != memo.cache {
+                    issues.push("reads a different cache than `via` fills".to_owned());
+                }
+                match info {
+                    None => issues.push(format!("`{}` was not proven output-neutral", read.via)),
+                    Some(info) => {
+                        let mut edits = Vec::new();
+                        let mut replaced = BTreeSet::new();
+                        for r in analysis.refs.iter().filter(|r| {
+                            r.name == read.cache
+                                && within(r.span, candidate.node)
+                                && r.symbol.is_some_and(|s| {
+                                    analysis
+                                        .scoping_symbol_spans
+                                        .get(&s)
+                                        .is_none_or(|d| !within(*d, candidate.node))
+                                })
+                        }) {
+                            let field_read = !r.write
+                                && within(r.span, seq.rest)
+                                && analysis
+                                    .chains
+                                    .get(&r.span.start)
+                                    .and_then(|c| c.first())
+                                    .is_some_and(|(f, _)| info.fields.contains(f));
+                            if r.symbol != Some(info.cache_symbol) || !field_read {
+                                issues.push(format!(
+                                    "cache `{}` is used at line {} other than as a field read after the fill",
+                                    read.cache,
+                                    line_of(&analysis.lines, r.span.start)
+                                ));
+                            } else {
+                                edits.push(Edit {
+                                    start: r.span.start as usize,
+                                    end: r.span.end as usize,
+                                    text: format!("{}({})", memo.compute_as, usage.param),
+                                });
+                                replaced.insert(r.span.start);
+                            }
+                        }
+                        if edits.is_empty() {
+                            issues.push("reads no field of the cache".to_owned());
+                        }
+                        if issues.is_empty() {
+                            memo_reads.insert(
+                                plan.candidate,
+                                (
+                                    edits,
+                                    replaced,
+                                    MemoReadRecord {
+                                        cache: read.cache.clone(),
+                                        via: read.via.clone(),
+                                        compute: memo.compute_as.clone(),
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        resolutions
+            .get_mut(&plan.candidate)
+            .expect("resolved")
+            .issues
+            .extend(issues);
+    }
+    for plan in &plans {
+        let issues = &resolutions[&plan.candidate].issues;
+        ensure!(
+            issues.is_empty(),
+            "`{}` at line {} cannot be lifted: {}",
+            plan.spec.name,
+            plan.spec.line,
+            issues.join("; ")
+        );
     }
     let exports: BTreeMap<usize, &str> = plans
         .iter()
@@ -671,35 +582,57 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
             .unwrap_or("the manifest"),
     );
     for import in &spec.imports {
-        ensure!(
-            import.starts_with("import type ") && import.ends_with(';') && !import.contains('\n'),
-            "imports must be single-line `import type ...;` statements"
-        );
         module.push_str(import);
         module.push('\n');
+    }
+    for line in &spec.declarations {
+        module.push_str(line);
+        module.push('\n');
+    }
+    for (name, def) in &spec.contexts {
+        module.push_str(&format!(
+            "\n/** {}Explicit inputs that replace captured variables of the original controller. */\nexport type {name} = {{\n",
+            def.doc.as_deref().map(|d| format!("{d} ")).unwrap_or_default()
+        ));
+        for field in &def.fields {
+            module.push_str(&format!(
+                "  /** {}Captured `{}`. */\n  readonly {}: {};\n",
+                field
+                    .doc
+                    .as_deref()
+                    .map(|d| format!("{d} "))
+                    .unwrap_or_default(),
+                field.from,
+                field.name,
+                field.r#type.trim()
+            ));
+        }
+        module.push_str("};\n");
     }
     let mut lifted = Vec::new();
     for plan in &plans {
         let candidate = &analysis.candidates[plan.candidate];
+        let resolution = &resolutions[&plan.candidate];
+        let memo = memos.get(&plan.candidate);
         let mut renames: BTreeMap<oxc_semantic::SymbolId, String> = BTreeMap::new();
         for ((_, symbol), reviewed) in candidate.params.iter().zip(&plan.spec.params) {
             renames.insert(*symbol, reviewed.name.clone());
         }
         let mut deps = Vec::new();
-        for dep in &candidate.deps {
+        for dep in &resolution.deps {
             let Some(name) = exports.get(dep) else {
                 bail!(
-                    "`{}` at line {} depends on `{}` at line {}, which the specification must also name",
-                    candidate.name,
-                    candidate.line,
-                    analysis.candidates[*dep].name,
-                    analysis.candidates[*dep].line
+                    "internal error: dependency `{}` was not planned",
+                    analysis.candidates[*dep].name
                 );
             };
             renames.insert(analysis.candidates[*dep].symbol, (*name).to_owned());
             deps.push((*name).to_owned());
         }
         renames.insert(candidate.symbol, plan.spec.export.clone());
+        if let Some(inner) = candidate.inner_name {
+            renames.insert(inner, plan.spec.export.clone());
+        }
         let body = candidate.body;
         let mut used_locals = BTreeSet::new();
         // `name#k` renames the k-th (1-based, source order) binding of `name`
@@ -707,11 +640,11 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
         let mut occurrences: BTreeMap<&str, usize> = BTreeMap::new();
         let mut declared = BTreeSet::new();
         for bind in analysis.binds.iter().filter(|b| within(b.span, body)) {
-            let count = occurrences.entry(bind.name.as_str()).or_default();
-            *count += 1;
             if !declared.insert(bind.symbol) {
                 continue;
             }
+            let count = occurrences.entry(bind.name.as_str()).or_default();
+            *count += 1;
             let ordinal = format!("{}#{count}", bind.name);
             let key = [&ordinal, &bind.name]
                 .into_iter()
@@ -733,8 +666,18 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
             );
         }
         let in_scope = |span: Span| within(span, candidate.node);
+        let mut hidden: BTreeSet<u32> = resolution.replaced.clone();
+        if let Some(info) = memo {
+            hidden.extend(info.replaced.iter().copied());
+        }
+        if let Some((_, replaced, _)) = memo_reads.get(&plan.candidate) {
+            hidden.extend(replaced.iter().copied());
+        }
         let mut kept = BTreeSet::new();
         for r in analysis.refs.iter().filter(|r| in_scope(r.span)) {
+            if hidden.contains(&r.span.start) {
+                continue;
+            }
             if !r.symbol.is_some_and(|s| renames.contains_key(&s)) {
                 kept.insert(r.name.clone());
             }
@@ -764,6 +707,9 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
                 "new name `{new}` collides with an identifier kept in `{}`",
                 plan.spec.export
             );
+            if Some(*symbol) == candidate.inner_name {
+                continue;
+            }
             if let Some(previous) = targets.insert(new.as_str(), old.clone()) {
                 ensure!(
                     previous == old,
@@ -772,73 +718,199 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
                 );
             }
         }
-        let mut edits: Vec<(usize, usize, &str)> = Vec::new();
+        let mut introduced: Vec<&str> = Vec::new();
+        if let Some(usage) = &plan.spec.context {
+            introduced.push(&usage.param);
+        }
+        if let Some(m) = &plan.spec.memo {
+            introduced.push(&m.compute_as);
+            introduced.push(&m.result_local);
+        }
+        if let Some((_, _, record)) = memo_reads.get(&plan.candidate) {
+            introduced.push(&record.compute);
+        }
+        let distinct: BTreeSet<&str> = introduced.iter().copied().collect();
+        ensure!(
+            distinct.len() == introduced.len(),
+            "the context parameter, the memo computation and the memo result local must be different names in `{}`",
+            plan.spec.export
+        );
+        for name in introduced {
+            ensure!(
+                !kept.contains(name) && !targets.contains_key(name),
+                "introduced name `{name}` collides with an identifier in `{}`",
+                plan.spec.export
+            );
+        }
+        let mut edits: Vec<Edit> = Vec::new();
         for r in analysis.refs.iter().filter(|r| within(r.span, body)) {
             if let Some(new) = r.symbol.and_then(|s| renames.get(&s)) {
-                edits.push((r.span.start as usize, r.span.end as usize, new));
+                edits.push(Edit {
+                    start: r.span.start as usize,
+                    end: r.span.end as usize,
+                    text: new.clone(),
+                });
             }
         }
         for b in analysis.binds.iter().filter(|b| within(b.span, body)) {
             if let Some(new) = renames.get(&b.symbol) {
-                edits.push((b.span.start as usize, b.span.end as usize, new));
+                edits.push(Edit {
+                    start: b.span.start as usize,
+                    end: b.span.end as usize,
+                    text: new.clone(),
+                });
             }
         }
-        for (start, end, _) in &edits {
+        for e in &edits {
             ensure!(
                 !analysis
                     .shorthand
                     .iter()
-                    .any(|s| (*start as u32) >= s.start && (*end as u32) <= s.end),
+                    .any(|s| (e.start as u32) >= s.start && (e.end as u32) <= s.end),
                 "renaming inside a shorthand property in `{}` is not supported",
                 plan.spec.export
             );
         }
-        edits.sort_by_key(|e| e.0);
-        let mut text = String::new();
-        let mut cursor = body.start as usize;
-        for (start, end, new) in edits {
+        for e in &resolution.edits {
             ensure!(
-                start >= cursor,
-                "overlapping edits in `{}`",
+                !analysis
+                    .shorthand
+                    .iter()
+                    .any(|s| (e.start as u32) >= s.start && (e.end as u32) <= s.end),
+                "replacing a captured read inside a shorthand property in `{}` is not supported",
                 plan.spec.export
             );
-            text.push_str(&source[cursor..start]);
-            text.push_str(new);
-            cursor = end;
         }
-        text.push_str(&source[cursor..body.end as usize]);
-        let rendered = if candidate.expression {
-            reindent_expression(&text)
-        } else {
-            ensure!(
-                text.starts_with('{') && text.ends_with('}'),
-                "unexpected body shape in `{}`",
-                plan.spec.export
-            );
-            reindent_block(&text[1..text.len() - 1])
-        };
+        let mut extra: Vec<&Edit> = Vec::new();
+        extra.extend(edits.iter());
+        extra.extend(resolution.edits.iter());
+        if let Some(info) = memo {
+            extra.extend(info.edits.iter());
+        }
+        let read_record = memo_reads.get(&plan.candidate);
+        if let Some((read_edits, _, _)) = read_record {
+            extra.extend(read_edits.iter());
+        }
         let node_text = &source[candidate.node.start as usize..candidate.node.end as usize];
         let node_hash = fingerprint(node_text.as_bytes());
-        let params = plan
+        let mut params = plan
             .spec
             .params
             .iter()
             .map(|p| format!("{}: {}", p.name, p.r#type.trim()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        module.push_str(&format!(
-            "\n/** {}Lifted from `{}` (line {}, bytes {}..{}, sha256 {}). */\nexport function {}({}): {} {{\n{}\n}}\n",
-            plan.spec.doc.as_deref().map(|d| format!("{d} ")).unwrap_or_default(),
+            .collect::<Vec<_>>();
+        if let Some(usage) = &plan.spec.context {
+            params.push(format!("{}: {}", usage.param, usage.r#type));
+        }
+        let params = params.join(", ");
+        let doc = plan
+            .spec
+            .doc
+            .as_deref()
+            .map(|d| format!("{d} "))
+            .unwrap_or_default();
+        let provenance = format!(
+            "Lifted from `{}` (line {}, bytes {}..{}, sha256 {}).",
             candidate.name,
             candidate.line,
             candidate.node.start,
             candidate.node.end,
-            &node_hash[..12],
-            plan.spec.export,
-            params,
-            plan.spec.returns.trim(),
-            rendered
-        ));
+            &node_hash[..12]
+        );
+        let what = plan.spec.export.as_str();
+        if let (Some(ma), Some(_), Some(spec_memo), Some(usage)) = (
+            candidate.memo.as_ref().ok(),
+            memo,
+            plan.spec.memo.as_ref(),
+            plan.spec.context.as_ref(),
+        ) {
+            let mut compute_edits: Vec<&Edit> = extra.clone();
+            let strip_fill = Edit {
+                start: ma.assign_target.start as usize,
+                end: ma.assign_rhs.start as usize,
+                text: "return ".to_owned(),
+            };
+            compute_edits.push(&strip_fill);
+            let key_from = {
+                let ls = line_start(source, ma.key_stmt.start as usize);
+                if source[ls..ma.key_stmt.start as usize].trim().is_empty() {
+                    ls
+                } else {
+                    ma.key_stmt.start as usize
+                }
+            };
+            let key_piece = apply(
+                source,
+                key_from,
+                ma.key_stmt.end as usize,
+                &compute_edits,
+                &analysis.literals,
+                what,
+            )?;
+            let block_piece = apply(
+                source,
+                ma.block.start as usize + 1,
+                ma.assign_stmt.end as usize,
+                &compute_edits,
+                &analysis.literals,
+                what,
+            )?;
+            let rest_piece = apply(
+                source,
+                ma.rest.start as usize,
+                ma.rest.end as usize,
+                &extra,
+                &analysis.literals,
+                what,
+            )?;
+            module.push_str(&format!(
+                "\n/** {doc}The memoized computation of `{}`, extracted so the cache can be dropped. {provenance} */\nexport function {}({}: {}): {} {{\n{}\n{}\n}}\n",
+                plan.spec.export,
+                spec_memo.compute_as,
+                usage.param,
+                usage.r#type,
+                spec_memo.value_type.trim(),
+                reindent_block(&key_piece).replace(KEEP_BREAK, "\n"),
+                reindent_block(&block_piece).replace(KEEP_BREAK, "\n"),
+            ));
+            module.push_str(&format!(
+                "\n/** {doc}{provenance} */\nexport function {}({}): {} {{\n  const {} = {}({});\n{}\n}}\n",
+                plan.spec.export,
+                params,
+                plan.spec.returns.trim(),
+                spec_memo.result_local,
+                spec_memo.compute_as,
+                usage.param,
+                reindent_block(&rest_piece).replace(KEEP_BREAK, "\n"),
+            ));
+        } else {
+            let text = apply(
+                source,
+                body.start as usize,
+                body.end as usize,
+                &extra,
+                &analysis.literals,
+                what,
+            )?;
+            let rendered = if candidate.expression {
+                reindent_expression(&text)
+            } else {
+                ensure!(
+                    text.starts_with('{') && text.ends_with('}'),
+                    "unexpected body shape in `{}`",
+                    plan.spec.export
+                );
+                reindent_block(&text[1..text.len() - 1])
+            };
+            module.push_str(&format!(
+                "\n/** {doc}{provenance} */\nexport function {}({}): {} {{\n{}\n}}\n",
+                plan.spec.export,
+                params,
+                plan.spec.returns.trim(),
+                rendered.replace(KEEP_BREAK, "\n")
+            ));
+        }
+        let usage = plan.spec.context.as_ref();
         lifted.push(LiftedFunction {
             export: plan.spec.export.clone(),
             original: Original {
@@ -852,6 +924,17 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
             deps,
             params: plan.spec.params.clone(),
             returns: plan.spec.returns.trim().to_owned(),
+            context: usage.map(|u| ContextRecord {
+                r#type: u.r#type.clone(),
+                param: u.param.clone(),
+                reads: resolution
+                    .reads
+                    .iter()
+                    .map(|fi| context_fields[u.r#type.as_str()][*fi].def.name.clone())
+                    .collect(),
+            }),
+            memo: memos.remove(&plan.candidate).map(|m| m.proof),
+            memo_read: memo_reads.remove(&plan.candidate).map(|(_, _, r)| r),
         });
     }
     let selected: BTreeSet<usize> = plans.iter().map(|p| p.candidate).collect();
@@ -875,30 +958,37 @@ pub fn lift(spec_path: &Path, module_out: &Path, manifest_out: &Path) -> Result<
             },
         })
         .collect();
-    let _ = &analysis.scoping_symbol_spans;
+    {
+        let arena = Allocator::default();
+        let Some(program) = ts_program(&arena, &module) else {
+            bail!("the emitted module does not parse as TypeScript");
+        };
+        let mut only = TsOnly(Vec::new());
+        only.visit_program(&program);
+        ensure!(
+            only.0.is_empty(),
+            "TypeScript reads the original code differently (it finds {}); the lift is refused",
+            only.0.join(", ")
+        );
+    }
     let manifest = Manifest {
         schema_version: 1,
         tool_version: env!("CARGO_PKG_VERSION"),
         source: spec.source.to_string_lossy().into_owned(),
         source_sha256: digest,
         module_sha256: fingerprint(module.as_bytes()),
+        contexts: spec.contexts.clone(),
         functions: lifted,
         unlifted,
     };
-    write_new(module_out, module.as_bytes())?;
-    write_new(manifest_out, &serde_json::to_vec_pretty(&manifest)?)?;
+    write_pair(
+        module_out,
+        module.as_bytes(),
+        manifest_out,
+        &serde_json::to_vec_pretty(&manifest)?,
+    )?;
     Ok(manifest)
 }
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("create {} (it must not already exist)", path.display()))?;
-    file.write_all(bytes)?;
-    Ok(())
-}
-
 /// One row per function-like binding in the optional line range.
 #[derive(Debug, Serialize)]
 pub struct SurveyRow {
@@ -924,168 +1014,4 @@ pub fn survey(source: &Path, region: Option<Region>) -> Result<Vec<SurveyRow>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SOURCE: &str = "const clamp = (e) => Math.max(0, Math.min(1, e));\nlet z = 0;\nconst lerp = (a, b, t) => a + (b - a) * t;\nfunction ease(e) {\n\tlet t = clamp(e);\n\treturn lerp(0, 1, t * t);\n}\nconst bad = (e) => e + z;\nconst writes = () => { z = 1; };\nconst usesThis = function () { return this; };\n";
-
-    fn write(dir: &Path, spec: &str) -> PathBuf {
-        std::fs::write(dir.join("source.js"), SOURCE).unwrap();
-        let spec = spec.replace("HASH", &fingerprint(SOURCE.as_bytes()));
-        let path = dir.join("lift.json");
-        std::fs::write(&path, spec).unwrap();
-        path
-    }
-    fn by_name<'a>(rows: &'a [SurveyRow], name: &str) -> &'a SurveyRow {
-        rows.iter().find(|r| r.name == name).unwrap()
-    }
-
-    #[test]
-    fn survey_separates_closed_functions_from_captured_state() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("source.js"), SOURCE).unwrap();
-        let rows = survey(&dir.path().join("source.js"), None).unwrap();
-        for name in ["clamp", "lerp", "ease"] {
-            assert!(by_name(&rows, name).liftable, "{name}");
-        }
-        assert_eq!(by_name(&rows, "bad").reasons, ["reads captured `z`"]);
-        assert_eq!(by_name(&rows, "writes").reasons, ["writes captured `z`"]);
-        assert_eq!(by_name(&rows, "usesThis").reasons, ["uses `this`"]);
-    }
-
-    #[test]
-    fn lifts_named_typed_functions_with_provenance() {
-        let dir = tempfile::tempdir().unwrap();
-        let spec = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"clamp","line":1,"as":"clamp01","params":[{"from":"e","name":"value","type":"number"}],"returns":"number"},
-              {"name":"lerp","line":3,"as":"mix","params":[{"from":"a","name":"start","type":"number"},{"from":"b","name":"end","type":"number"},{"from":"t","name":"amount","type":"number"}],"returns":"number"},
-              {"name":"ease","line":4,"as":"easeIn","locals":{"t":"clamped"},"params":[{"from":"e","name":"input","type":"number"}],"returns":"number"}]}"#,
-        );
-        let out = dir.path().join("math.ts");
-        let manifest = lift(&spec, &out, &dir.path().join("math.lift.json")).unwrap();
-        let module = std::fs::read_to_string(&out).unwrap();
-        assert!(module.contains("export function clamp01(value: number): number {\n  return Math.max(0, Math.min(1, value));\n}"), "{module}");
-        assert!(module.contains("export function mix(start: number, end: number, amount: number): number {\n  return start + (end - start) * amount;"), "{module}");
-        assert!(
-            module
-                .contains("let clamped = clamp01(input);\n  return mix(0, 1, clamped * clamped);"),
-            "{module}"
-        );
-        assert_eq!(manifest.functions[2].deps, ["clamp01", "mix"]);
-        assert_eq!(manifest.functions[0].original.line, 1);
-        assert!(std::fs::metadata(dir.path().join("math.lift.json")).is_ok());
-    }
-
-    #[test]
-    fn refuses_blocked_stale_and_unnamed_dependencies() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("out.ts");
-        let manifest = dir.path().join("out.json");
-        let blocked = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"bad","line":8,"as":"bad","params":[{"from":"e","name":"e","type":"number"}],"returns":"number"}]}"#,
-        );
-        let error = lift(&blocked, &out, &manifest).unwrap_err().to_string();
-        assert!(error.contains("reads captured `z`"), "{error}");
-        let unnamed = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"ease","line":4,"as":"easeIn","params":[{"from":"e","name":"input","type":"number"}],"returns":"number"}]}"#,
-        );
-        let error = lift(&unnamed, &out, &manifest).unwrap_err().to_string();
-        assert!(error.contains("must also name"), "{error}");
-        let stale = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"deadbeef","functions":[
-              {"name":"clamp","line":1,"as":"clamp01","params":[{"from":"e","name":"value","type":"number"}],"returns":"number"}]}"#,
-        );
-        let error = lift(&stale, &out, &manifest).unwrap_err().to_string();
-        assert!(
-            error.contains("does not match the reviewed specification"),
-            "{error}"
-        );
-        assert!(
-            !out.exists(),
-            "no output may be written when a lift is refused"
-        );
-    }
-
-    #[test]
-    fn rename_collisions_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        let merged = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"lerp","line":3,"as":"mix","params":[{"from":"a","name":"x","type":"number"},{"from":"b","name":"x","type":"number"},{"from":"t","name":"amount","type":"number"}],"returns":"number"}]}"#,
-        );
-        let error = lift(
-            &merged,
-            &dir.path().join("o.ts"),
-            &dir.path().join("o.json"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("would merge"), "{error}");
-        let shadowing_global = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"clamp","line":1,"as":"clamp01","params":[{"from":"e","name":"Math","type":"number"}],"returns":"number"}]}"#,
-        );
-        let error = lift(
-            &shadowing_global,
-            &dir.path().join("o.ts"),
-            &dir.path().join("o.json"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("collides"), "{error}");
-        assert!(!dir.path().join("o.ts").exists());
-    }
-
-    #[test]
-    fn committed_fixture_is_reproduced_exactly() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/fixtures/lift");
-        let out = tempfile::tempdir().unwrap();
-        lift(
-            &fixture.join("lift.json"),
-            &out.path().join("math.ts"),
-            &out.path().join("math.lift.json"),
-        )
-        .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(out.path().join("math.ts")).unwrap(),
-            std::fs::read_to_string(fixture.join("math.ts")).unwrap(),
-            "regenerate the golden fixture only after reviewing the diff"
-        );
-        let strip = |path: &Path| {
-            let mut value: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-            value.as_object_mut().unwrap().remove("tool_version");
-            value
-        };
-        assert_eq!(
-            strip(&out.path().join("math.lift.json")),
-            strip(&fixture.join("math.lift.json"))
-        );
-    }
-
-    #[test]
-    fn simultaneous_renames_that_swap_names_are_valid() {
-        let dir = tempfile::tempdir().unwrap();
-        let spec = write(
-            dir.path(),
-            r#"{"schema_version":1,"source":"source.js","source_sha256":"HASH","functions":[
-              {"name":"lerp","line":3,"as":"mix","params":[{"from":"a","name":"b","type":"number"},{"from":"b","name":"a","type":"number"},{"from":"t","name":"amount","type":"number"}],"returns":"number"}]}"#,
-        );
-        let out = dir.path().join("o.ts");
-        lift(&spec, &out, &dir.path().join("o.json")).unwrap();
-        assert!(
-            std::fs::read_to_string(out)
-                .unwrap()
-                .contains("return b + (a - b) * amount;")
-        );
-    }
-}
+mod tests;

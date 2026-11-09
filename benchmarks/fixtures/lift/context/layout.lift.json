@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.3.0",
+  "source": "source.js",
+  "source_sha256": "d206e9c0e0127dfecbfa556286f769a0cdab6fac862a3be0c27b52036d98c2fa",
+  "module_sha256": "87ea863a8c64fa76567b9e0dc0982185304d6d5cadc9c7b97b3919d1a48ebce8",
+  "contexts": {
+    "Inputs": {
+      "doc": "Captured controller state.",
+      "fields": [
+        {
+          "from": "w",
+          "name": "width",
+          "type": "number",
+          "doc": "Written by `resize`."
+        },
+        {
+          "from": "h",
+          "name": "height",
+          "type": "number",
+          "doc": "Written by `resize`."
+        },
+        {
+          "from": "table",
+          "name": "table",
+          "type": "readonly (readonly number[])[]",
+          "doc": null
+        },
+        {
+          "from": "settings.bias",
+          "name": "bias",
+          "type": "number",
+          "doc": null
+        },
+        {
+          "from": "settings.gap",
+          "name": "gap",
+          "type": "number",
+          "doc": null
+        },
+        {
+          "from": "geom.config.size",
+          "name": "size",
+          "type": "number",
+          "doc": null
+        },
+        {
+          "from": "sample()",
+          "name": "zone",
+          "type": "Zone",
+          "doc": "Sampled from the DOM."
+        }
+      ]
+    }
+  },
+  "functions": [
+    {
+      "export": "clamp01",
+      "original": {
+        "name": "clamp",
+        "line": 1,
+        "kind": "arrow-declarator",
+        "start": 14,
+        "end": 48,
+        "sha256": "ec71c0efbafac7cd1fd933062a52ba9ee5706e6e126d1b8459c70df9fabe6e7a"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "e",
+          "name": "value",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "mix",
+      "original": {
+        "name": "lerp",
+        "line": 2,
+        "kind": "arrow-declarator",
+        "start": 63,
+        "end": 91,
+        "sha256": "4e7623c6fbec48327760f23f7143d61655d517f802422a9863d14ea07689e5a8"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "a",
+          "name": "start",
+          "type": "number"
+        },
+        {
+          "from": "b",
+          "name": "end",
+          "type": "number"
+        },
+        {
+          "from": "t",
+          "name": "amount",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "fitScale",
+      "original": {
+        "name": "scaleFor",
+        "line": 14,
+        "kind": "function-declaration",
+        "start": 559,
+        "end": 745,
+        "sha256": "83309ef42397aaa70cc74ce553ab3e27fd1bfb7ad0981b62f85a4e5440cca5e6"
+      },
+      "deps": [],
+      "params": [],
+      "returns": "number",
+      "context": {
+        "type": "Inputs",
+        "param": "inputs",
+        "reads": [
+          "width",
+          "height",
+          "bias",
+          "size",
+          "zone"
+        ]
+      }
+    },
+    {
+      "export": "rowsFor",
+      "original": {
+        "name": "layout",
+        "line": 18,
+        "kind": "function-declaration",
+        "start": 746,
+        "end": 1120,
+        "sha256": "1f337657cbf8c5ae3656d23d92afe3d360619c9fd6c8d57a92b0db1255fa4a7f"
+      },
+      "deps": [
+        "clamp01",
+        "mix",
+        "fitScale"
+      ],
+      "params": [],
+      "returns": "Map<number, number[]>",
+      "context": {
+        "type": "Inputs",
+        "param": "inputs",
+        "reads": [
+          "width",
+          "height",
+          "table",
+          "gap"
+        ]
+      },
+      "memo": {
+        "cache": "cache",
+        "compute": "computeLayout",
+        "key": "`${w}x${h}`",
+        "key_fields": [
+          "width",
+          "height"
+        ],
+        "cache_writes": [
+          {
+            "line": 23,
+            "kind": "fill inside the memoized computation"
+          },
+          {
+            "line": 35,
+            "kind": "reset to null"
+          },
+          {
+            "line": 38,
+            "kind": "reset to null"
+          }
+        ],
+        "stable_inputs": [
+          {
+            "field": "table",
+            "evidence": "1 reference(s) in this module; none reassigns `table`, writes through it directly, passes an inline callback that writes, or uses it as a bare value (these direct checks do not see aliases or helpers); members touched: map; a literal frozen with Object.freeze at every level; every declared path is an own data property ending in a primitive. Conditional on the global Object.freeze being intact when the literal was created"
+          },
+          {
+            "field": "settings.bias",
+            "evidence": "2 reference(s) in this module; none reassigns `settings`, writes through it directly, passes an inline callback that writes, or uses it as a bare value (these direct checks do not see aliases or helpers); members touched: bias, gap; a literal frozen with Object.freeze at every level; every declared path is an own data property ending in a primitive. Conditional on the global Object.freeze being intact when the literal was created"
+          },
+          {
+            "field": "settings.gap",
+            "evidence": "shares the proven-stable root `settings`"
+          },
+          {
+            "field": "geom.config.size",
+            "evidence": "2 reference(s) in this module; none reassigns `geom`, writes through it directly, passes an inline callback that writes, or uses it as a bare value (these direct checks do not see aliases or helpers); members touched: config; a literal frozen with Object.freeze at every level; every declared path is an own data property ending in a primitive. Conditional on the global Object.freeze being intact when the literal was created"
+          }
+        ],
+        "coupled": [
+          {
+            "cache": "dom",
+            "sampler": "sample()",
+            "fills": [
+              {
+                "line": 10,
+                "kind": "filled inside `sample`"
+              }
+            ],
+            "resets_paired_with_cache_reset": [
+              35,
+              38
+            ]
+          }
+        ],
+        "reviewed_assumptions": [],
+        "callers": [
+          38
+        ],
+        "residual": [
+          "The original returns one shared cached object; the lifted function returns a fresh one. A caller that mutates the result or compares it by identity would observe the difference; the caller lines are listed but their use of the result is not analysed.",
+          "These checks are refusals for known patterns, not a general proof. Only an Object.freeze'd-at-every-level literal with own primitive paths is treated as stable, and only if the global Object.freeze was intact when it was created. Roots under reviewed_assumptions are the reviewer's word: direct reassignment, member writes, mutating calls, inline writing callbacks, bare uses, escaping chains and prefixes of declared paths are refused, but aliases made other ways, helpers, named callbacks, accessors and mutation outside this module are not seen.",
+          "The key is a template of printed numbers joined by text that cannot occur in one; the `number` annotation on each key field is trusted, and `0` and `-0` share a cache entry.",
+          "Inside the sampler, mentions of functions, classes and object/array literals defined in this module are refused; opaque captured bindings (DOM nodes obtained by a call, imported objects) are not analysed, and a getter or method on one of them could run module code.",
+          "Patching a standard builtin through an alias after the cache is filled (`const M = Math; M.min = f`, `Object.getPrototypeOf(new Map()).set = f`, `Object.defineProperty(Math, ..)`) is not detected; the original would keep serving its cached value while the lifted code recomputes with the patched builtin.",
+          "The proof is static; the differential replays a coherent controller (a sampled zone only changes together with its key), so it does not exercise the reset coupling."
+        ]
+      }
+    },
+    {
+      "export": "midline",
+      "original": {
+        "name": "mid",
+        "line": 31,
+        "kind": "function-declaration",
+        "start": 1121,
+        "end": 1168,
+        "sha256": "7714922d09904ba175a5523928febc1c9dfdf225838014db093932f9c20e1e8b"
+      },
+      "deps": [
+        "rowsFor"
+      ],
+      "params": [],
+      "returns": "number",
+      "context": {
+        "type": "Inputs",
+        "param": "inputs",
+        "reads": []
+      },
+      "memo_read": {
+        "cache": "cache",
+        "via": "rowsFor",
+        "compute": "computeLayout"
+      }
+    }
+  ],
+  "unlifted": [
+    {
+      "name": "sample",
+      "line": 7,
+      "reasons": [
+        "global `document`",
+        "reads captured `dom`",
+        "writes captured `dom`"
+      ]
+    },
+    {
+      "name": "resize",
+      "line": 34,
+      "reasons": [
+        "writes captured `cache`",
+        "writes captured `dom`",
+        "writes captured `h`",
+        "writes captured `w`"
+      ]
+    },
+    {
+      "name": "settle",
+      "line": 37,
+      "reasons": [
+        "global `document`",
+        "writes captured `cache`",
+        "writes captured `dom`"
+      ]
+    }
+  ]
+}

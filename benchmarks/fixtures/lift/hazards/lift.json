@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "source": "source.js",
+  "source_sha256": "b0eb5bb0a4a1dc6d4012dda1cdcd3c5ff27e671a5aa5dbd948bf030ace54c116",
+  "region": {
+    "start_line": 1,
+    "end_line": 40
+  },
+  "imports": [
+    "import type { Point2 } from './geometry-types';"
+  ],
+  "functions": [
+    {
+      "name": "describe",
+      "line": 1,
+      "as": "describe",
+      "params": [
+        {
+          "from": "e",
+          "name": "e",
+          "type": "number"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "name": "joinParts",
+      "line": 7,
+      "as": "joinParts",
+      "params": [
+        {
+          "from": "a",
+          "name": "a",
+          "type": "string"
+        },
+        {
+          "from": "b",
+          "name": "b",
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "name": "fact",
+      "line": 11,
+      "as": "factorial",
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "name": "isEven",
+      "line": 14,
+      "as": "isEven",
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "name": "isOdd",
+      "line": 17,
+      "as": "isOdd",
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "name": "spread",
+      "line": 20,
+      "as": "spread",
+      "params": [
+        {
+          "from": "p",
+          "name": "p",
+          "type": "readonly Point2[]"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "name": "label",
+      "line": 25,
+      "as": "label",
+      "params": [
+        {
+          "from": "flag",
+          "name": "flag",
+          "type": "boolean"
+        },
+        {
+          "from": "text",
+          "name": "text",
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "name": "holes",
+      "line": 26,
+      "as": "holes",
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "(number | undefined)[]"
+    }
+  ]
+}

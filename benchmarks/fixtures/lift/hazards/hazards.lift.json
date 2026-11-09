@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.3.0",
+  "source": "source.js",
+  "source_sha256": "b0eb5bb0a4a1dc6d4012dda1cdcd3c5ff27e671a5aa5dbd948bf030ace54c116",
+  "module_sha256": "149822d7b15d24085e71e8458dae792be4e2256b10b8018b7bf76b80fc447f42",
+  "functions": [
+    {
+      "export": "describe",
+      "original": {
+        "name": "describe",
+        "line": 1,
+        "kind": "function-declaration",
+        "start": 0,
+        "end": 81,
+        "sha256": "9a52e4ae5f6399084ec215c11167ef07fcca77a3462945d31d0fb7c71dabc0f1"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "e",
+          "name": "e",
+          "type": "number"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "export": "joinParts",
+      "original": {
+        "name": "joinParts",
+        "line": 7,
+        "kind": "function-expression-declarator",
+        "start": 100,
+        "end": 144,
+        "sha256": "e13da8419b7202ba0d5aa398423ddb1dc466fc7cd9b4d7d9a37bf572a4074a35"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "a",
+          "name": "a",
+          "type": "string"
+        },
+        {
+          "from": "b",
+          "name": "b",
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "export": "factorial",
+      "original": {
+        "name": "fact",
+        "line": 11,
+        "kind": "function-expression-declarator",
+        "start": 159,
+        "end": 225,
+        "sha256": "89509e208a27b377cd2288a9b4b0f9916199e6f074ede513053ee7ba5e60acc9"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "isEven",
+      "original": {
+        "name": "isEven",
+        "line": 14,
+        "kind": "function-declaration",
+        "start": 227,
+        "end": 305,
+        "sha256": "17e896f28b0c185067d628ae32b6c2b4bd0554ec791dfa415047afc1f8e865b5"
+      },
+      "deps": [
+        "isOdd"
+      ],
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "export": "isOdd",
+      "original": {
+        "name": "isOdd",
+        "line": 17,
+        "kind": "function-declaration",
+        "start": 306,
+        "end": 382,
+        "sha256": "bb7121af59f51db01be66990cd15a6258b1b8f5763f81bc4ce410fb5ad0714ff"
+      },
+      "deps": [
+        "isEven"
+      ],
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "export": "spread",
+      "original": {
+        "name": "spread",
+        "line": 20,
+        "kind": "arrow-declarator",
+        "start": 398,
+        "end": 454,
+        "sha256": "8d774b4b640eb6079cbbaad68ab529f8bea8448a412b2550248ed46332356a13"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "p",
+          "name": "p",
+          "type": "readonly Point2[]"
+        }
+      ],
+      "returns": "number"
+    },
+    {
+      "export": "label",
+      "original": {
+        "name": "label",
+        "line": 25,
+        "kind": "arrow-declarator",
+        "start": 470,
+        "end": 518,
+        "sha256": "41a2b2199bb35c60e6102bbecea83e794536a860d12986a5b762331ca6a93d86"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "flag",
+          "name": "flag",
+          "type": "boolean"
+        },
+        {
+          "from": "text",
+          "name": "text",
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "export": "holes",
+      "original": {
+        "name": "holes",
+        "line": 26,
+        "kind": "arrow-declarator",
+        "start": 534,
+        "end": 587,
+        "sha256": "b422c5e4f4faf064a5c39c7ade7d75ff581c0ebe18c6caa2e87bb9a36dd3558e"
+      },
+      "deps": [],
+      "params": [
+        {
+          "from": "n",
+          "name": "n",
+          "type": "number"
+        }
+      ],
+      "returns": "(number | undefined)[]"
+    }
+  ],
+  "unlifted": []
+}
