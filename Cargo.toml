@@ -58,6 +58,25 @@ png = "0.18"
 name = "editing"
 harness = false
 
+# Dev/test builds dominate the Cargo cache in .mochi/target. Full debuginfo for every
+# dependency was most of it. One-off measurements on one macOS machine (not reproducible from
+# the repository; sizes drift with the dependency set and seconds were taken while other builds
+# ran), with `cargo test --no-run` into a fresh target dir each time:
+#   default (debug = 2)                          3.68 GB  clean 211 s  rebuild 24 s
+#   debug = "line-tables-only" everywhere        3.10 GB  clean 193 s  rebuild 12 s
+#   line tables for mochi-web, none for deps     2.64 GB  clean  85 s  rebuild 11 s   <- chosen
+#   ... plus incremental = false                 2.29 GB  clean 123 s  rebuild 37 s
+#   debug = 0 everywhere                         2.48 GB  clean 233 s  rebuild 14 s
+# Incremental stays on: turning it off saves another ~0.35 GB but made rebuilds ~3x slower.
+# Backtraces keep file:line for mochi-web frames; dependency frames show function names only.
+# split-debuginfo is left at the macOS default (unpacked). To reclaim space: see docs/WORKSPACE.md
+# (`cargo clean -p mochi-web`, `mochi clean --cargo`).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 debug = 1
 
