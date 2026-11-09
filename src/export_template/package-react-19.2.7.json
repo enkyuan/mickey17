@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "bun --bun vite --host 127.0.0.1",
     "build": "bun --bun vite build",
-    "check": "bun --bun tsc --noEmit",
+    "check": "bun --bun scripts/generate-route-tree.ts && bun --bun tsc --noEmit",
+    "clean": "rm -rf .output .tanstack .mochi/dist node_modules/.vite node_modules/.nitro node_modules/.vite-temp",
     "start": "bun .output/server/index.mjs"
   },
   "dependencies": {

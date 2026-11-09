@@ -11,5 +11,8 @@ export default defineConfig({
   build: { outDir: '.mochi/dist' },
   // Compatibility styles use .css?inline per document. New .module.css files
   // use Vite's normal local scoping, so authored components can migrate safely.
-  server: { host: '127.0.0.1' },
+  // 3000 is the TanStack Start default for `bun run dev` and for the Nitro server
+  // behind `bun start`. `PORT=4000 bun run dev` overrides the dev port; strictPort
+  // fails loudly on a conflict instead of silently moving to another port.
+  server: { host: '127.0.0.1', port: Number(process.env.PORT) || 3000, strictPort: true },
 })

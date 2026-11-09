@@ -1,11 +1,12 @@
 import { createContext, useContext, createElement, useLayoutEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { notFound, useRouter } from '@tanstack/react-router'
+import { notFound, useRouter, useRouterState } from '@tanstack/react-router'
 import { createIsomorphicFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/react-start/server'
+import { appendResponseHeader, getRequest } from '@tanstack/react-start/server'
 import parseStyle from 'style-to-object'
 import { assets, capturedRoutes } from './references'
 import tokensCss from '@/styles/tokens.css?inline'
+import { blockedAttribute, booleanAttributes, dataUriAllowed, decodePathname, firstVariantIndex, mobileRequest, pageFor, parseSrcset, safeAnimationAttributes, serializeSrcset, variantIndex } from './policy'
 export { tokensCss }
 
 export type Attributes = Record<string, string>
@@ -13,6 +14,8 @@ export type Control = { value?: string | null; checked?: boolean | null; selecte
 export type PageData = {
   key: string
   document: { html: Attributes; body: Attributes }
+  /** Set by selectPage during SSR only: which captured viewport variant the server rendered first. */
+  viewport?: 'mobile' | 'desktop'
   title: string
   meta: Array<{ name?: string; property?: string; content: string }>
   css: string
@@ -34,17 +37,15 @@ const aliases: Record<string, string> = {
   'clip-rule': 'clipRule', 'clip-path': 'clipPath', 'fill-opacity': 'fillOpacity',
   'stroke-opacity': 'strokeOpacity', 'stop-color': 'stopColor', 'stop-opacity': 'stopOpacity',
 }
-const booleanAttributes = new Set(['disabled', 'required', 'multiple', 'readOnly', 'autoFocus', 'hidden',
-  'open', 'checked', 'selected', 'controls', 'loop', 'muted', 'noValidate', 'formNoValidate', 'reversed', 'allowFullScreen'])
 
 const localAssets = new Set(Object.values(assets))
-function resolve(value: string, base: string, navigation = false) {
+export function resolve(value: string, base: string, navigation = false, svgImage = false) {
   if (localAssets.has(value.split('#')[0])) return value
   if (!navigation && (value === '' || value.startsWith('#'))) return value
   try {
     const url = new URL(value, base || 'http://localhost/')
     if (!['http:', 'https:', 'mailto:', 'tel:', 'data:'].includes(url.protocol)) return undefined
-    if (url.protocol === 'data:' && !/^data:image\/(png|jpeg|gif|webp|avif);/i.test(value)) return undefined
+    if (url.protocol === 'data:' && !dataUriAllowed(value, svgImage)) return undefined
     const fragment = url.hash; url.hash = ''
     if (navigation && Object.hasOwn(capturedRoutes, url.href)) return capturedRoutes[url.href] + fragment
     if (Object.hasOwn(assets, url.href)) return assets[url.href] + fragment
@@ -52,19 +53,26 @@ function resolve(value: string, base: string, navigation = false) {
   } catch { return undefined }
 }
 
+export function resolveSrcset(value: string, base: string) {
+  return serializeSrcset(parseSrcset(value).flatMap(({ url, descriptor }) => {
+    const resolved = resolve(url, base, false, true)
+    return resolved === undefined ? [] : [{ url: resolved, descriptor }]
+  }))
+}
+
 export function elementProps<T extends keyof JSX.IntrinsicElements>(tag: T, raw: Attributes, control: Control = null, base = ''): JSX.IntrinsicElements[T] {
   const out: Record<string, unknown> = {}
-  for (const [name, value] of Object.entries(raw)) {
-    if (/^on/i.test(name) || ['srcdoc', 'is', 'dangerouslySetInnerHTML', 'innerHTML', 'action', 'formaction', 'formAction', 'autoplay', 'nonce', 'integrity'].includes(name)) continue
+  for (const [name, value] of Object.entries(safeAnimationAttributes(tag, raw))) {
+    if (blockedAttribute(name)) continue
     const key = aliases[name] ?? name
     if (['checked', 'selected', 'value'].includes(key)) continue
     if (['href', 'src', 'poster', 'xlinkHref', 'cite', 'background'].includes(key)) {
-      const resolved = resolve(value, base, key === 'href' && ['a', 'area'].includes(tag))
+      const resolved = resolve(value, base, key === 'href' && ['a', 'area'].includes(tag), key === 'src' && tag === 'img')
       if (resolved !== undefined) out[key] = resolved
     } else if (key === 'srcSet') {
-      // The exporter reports this omission; selecting srcset candidates requires
-      // a dedicated parser, especially for comma-containing data URLs.
-      continue
+      // Only image contexts take srcset (and may carry SVG data URIs).
+      const resolved = tag === 'img' || tag === 'source' ? resolveSrcset(value, base) : undefined
+      if (resolved !== undefined) out.srcSet = resolved
     } else if (key === 'style') {
       let style: Record<string,string> = {}
       try { style = parseStyle(value) ?? {} } catch { /* Captured invalid declarations remain an export diagnostic. */ }
@@ -97,18 +105,33 @@ export function Anchor({ raw, children }: { raw: Attributes; children: ReactNode
   return <a {...props} onClick={navigate}>{children}</a>
 }
 export function selectPage(pages: Record<string, PageData>, pathname: string, search: string): PageData {
-  const page = pages[requestedKey(pathname, search)]
+  const location = requestedLocation(pathname, search)
+  const page = pageFor(pages, location.pathname, location.search)
   if (!page) throw notFound()
-  return page
+  const viewport = requestedViewport()
+  return viewport ? { ...page, viewport } : page
 }
 // Start canonicalizes SSR history query encoding. Read the untouched Request
 // for source-state selection, and the opaque router search during navigation.
-const requestedKey = createIsomorphicFn()
+const requestedLocation = createIsomorphicFn()
   .server((_pathname: string, _search: string) => {
     const url = new URL(getRequest().url)
-    return url.pathname + url.search
+    // The raw pathname is still percent-encoded here (the client router has
+    // already decoded its own). Decode once, or keep the raw path when ambiguous.
+    return { pathname: decodePathname(url.pathname) ?? url.pathname, search: url.search }
   })
-  .client((pathname: string, search: string) => pathname + search)
+  .client((pathname: string, search: string) => ({ pathname, search }))
+// The server cannot measure the browser window, so it picks the first captured
+// viewport variant from the request: Sec-CH-UA-Mobile (sent by default by
+// Chromium on secure origins) or, where absent, a mobile User-Agent. The choice
+// travels to the client in loader data so hydration renders the same variant.
+const requestedViewport = createIsomorphicFn()
+  .server((): 'mobile' | 'desktop' => {
+    const headers = getRequest().headers
+    appendResponseHeader('Vary', 'Sec-CH-UA-Mobile, User-Agent')
+    return mobileRequest(headers.get('sec-ch-ua-mobile'), headers.get('user-agent')) ? 'mobile' : 'desktop'
+  })
+  .client((): 'mobile' | 'desktop' | undefined => undefined)
 // Match SSR/client cache identities despite Start's normalization. Every URL
 // navigation still reloads its literal state (shouldReload: true).
 export function queryKey(search: Record<string, unknown>) {
@@ -146,11 +169,19 @@ export function ShadowHost({tag,raw,mode,css,light,children}:{tag:string;raw:Att
   return createElement(tag,{...elementProps('div',raw,null,base),ref:host},light,root?createPortal(<><style>{capturedCss(css)}</style>{children}</>,root):null)
 }
 const subscribeViewport=(notify:()=>void)=>{window.addEventListener('resize',notify);return ()=>window.removeEventListener('resize',notify)}
+// Which captured variant renders is a pure function of the window width (see
+// variantIndex): the nearest capture by width, height only breaking exact ties.
+// For 375/1440 captures, windows up to 907px get the 375 DOM at any height.
+// SSR cannot measure the window, so it starts from the variant its request hints
+// at (see requestedViewport); two cases then switch variants after hydration,
+// which remounts the whole subtree, and are NOT verified in a browser: desktop
+// browser windows narrower than the switch point, and tablets whose User-Agent
+// looks like a desktop. Both variants are not rendered together because each is
+// a full, differing DOM with its own ids and state.
 export function ResponsiveCapture({widths,heights,children}:{widths:number[];heights:number[];children:ReactNode[]}) {
-  const last=widths.length-1
-  const viewport=useSyncExternalStore(subscribeViewport,()=>`${window.innerWidth}x${window.innerHeight}`,()=>`${widths[last]}x${heights[last]}`)
+  const hint=useRouterState({select:state=>{for(const match of state.matches){const viewport=(match.loaderData as PageData|undefined)?.viewport;if(viewport)return viewport}return undefined}})
+  const first=firstVariantIndex(widths,hint)
+  const viewport=useSyncExternalStore(subscribeViewport,()=>`${window.innerWidth}x${window.innerHeight}`,()=>`${widths[first]}x${heights[first]}`)
   const [width,height]=viewport.split('x').map(Number)
-  const distance=(i:number)=>Math.abs(widths[i]-width)*10+Math.abs(heights[i]-height)
-  const index=widths.reduce((best,_value,i)=>distance(i)<distance(best)?i:best,0)
-  return children[index]
+  return children[variantIndex(widths,heights,width,height)]
 }

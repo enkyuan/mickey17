@@ -60,6 +60,27 @@ retained under the output directory. Do not publish captured private site conten
 The runner never submits arbitrary forms. Review all configured click/keyboard
 traces before using a live reference. Local calibration actions are safe fixtures.
 
+## Compatibility export runtime checks
+
+`bun test` runs `tests/compat-runtime.test.ts`: unit tests of the pure helpers the
+compatibility-export template ships in `src/export_template/src/lib/policy.ts`
+(data-URI policy, srcset, page selection, viewport variants, SVG animation,
+pathname decoding). Server rendering of a real export is checked by
+`tests/compat-ssr.ts`, which needs a built export (it needs the TanStack
+toolchain, so it is not built inside `bun test`):
+
+```sh
+cd <export> && bun install --frozen-lockfile && bun run check && bun run build
+bun benchmarks/tests/compat-ssr.ts <export> [--out <dir to keep the HTML>]
+MOCHI_COMPAT_EXPORTS=<export1>:<export2> bun test --cwd benchmarks tests/compat-ssr.test.ts
+```
+
+It imports the Nitro bundle and calls its fetch handler (no port, no browser), so
+it verifies server HTML only. Hydration and viewport switching need a browser.
+Its `ping` and SVG-animation checks only fire when an export contains such
+markup; the current natural and Infinite Garden captures contain none, so those
+cases are covered by the unit tests.
+
 ## Calibration before site ratings
 
 ```sh

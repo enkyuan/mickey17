@@ -46,7 +46,7 @@ impl Renderer<'_> {
                 !a.name.to_ascii_lowercase().starts_with("on")
                     && !matches!(
                         a.name.as_str(),
-                        "src" | "srcdoc" | "sandbox" | "action" | "formaction"
+                        "src" | "srcdoc" | "sandbox" | "action" | "formaction" | "ping"
                     )
             })
             .map(|a| (a.name.clone(), a.value.clone()))
@@ -58,6 +58,32 @@ impl Renderer<'_> {
             style.push_str(&observed);
         }
         let raw = js(&raw)?;
+        let (kind, replacement) = match surface.kind {
+            SurfaceKind::Nonvisual => ("nonvisual", "omitted_no_visual_output"),
+            SurfaceKind::Raster => ("raster", "static_snapshot_image"),
+            SurfaceKind::Frame => ("frame", "sandboxed_srcdoc_without_scripts"),
+            SurfaceKind::Shadow => (
+                "shadow",
+                "shadow_root_attached_after_hydration_with_captured_children",
+            ),
+        };
+        let observation = &self.model.observations[&source.observation];
+        self.report.surfaces.push(SurfaceRecord {
+            route: observation.capture.url.clone(),
+            viewport: [
+                observation.capture.viewport.width,
+                observation.capture.viewport.height,
+            ],
+            source: source.clone(),
+            tag: tag.clone(),
+            kind: kind.into(),
+            replacement: replacement.into(),
+            bounds: [surface.bounds.width, surface.bounds.height],
+            asset: self
+                .surface_images
+                .get(&(source.observation.clone(), source.node))
+                .cloned(),
+        });
         match surface.kind {
             SurfaceKind::Nonvisual => {
                 self.report
@@ -206,6 +232,7 @@ impl Renderer<'_> {
                         || matches!(
                             a.name.as_str(),
                             "srcdoc"
+                                | "ping"
                                 | "action"
                                 | "formaction"
                                 | "nonce"
@@ -230,10 +257,15 @@ impl Renderer<'_> {
                             {
                                 continue;
                             }
-                            self.asset_urls
-                                .get(url.as_str())
-                                .cloned()
-                                .unwrap_or_else(|| url.to_string())
+                            if let Some(local) = self.asset_urls.get(url.as_str()) {
+                                local.clone()
+                            } else {
+                                // srcDoc links are not rewritten to local routes.
+                                let anchor =
+                                    matches!(tag.as_str(), "a" | "area") && a.name == "href";
+                                self.reference_url(source, anchor, false, url.clone());
+                                url.to_string()
+                            }
                         } else if a.name == "style" {
                             css(
                                 &format!("{};{}", a.value, observed),
