@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mochi::{
-    analysis, authored, crawl, edit, evidence, export, interpret, lift, parity, project, serve,
-    trackers, util,
+    analysis, authored, clean, crawl, edit, evidence, export, interpret, lift, parity, project,
+    serve, trackers, util,
 };
 use std::path::PathBuf;
 #[derive(Parser)]
@@ -146,6 +146,26 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// List (dry run) or delete regenerable build outputs in a workspace; evidence is never touched.
+    Clean {
+        #[arg(default_value = ".mochi")]
+        workspace: PathBuf,
+        /// Delete the listed `remove` rows instead of only printing them.
+        #[arg(long)]
+        apply: bool,
+        /// Also remove node_modules (little disk saved on APFS: bun installs with clonefile).
+        #[arg(long)]
+        deps: bool,
+        /// Also remove cargo `target` directories (marked by CACHEDIR.TAG or .rustc_info.json).
+        #[arg(long)]
+        cargo: bool,
+        /// Protect this project root (repeatable), e.g. the canonical build of a site.
+        #[arg(long, value_name = "PATH")]
+        keep: Vec<PathBuf>,
+        /// Keep only the newest built project per site family; see docs/WORKSPACE.md.
+        #[arg(long)]
+        keep_latest: bool,
+    },
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -237,6 +257,23 @@ fn main() -> Result<()> {
                 out.display(),
                 report.failures.len()
             );
+        }
+        Command::Clean {
+            workspace,
+            apply,
+            deps,
+            cargo,
+            keep,
+            keep_latest,
+        } => {
+            let options = clean::Options {
+                apply,
+                deps,
+                cargo,
+                keep,
+                keep_latest,
+            };
+            clean::run(&workspace, &options, &mut std::io::stdout().lock())?;
         }
         Command::FingerprintProject { project } => {
             println!("{}", parity::project_fingerprint(&project)?);

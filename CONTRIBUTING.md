@@ -26,3 +26,7 @@ every commit reachable from the pushed branch or pull request head.
 For crates.io publication and the corresponding GitHub release, follow
 [Releasing Mochi](docs/RELEASING.md). The working notes for the next release are
 in [docs/releases/NEXT.md](docs/releases/NEXT.md).
+
+Local captures, builds and caches live in the Git-ignored `.mochi/` workspace. Some of it is
+irreplaceable evidence; see [the workspace guide](docs/WORKSPACE.md) before deleting anything,
+and use `mochi clean` (a dry run by default) to reclaim regenerable build output.

@@ -2,6 +2,7 @@
 pub mod analysis;
 pub mod authored;
 pub mod cache;
+pub mod clean;
 pub mod crawl;
 pub mod edit;
 pub mod evidence;
