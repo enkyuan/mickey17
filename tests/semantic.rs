@@ -875,7 +875,7 @@ fn emit_html(html: &str) -> (emit::Emitted, PageAnalysis) {
     (emit::emit(&a, &EmitOptions::default()), a)
 }
 
-fn component<'e>(e: &'e emit::Emitted, p: Primitive) -> &'e str {
+fn component(e: &emit::Emitted, p: Primitive) -> &str {
     let c = e
         .components
         .iter()
@@ -1021,18 +1021,33 @@ fn tab_labels_use_visible_text_not_image_alt_text() {
 }
 
 #[test]
-fn framework_and_utility_variant_classes_are_kept_state_modifiers_are_dropped() {
-    let html = r#"<ul class="nav"><li><button type="button" aria-expanded="false" aria-controls="x0">A</button><div id="x0" inert><div class="is-layout-flex has-text-color is-active:opacity-100 is-open">c</div></div></li>
+fn framework_and_utility_classes_are_kept_and_state_modifiers_are_dropped_only_on_parts() {
+    let html = r#"<ul class="nav"><li class="item--open is-open"><button type="button" aria-expanded="false" aria-controls="x0">A</button><div id="x0" inert><div class="is-layout-flex has-text-color is-active:opacity-100 is-open">c</div></div></li>
 <li><button type="button" aria-expanded="false" aria-controls="x1">B</button><div id="x1" inert><p>d</p></div></li></ul>"#;
     let (e, _) = emit_html(html);
     let src = component(&e, Primitive::Accordion);
+    // Content inside a panel is plain markup: every captured class stays, state-like or not.
     assert!(
         src.contains("is-layout-flex")
             && src.contains("has-text-color")
             && src.contains("is-active:opacity-100"),
         "{src}"
     );
-    assert!(!src.contains("is-open"), "{src}");
+    assert!(
+        src.contains("is-open"),
+        "plain markup keeps its captured state class: {src}"
+    );
+    // The accordion item is a part of the composition: the primitive owns its open state.
+    let item = src.lines().find(|l| l.contains("<AccordionItem")).unwrap();
+    assert!(
+        !item.contains("item--open") && !item.contains("is-open"),
+        "{item}"
+    );
+    assert!(
+        e.state_classes_dropped.contains("item--open"),
+        "{:?}",
+        e.state_classes_dropped
+    );
 }
 
 #[test]
@@ -1045,6 +1060,254 @@ fn a_structural_menu_popup_is_not_also_a_popover() {
         p.contains(&Primitive::Menu) && !p.contains(&Primitive::Popover),
         "{p:?}"
     );
+}
+
+// ---- whole-project assembly -----------------------------------------------------------------
+
+#[test]
+fn assembling_natural_gives_a_complete_project_without_a_recovered_bundle() {
+    let root = Path::new(".mochi/trials/20261108-normalized/natural/capture");
+    if !root.join("manifest.json").exists() {
+        eprintln!("skipping: {} not present", root.display());
+        return;
+    }
+    let project = mochi::semantic::project::assemble(
+        root,
+        &mochi::semantic::project::Options {
+            viewport: Some("1440x900"),
+            routes: None,
+            tokens: false,
+        },
+    )
+    .unwrap();
+    let files = &project.files;
+    let text = |p: &str| String::from_utf8(files[p].clone()).unwrap();
+    assert_eq!(project.report.routes.len(), 3);
+    for p in [
+        "src/routes/index.tsx",
+        "src/routes/pay.tsx",
+        "src/routes/request.tsx",
+        "src/routes/__root.tsx",
+        "src/router.tsx",
+        "src/pages/home.tsx",
+        "package.json",
+        "bun.lock",
+        "vite.config.ts",
+        "tsconfig.json",
+        "scripts/generate-route-tree.ts",
+        ".mochi/provenance/assets.json",
+        ".mochi/semantic/project.report.md",
+    ] {
+        assert!(files.contains_key(p), "{p} missing");
+    }
+    assert_eq!(
+        text("package.json"),
+        include_str!("../src/export_template/package.json")
+    );
+    assert!(text("src/routes/pay.tsx").contains("createFileRoute('/pay')"));
+    // Base UI only in components/ui; no hash or numbered names; no scripts in the markup.
+    for (path, bytes) in files {
+        let Ok(src) = std::str::from_utf8(bytes) else {
+            continue;
+        };
+        if path.starts_with("src/") && src.contains("@base-ui/react") {
+            assert!(path.starts_with("src/components/ui/"), "{path}");
+        }
+        if path.starts_with("src/pages/") || path.starts_with("src/components/") {
+            assert!(
+                !src.contains("<script") && !src.contains("dangerouslySetInnerHTML"),
+                "{path}"
+            );
+            for bad in ["Component1", "Component2", "prop_1"] {
+                assert!(!src.contains(bad), "{path} contains {bad}");
+            }
+        }
+    }
+    // Every copied asset matches its provenance row byte for byte; no script or stylesheet bundle is copied.
+    let provenance: serde_json::Value =
+        serde_json::from_str(&text(".mochi/provenance/assets.json")).unwrap();
+    let rows = provenance["assets"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let public = format!(
+            "public{}",
+            percent_decode(row["public_path"].as_str().unwrap())
+        );
+        let bytes = files
+            .get(&public)
+            .unwrap_or_else(|| panic!("{public} not copied"));
+        use sha2::{Digest, Sha256};
+        let hex = |b: &[u8]| -> String {
+            Sha256::digest(b)
+                .iter()
+                .map(|x| format!("{x:02x}"))
+                .collect()
+        };
+        // The copy, the provenance row and the mirrored original (read independently) agree.
+        let original = std::fs::read(root.join(row["source"].as_str().unwrap())).unwrap();
+        assert_eq!(hex(bytes), row["sha256"].as_str().unwrap(), "{public}");
+        assert_eq!(
+            hex(&original),
+            row["sha256"].as_str().unwrap(),
+            "{public} differs from the mirror"
+        );
+        assert!(
+            !public.ends_with(".js") && !public.ends_with(".mjs") && !public.ends_with(".css"),
+            "{public}"
+        );
+    }
+    // The report keeps the gaps it cannot close.
+    let gaps = project.report.gaps.join("\n");
+    for needle in ["motion", "graphics", "behavior", "styles"] {
+        assert!(gaps.contains(needle), "gap about {needle} missing: {gaps}");
+    }
+    let inv = &project.report.inventory[0];
+    assert!(inv.component_elements > 0 && inv.plain_elements > 0 && inv.controls > 0);
+    assert_eq!(
+        inv.component_elements + inv.plain_elements,
+        inv.body_elements
+    );
+}
+
+#[test]
+fn page_markup_keeps_text_and_drops_what_must_not_run() {
+    let html = r#"<body>
+<img srcset="data:image/svg+xml;base64,PHN2Zz4=, /a.png 2x, /w_1,h_1/b.png 3x" src="/a.png">
+<iframe src="javascript:alert(1)"></iframe><next-route-announcer><div role="alert"></div></next-route-announcer>
+<pre>a
+  b</pre><p>R&amp;D &amp;amp; 10&nbsp;000</p><details open><summary>s</summary></details>
+<table border="0" cellpadding="0"></table><input value="x" tabindex=""><div :class="x" @click="y"></div>
+<iframe src="/frame"><html><body>inner</body></html></iframe><div class="state--active is-layout-flex"></div></body>"#;
+    let a = PageAnalysis::from_parts("x", Doc::from_html(html), Vec::new());
+    let map = |u: &str| (u == "/a.png").then(|| "/local/a.png".to_owned());
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            urls: Some(&map),
+            ..EmitOptions::default()
+        },
+    );
+    let page = e.page.unwrap();
+    let jsx = &page.jsx;
+    assert!(
+        !jsx.contains("javascript:") && !jsx.contains("next-route-announcer"),
+        "{jsx}"
+    );
+    assert!(
+        page.elements_dropped
+            .keys()
+            .any(|k| k.contains("javascript:")),
+        "{:?}",
+        page.elements_dropped
+    );
+    // srcset: a data URI keeps its comma, a URL with commas is intact, only mapped candidates change.
+    assert!(jsx.contains("data:image/svg+xml;base64,PHN2Zz4="), "{jsx}");
+    assert!(
+        jsx.contains("/local/a.png 2x") && jsx.contains("/w_1,h_1/b.png 3x"),
+        "{jsx}"
+    );
+    // Text: &nbsp; stays text, a literal "&amp;" is escaped, pre keeps its lines.
+    assert!(jsx.contains("10\u{a0}000"), "{jsx}");
+    assert!(jsx.contains("{'&'}amp;"), "{jsx}");
+    assert!(jsx.contains("{'a\\n  b'}"), "{jsx}");
+    // Attribute typing: booleans bare, unwritable names and untyped props through a string record.
+    assert!(
+        jsx.contains("<details open>") || jsx.contains("<details\n"),
+        "{jsx}"
+    );
+    assert!(jsx.contains("as Record<string, string>"), "{jsx}");
+    assert!(
+        jsx.contains("':class': 'x'") && jsx.contains("'@click': 'y'"),
+        "{jsx}"
+    );
+    assert!(
+        jsx.contains("defaultValue=\"x\""),
+        "an input's captured value is its default: {jsx}"
+    );
+    assert!(
+        !jsx.contains("tabIndex"),
+        "a non-integer tabindex is not a number: {jsx}"
+    );
+    // No iframe content document; state-like classes stay on plain markup.
+    assert!(!jsx.contains("inner"), "{jsx}");
+    assert!(
+        jsx.contains("state--active") && jsx.contains("is-layout-flex"),
+        "{jsx}"
+    );
+}
+
+#[test]
+fn assembling_garden_and_microsoft_keeps_child_routes_apart_and_runs_nothing_from_the_originals() {
+    for (dir, child_file, route_count) in [
+        (
+            "20261108-normalized/infinitegarden/capture",
+            "articles_.commercial-intelligence-with-infinite-memory",
+            3,
+        ),
+        (
+            "20261108-microsoft-ai/capture-modules",
+            "models_.mai-cyber-1-1-flash",
+            3,
+        ),
+    ] {
+        let root = Path::new(".mochi/trials").join(dir);
+        if !root.join("manifest.json").exists() {
+            eprintln!("skipping: {} not present", root.display());
+            continue;
+        }
+        let project = mochi::semantic::project::assemble(
+            &root,
+            &mochi::semantic::project::Options {
+                viewport: None,
+                routes: None,
+                tokens: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(project.report.routes.len(), route_count, "{dir}");
+        assert!(
+            project
+                .files
+                .contains_key(&format!("src/routes/{child_file}.tsx")),
+            "{dir}: a captured child of a captured route must not nest under it: {:?}",
+            project
+                .files
+                .keys()
+                .filter(|k| k.starts_with("src/routes/"))
+                .collect::<Vec<_>>()
+        );
+        for (path, bytes) in &project.files {
+            let Ok(src) = std::str::from_utf8(bytes) else {
+                continue;
+            };
+            if path.starts_with("src/pages/") || path.starts_with("src/components/") {
+                assert!(
+                    !src.contains("javascript:") && !src.contains("<script"),
+                    "{dir} {path}"
+                );
+                assert!(!src.contains("next-route-announcer"), "{dir} {path}");
+            }
+            if path.starts_with("src/routes/") {
+                assert!(
+                    !src.contains("http-equiv") && !src.contains("httpEquiv"),
+                    "{dir} {path}"
+                );
+                assert!(!src.contains("next-size-adjust"), "{dir} {path}");
+            }
+        }
+        let gaps = project.report.gaps.join("\n");
+        assert!(
+            gaps.contains("inline `style`"),
+            "{dir}: dropped inline styles must be a gap"
+        );
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 // ---- real captures (skipped when the workspace evidence is absent) ----------------------

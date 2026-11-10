@@ -6,7 +6,7 @@ use super::jsx::Jsx;
 use super::naming::component_name;
 use super::ts::{ex_ts, ident, kebab, ts_string, type_name};
 use super::ui::{self, wrapper_name};
-use super::{EmitOptions, Emitted, EmittedComponent, Skipped};
+use super::{EmitOptions, Emitted, EmittedComponent, PageBody, Skipped};
 use crate::semantic::PageAnalysis;
 use crate::semantic::ir::{Doc, NodeId};
 use crate::semantic::js::{EffectFact, Ex, JsFacts, Lit, StateEffect, StateId};
@@ -27,11 +27,14 @@ pub fn supported(p: Primitive) -> bool {
     )
 }
 
+#[derive(Default)]
 struct Comp {
     source: String,
     data: Option<(String, String)>,
     ui: BTreeSet<Primitive>,
     gaps: Vec<String>,
+    /// Props the component requires from its caller (name, TypeScript type).
+    props: Vec<(String, String)>,
 }
 
 struct Cx<'a> {
@@ -48,9 +51,40 @@ struct Cx<'a> {
     /// Dialog match id -> closing elements that cannot be wired (inside repeated-structure components).
     unwired_closers: HashMap<usize, Vec<NodeId>>,
     stats: std::rc::Rc<std::cell::RefCell<super::jsx::Stats>>,
+    /// Route namespace: components live in `src/components/<ns>/`, data in `src/data/<ns>/`.
+    ns: String,
 }
 
 impl<'a> Cx<'a> {
+    fn comp_path(&self, name: &str) -> String {
+        if self.ns.is_empty() {
+            format!("src/components/{}.tsx", kebab(name))
+        } else {
+            format!("src/components/{}/{}.tsx", self.ns, kebab(name))
+        }
+    }
+    fn comp_import(&self, name: &str) -> String {
+        if self.ns.is_empty() {
+            format!("@/components/{}", kebab(name))
+        } else {
+            format!("@/components/{}/{}", self.ns, kebab(name))
+        }
+    }
+    fn data_path(&self, name: &str) -> String {
+        if self.ns.is_empty() {
+            format!("src/data/{}.ts", kebab(name))
+        } else {
+            format!("src/data/{}/{}.ts", self.ns, kebab(name))
+        }
+    }
+    fn data_import(&self, name: &str) -> String {
+        if self.ns.is_empty() {
+            format!("@/data/{}", kebab(name))
+        } else {
+            format!("@/data/{}/{}", self.ns, kebab(name))
+        }
+    }
+
     fn jsx(&self) -> Jsx<'a> {
         let mut j = Jsx::new(self.doc, self.opts.style);
         j.overrides = self
@@ -64,6 +98,7 @@ impl<'a> Cx<'a> {
             .map(|(n, (name, _))| (*n, name.clone()))
             .collect();
         j.stats = self.stats.clone();
+        j.urls = self.opts.urls;
         // Class tokens the bundle adds or removes with state belong to the primitive's data attributes.
         j.state_classes = self.state_classes.clone();
         j
@@ -129,7 +164,7 @@ const OWNED: &[&str] = &[
 ];
 
 fn part_attrs(jsx: &Jsx<'_>, node: NodeId, extra: &[String]) -> Vec<String> {
-    let mut v = jsx.attributes(node, OWNED);
+    let mut v = jsx.part_attributes(node, OWNED);
     v.extend(extra.iter().cloned());
     v
 }
@@ -195,7 +230,7 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
     let has_href = tabs.iter().any(|t| t.render_as.as_deref() == Some("a"));
     let id = ident(name);
     let ty = type_name(name);
-    let data_file = format!("src/data/{}.ts", kebab(name));
+    let data_file = cx.data_path(name);
     let data = format!(
         "// Tab values and labels read from the capture; `value` keys come from {}.\nexport const {id}Items = [\n{items}] as const\n\nexport type {ty}Value = (typeof {id}Items)[number]['value']\n",
         tabs[0].key_source.as_deref().unwrap_or("the capture")
@@ -337,13 +372,13 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         inner.push_str("      {children}\n");
     }
     let source = format!(
-        "import type {{ ComponentProps{rn} }} from 'react'\n{imports}import {{ {id}Items, type {ty}Value }} from '@/data/{file}'\n\n{props_ty}\n\nexport function {name}({sig}: Props) {{\n  return (\n{root}  )\n}}\n",
+        "import type {{ ComponentProps{rn} }} from 'react'\n{imports}import {{ {id}Items, type {ty}Value }} from '{file}'\n\n{props_ty}\n\nexport function {name}({sig}: Props) {{\n  return (\n{root}  )\n}}\n",
         rn = if all_panels { "" } else { ", ReactNode" },
         imports = import_line(
             Primitive::Tabs,
             &tab_imports.iter().map(|s| s.to_string()).collect()
         ),
-        file = kebab(name),
+        file = cx.data_import(name),
         root = element(&w(Primitive::Tabs, "Root"), &root_all, Some(&inner), 2),
     );
     Ok(Comp {
@@ -351,6 +386,7 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         data: Some((data_file, data)),
         ui: [Primitive::Tabs].into(),
         gaps,
+        ..Default::default()
     })
 }
 
@@ -431,6 +467,7 @@ fn toggle_group(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         data: None,
         ui: [Primitive::ToggleGroup, Primitive::Toggle].into(),
         gaps,
+        ..Default::default()
     })
 }
 
@@ -469,6 +506,7 @@ fn toggle(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         data: None,
         ui: [Primitive::Toggle].into(),
         gaps: m.gaps.clone(),
+        ..Default::default()
     })
 }
 
@@ -686,6 +724,7 @@ fn disclosure(
         data: None,
         ui: [p].into(),
         gaps,
+        ..Default::default()
     })
 }
 
@@ -720,6 +759,7 @@ fn switch(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         data: None,
         ui: [Primitive::Switch].into(),
         gaps: m.gaps.clone(),
+        ..Default::default()
     })
 }
 
@@ -764,7 +804,7 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
             &w(Primitive::NavigationMenu, "Content"),
             &[],
             Some(&format!(
-                "  {{content.{}}}\n",
+                "  {{dropdowns.{}}}\n",
                 if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                     key.clone()
                 } else {
@@ -795,7 +835,7 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
             body.push_str(&src);
         } else if doc.node(c).is_element() && doc.node(c).role() == Some("link") {
             uses_link = true;
-            let attrs = jsx.attributes(c, &["role", "type", "id", "tabindex"]);
+            let attrs = jsx.part_attributes(c, &["role", "type", "id", "tabindex"]);
             let link = element(
                 &w(Primitive::NavigationMenu, "Link"),
                 &attrs,
@@ -848,7 +888,7 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
     let mut inner = list_el;
     inner.push_str(&popup);
     let source = format!(
-        "import type {{ ComponentProps, ReactNode }} from 'react'\n{imp}\nexport const {id}Items = [{keys}] as const\nexport type {ty}Key = (typeof {id}Items)[number]\n\ntype Props = Omit<ComponentProps<typeof NavigationMenuRoot>, 'children'> & {{\n  /** Dropdown body per item: rendered by script in the original and absent from the capture. */\n  content: Record<{ty}Key, ReactNode>\n}}\n\nexport function {name}({{ content, ...props }}: Props) {{\n  return (\n{root}  )\n}}\n",
+        "import type {{ ComponentProps, ReactNode }} from 'react'\n{imp}\nexport const {id}Items = [{keys}] as const\nexport type {ty}Key = (typeof {id}Items)[number]\n\ntype Props = Omit<ComponentProps<typeof NavigationMenuRoot>, 'children'> & {{\n  /** Dropdown body per item: rendered by script in the original and absent from the capture. */\n  dropdowns: Record<{ty}Key, ReactNode>\n}}\n\nexport function {name}({{ dropdowns, ...props }}: Props) {{\n  return (\n{root}  )\n}}\n",
         imp = import_line(
             Primitive::NavigationMenu,
             &[
@@ -883,6 +923,7 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
         data: None,
         ui: [Primitive::NavigationMenu].into(),
         gaps,
+        ..Default::default()
     })
 }
 
@@ -984,8 +1025,8 @@ fn dialog(
         ));
         resets.push(format!("{setter}(null)"));
         nested_imports.push_str(&format!(
-            "import {{ {comp}, type {item_ty} }} from '@/components/{}'\n",
-            kebab(comp)
+            "import {{ {comp}, type {item_ty} }} from '{}'\n",
+            cx.comp_import(comp)
         ));
         accordion_types.push(item_ty.clone());
         pending_calls.push((n.id, n.root, comp.clone(), var, setter, item_ty));
@@ -1263,6 +1304,7 @@ fn dialog(
             data: None,
             ui: [Primitive::Dialog].into(),
             gaps,
+            props: props.clone(),
         },
         accordion_types,
     ))
@@ -1272,11 +1314,11 @@ fn dialog(
 
 /// Add imports for the components a file rendered (recorded while rendering, not found by
 /// searching the generated text).
-fn add_imports(source: &str, used: &BTreeSet<String>, own: &str) -> String {
+fn add_imports(cx: &Cx<'_>, source: &str, used: &BTreeSet<String>, own: &str) -> String {
     let imports: String = used
         .iter()
         .filter(|n| n.as_str() != own)
-        .map(|n| format!("import {{ {n} }} from '@/components/{}'\n", kebab(n)))
+        .map(|n| format!("import {{ {n} }} from '{}'\n", cx.comp_import(n)))
         .collect();
     if imports.is_empty() {
         return source.to_owned();
@@ -1294,6 +1336,9 @@ fn add_imports(source: &str, used: &BTreeSet<String>, own: &str) -> String {
         if at == 0 { "\n" } else { "" }
     )
 }
+
+/// A pattern component that was emitted: match id, component name, props it requires.
+type PlaceInfo = (usize, String, Vec<(String, String)>);
 
 /// Components for repeated structures whose name and every varying slot are semantic.
 fn group_components(cx: &mut Cx<'_>, taken: &BTreeSet<String>, out: &mut Emitted) {
@@ -1420,8 +1465,8 @@ export function {n}({{ {names} }}: {n}Props) {{
             fields = fields.join("\n").replace("\\n", "\n"),
             names = names.join(", "),
         );
-        let file = format!("src/components/{}.tsx", kebab(&p.name));
-        let source = add_imports(&source, &used, &p.name);
+        let file = cx.comp_path(&p.name);
+        let source = add_imports(cx, &source, &used, &p.name);
         out.files.insert(file.clone(), source);
         out.group_components.push(super::GroupComponent {
             name: p.name.clone(),
@@ -1431,6 +1476,232 @@ export function {n}({{ {names} }}: {n}Props) {{
             name_source: g.name_source.clone().unwrap_or_default(),
         });
     }
+}
+
+/// Render the page body: seeded compositions and repeated components are already overrides;
+/// compositions that need props from the page (controlled tabs, the dialog, hover navigation)
+/// get their calls and hooks here. What cannot be placed is listed with the reason.
+fn render_page(
+    cx: &Cx<'_>,
+    infos: &[PlaceInfo],
+    also: &BTreeMap<usize, Vec<usize>>,
+    out: &Emitted,
+) -> PageBody {
+    let doc = cx.doc;
+    let mut page = PageBody::default();
+    let mut jsx = cx.jsx();
+    let mut hooks: Vec<String> = Vec::new();
+    let mut imports: BTreeSet<String> = BTreeSet::new();
+    // Drop what earlier renders recorded: only this render counts toward coverage and imports.
+    cx.stats.borrow_mut().used_components.clear();
+    cx.stats.borrow_mut().used_nodes.clear();
+    cx.stats.borrow_mut().elements_dropped.clear();
+    // Decide every placement first, then commit shallow before deep, so a component is never
+    // half placed (its popup removed while its trigger stays) and order cannot change the result.
+    struct Candidate {
+        mid: usize,
+        name: String,
+        node: NodeId,
+        call: String,
+        hooks: Vec<String>,
+        imports: Vec<String>,
+        removes: Vec<NodeId>,
+        duplicates: Vec<usize>,
+    }
+    let mut cands: Vec<Candidate> = Vec::new();
+    for (mid, name, props) in infos {
+        let m = &cx.a.recognition.matches[*mid];
+        let ids: Vec<usize> = std::iter::once(*mid)
+            .chain(also.get(mid).cloned().unwrap_or_default())
+            .collect();
+        let controlled = matches!(m.state, StateModel::Controlled { .. });
+        let needs_props = match m.primitive {
+            Primitive::Tabs => controlled,
+            Primitive::Dialog | Primitive::NavigationMenu => true,
+            _ => false,
+        };
+        if !needs_props {
+            continue;
+        }
+        // Components that need page state are placed once; later usages stay plain markup.
+        let target = &cx.a.recognition.matches[ids[0]];
+        let mut c = Candidate {
+            mid: *mid,
+            name: name.clone(),
+            node: 0,
+            call: String::new(),
+            hooks: Vec::new(),
+            imports: Vec::new(),
+            removes: Vec::new(),
+            duplicates: ids[1..].to_vec(),
+        };
+        match m.primitive {
+            Primitive::Tabs => {
+                let Some(root) = parts(target, "Root").first().map(|p| p.node) else {
+                    continue;
+                };
+                let var = ident(&format!("{name} value"));
+                let setter = ident(&format!("set {name} value"));
+                let ty = format!("{}Value", type_name(name));
+                let default = target
+                    .props
+                    .get("defaultValue")
+                    .cloned()
+                    .unwrap_or_default();
+                c.hooks.push(format!(
+                    "const [{var}, {setter}] = useState<{ty}>({})",
+                    ts_string(&default)
+                ));
+                c.imports.push("import { useState } from 'react'".into());
+                c.imports.push(format!(
+                    "import type {{ {ty} }} from '{}'",
+                    cx.data_import(name)
+                ));
+                c.node = root;
+                c.call = format!("<{name} value={{{var}}} onValueChange={{{setter}}} />");
+            }
+            Primitive::Dialog => {
+                let Some(trigger) = parts(target, "Trigger").first().map(|p| p.node) else {
+                    continue;
+                };
+                let mut args = String::new();
+                let mut unsupported = false;
+                for (prop, _) in props {
+                    if prop == "pathname" {
+                        c.hooks.push("const pathname = useRouterState({ select: (state) => state.location.pathname })".into());
+                        c.imports
+                            .push("import { useRouterState } from '@tanstack/react-router'".into());
+                        args.push_str(" pathname={pathname}");
+                    } else {
+                        page.unplaced.push((
+                            *mid,
+                            format!(
+                                "`{name}` requires prop `{prop}`, which the page cannot supply"
+                            ),
+                        ));
+                        unsupported = true;
+                    }
+                }
+                if unsupported {
+                    continue;
+                }
+                // The popup lives elsewhere in the captured DOM (a portal): the component renders it.
+                c.removes.push(parts(target, "Popup")[0].node);
+                c.node = trigger;
+                c.call = format!("<{name}{args} />");
+            }
+            Primitive::NavigationMenu => {
+                let Some(root) = parts(target, "Root").first().map(|p| p.node) else {
+                    continue;
+                };
+                let keys: Vec<String> = parts(target, "Item")
+                    .iter()
+                    .filter_map(|p| p.key.clone())
+                    .collect();
+                let map = keys
+                    .iter()
+                    .map(|k| {
+                        if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                            && !k.starts_with(|c: char| c.is_ascii_digit())
+                        {
+                            format!("{k}: null")
+                        } else {
+                            format!("{}: null", ts_string(k))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                c.node = root;
+                c.call = format!("<{name} dropdowns={{{{ {map} }}}} />");
+            }
+            _ => continue,
+        }
+        cands.push(c);
+    }
+    let depth = |n: NodeId| doc.ancestors(n).count();
+    cands.sort_by_key(|c| (depth(c.node), c.mid));
+    let mut placed_nodes: Vec<NodeId> = Vec::new();
+    for c in cands {
+        let covered = |n: NodeId| {
+            doc.ancestors(n)
+                .any(|a| jsx.overrides.contains_key(&a) || placed_nodes.contains(&a))
+        };
+        if covered(c.node) || c.removes.iter().any(|r| covered(*r)) {
+            page.unplaced.push((
+                c.mid,
+                format!(
+                    "`{}` sits inside another component's content, which renders it",
+                    c.name
+                ),
+            ));
+            continue;
+        }
+        placed_nodes.push(c.node);
+        for r in &c.removes {
+            jsx.overrides.insert(*r, String::new());
+        }
+        for h in &c.hooks {
+            if !hooks.contains(h) {
+                hooks.push(h.clone());
+            }
+        }
+        imports.extend(c.imports.iter().cloned());
+        jsx.overrides.insert(c.node, c.call.clone());
+        jsx.override_component.insert(c.node, c.name.clone());
+        for other in &c.duplicates {
+            page.unplaced.push((
+                *other,
+                format!(
+                    "`{}` is used again at node {}; only the first usage is placed (it needs page state)",
+                    c.name,
+                    cx.a.recognition.matches[*other].root
+                ),
+            ));
+        }
+    }
+    let Some(body) = doc.nodes.iter().find(|n| n.tag == "body").map(|n| n.id) else {
+        page.unplaced.push((0, "the capture has no <body>".into()));
+        return page;
+    };
+    page.jsx = jsx.children(body, 3);
+    let used = std::mem::take(&mut cx.stats.borrow_mut().used_components);
+    let used_nodes = std::mem::take(&mut cx.stats.borrow_mut().used_nodes);
+    page.elements_dropped = std::mem::take(&mut cx.stats.borrow_mut().elements_dropped);
+    for n in &used {
+        imports.insert(format!("import {{ {n} }} from '{}'", cx.comp_import(n)));
+    }
+    page.placed = used.into_iter().collect();
+    page.hooks = hooks;
+    page.imports = imports.into_iter().collect();
+    let in_body: Vec<NodeId> = doc
+        .descendants(body)
+        .into_iter()
+        .filter(|d| doc.node(*d).is_element())
+        .collect();
+    let mut covered: BTreeSet<NodeId> = BTreeSet::new();
+    for n in used_nodes {
+        covered.insert(n);
+        covered.extend(doc.descendants(n));
+    }
+    page.covered_nodes = in_body
+        .iter()
+        .copied()
+        .filter(|d| covered.contains(d))
+        .collect();
+    page.elements = in_body.len();
+    page.covered_elements = in_body.iter().filter(|d| covered.contains(d)).count();
+    page.raw_elements = page.elements - page.covered_elements;
+    page.scripts_omitted = in_body
+        .iter()
+        .filter(|d| {
+            matches!(
+                doc.node(**d).tag.as_str(),
+                "script" | "style" | "noscript" | "template"
+            )
+        })
+        .count();
+    let _ = out;
+    page
 }
 
 pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
@@ -1452,6 +1723,7 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
         stats: Default::default(),
         nested_closers: HashMap::new(),
         unwired_closers: HashMap::new(),
+        ns: opts.namespace.to_owned(),
     };
     // Names; duplicate usage of the same component is emitted once.
     let mut by_name: BTreeMap<String, usize> = BTreeMap::new();
@@ -1566,6 +1838,18 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
             cx.group_calls
                 .entry(node)
                 .or_insert((name.clone(), format!("<{name} />")));
+            // Identical usages elsewhere on the page render the same component.
+            for dup in also.get(&m.id).into_iter().flatten() {
+                let dup_root = parts(&a.recognition.matches[*dup], "Root")
+                    .first()
+                    .or(parts(&a.recognition.matches[*dup], "").first())
+                    .map(|p| p.node);
+                if let Some(n) = dup_root {
+                    cx.group_calls
+                        .entry(n)
+                        .or_insert((name.clone(), format!("<{name} />")));
+                }
+            }
         }
     }
     // Nested patterns (an accordion inside a dialog).
@@ -1581,6 +1865,8 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
             }
         }
     }
+    let also_all = also.clone();
+    let mut infos: Vec<PlaceInfo> = Vec::new();
     let nested_ids: BTreeSet<usize> = nested_of.values().flatten().map(|m| m.id).collect();
     for d in emittable
         .iter()
@@ -1638,7 +1924,7 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
         };
         match result {
             Ok(c) => {
-                let file = format!("src/components/{}.tsx", kebab(&name));
+                let file = cx.comp_path(&name);
                 let mut source = format!(
                     "// Generated by `mochi semantic` from rule `{}` (confidence {:.2}).\n// Evidence and gaps: see the semantic report. Original class names are kept until the styles workstream replaces them.\n{}",
                     m.rule, m.confidence, c.source
@@ -1647,13 +1933,14 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
                     source.push('\n');
                 }
                 let used = std::mem::take(&mut cx.stats.borrow_mut().used_components);
-                let source = add_imports(&source, &used, &name);
+                let source = add_imports(&cx, &source, &used, &name);
                 out.files.insert(file.clone(), source);
                 let data_file = c.data.map(|(path, text)| {
                     out.files.insert(path.clone(), text);
                     path
                 });
                 out.ui_primitives.extend(c.ui.iter().copied());
+                infos.push((m.id, name.clone(), c.props.clone()));
                 out.components.push(EmittedComponent {
                     match_id: m.id,
                     primitive: m.primitive,
@@ -1673,6 +1960,9 @@ pub fn emit(a: &PageAnalysis, opts: &EmitOptions<'_>) -> Emitted {
         }
     }
     let _ = nested_ids;
+    if opts.page {
+        out.page = Some(render_page(&cx, &infos, &also_all, &out));
+    }
     {
         let st = cx.stats.borrow();
         out.inline_style_attributes_dropped = st.inline_style_attributes_dropped;

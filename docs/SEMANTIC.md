@@ -66,6 +66,74 @@ The fragments are type-checked outside the test suite (needs an installed export
 and run `tsc --noEmit`. The three example pages pass. This proves the output type-checks
 against the Base UI typings, not that it behaves like the original.
 
+## Assembling a whole project
+
+```sh
+mochi semantic <capture> --out /new/dir --assemble [--viewport 1440x900] [--routes N] [--no-tokens]
+cd /new/dir/project && bun install --frozen-lockfile && bun run check && bun run build
+bun run dev                                  # http://127.0.0.1:3000 (PORT=... overrides)
+```
+
+`--assemble` writes a complete TanStack Start project (`mochi semantic` without it writes
+the fragment described above). It reuses the compat exporter's `package.json`, `bun.lock`,
+`vite.config.ts`, `tsconfig.json` and route-tree script read-only, so the two generators share
+one stack and `--frozen-lockfile` stays valid. Nothing under `src/export*` is touched.
+
+| Part | How it is made |
+| --- | --- |
+| Routes | one file route per captured path (`/` is `index`, `/blog/x` is `blog.x`); a captured path that is a prefix of another captured path is written `models_.x` so it does not become that route's layout and both pages render; query/fragment variants, other origins, paths that cannot be file routes and name collisions are skipped with the reason; a trailing slash is dropped and said so |
+| Root document | `src/routes/__root.tsx`: `HeadContent`, `Outlet`, `Scripts`, `<html>`/`<body>` attributes from the leaf route's loader |
+| Head | title, `meta`, canonical from the capture; icon links and JSON-LD from the mirrored HTML response with the same whitelist as `export::head` (mirrored, since that module is private to the exporter); a per-response `csp-nonce` meta is dropped |
+| Markup rules | whitespace collapses only on ASCII whitespace (`pre` is verbatim), literal `&amp;` text is escaped, `srcset` follows the HTML tokenization, `src`/`srcset`/`poster`/`use href` are mapped to the copied files, captured form values become `defaultValue`/`defaultChecked`; not emitted at all (and counted per reason): scripts, styles, framework runtime elements (`next-route-announcer`), elements with a `javascript:` URL, iframe content documents; attributes React cannot type on the element go through a `Record<string, string>` spread; `style` attributes are dropped and counted; captured state-like classes stay on plain markup and are dropped only on parts of compositions |
+| Page | `src/pages/<route>.tsx`: the captured `<body>` as TSX with Base UI compositions and repeated-structure components in place; compositions that need page state (controlled tabs, the dialog's `pathname`, hover-nav `dropdowns`) get their hooks and props there |
+| Components | `src/components/<route>/…`, data in `src/data/<route>/…` (namespaced per route so identical names never collide), wrappers in `src/components/ui/` |
+| Assets, fonts | files referenced by `src`/`srcset`/`poster` and by `url()` in the stylesheets (found with the CSS tokenizer) are copied byte for byte from the capture's `site/` to `public/<same path>`, so root-relative references need no rewriting; `.mochi/provenance/assets.json` lists source, size, SHA-256 and referrers, and what was not copied |
+| Styles | provisional: `mochi tokens` output (`src/styles/tokens.css` plus the rewritten captured stylesheets), imported by the root route. Not Tailwind utilities; replaced when the tokens bridge (`emit::StyleBridge`) lands |
+
+`scripts/semantic/verify-project.sh <project> / /pay ...` runs the three commands and then
+server-renders each route.
+
+Verified for the three example captures (this commit): `bun install --frozen-lockfile`,
+`bun run check` and `bun run build` pass, and every route server-renders with status 200 and its
+captured title, and no two routes render the same visible text (called through the built handler, no port opened; `scripts/semantic/ssr-check.mjs`). Hydration and rendering in a
+browser were **not** checked here.
+
+### Inventory the IR could not map (per route, widest viewport)
+
+| Site / route | Body elements | In components | Plain markup | Controls (primitive / links / unrecognized) | Landmarks left plain | Graphics, embeds |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| Natural `/` | 995 | 354 | 641 | 102 (19 / 83 / 0) | main, 2 nav, 10 section, 6 article | canvas 1, iframe 1, svg 73 |
+| Natural `/pay`, `/request` | 310 each | 169 | 141 | 79 (7 / 72 / 0) | main, 2 nav, 5 section | iframe 1, picture 1, svg 10 |
+| Garden `/` | 1205 | 308 | 897 | 31 (21 / 10 / 0) | header, footer, main, 2 nav, 5 of 8 sections, 24 of 30 articles | canvas 5, picture 3, svg 51 |
+| Garden `/articles` | 92 | 0 | 92 | 15 (3 / 12 / 0) | all | svg 5 |
+| Garden `/articles/…` | 99 | 9 | 90 | 15 (0 / 15 / 0) | most | picture 1 |
+| Microsoft `/` | 1379 | 156 | 1223 | 251 (22 / 229 / 0) | all 13 nav, 6 article, 2 header, 2 footer, 5 section | canvas 1, iframe 1, svg 36 |
+| Microsoft `/models` | 897 | 156 | 741 | 246 (20 / 226 / 0) | all | iframe 1, svg 24 |
+| Microsoft `/models/mai-cyber-1-1-flash` | 984 | 156 | 828 | 218 (21 / 197 / 0) | all | canvas 1, iframe 1, svg 28, video 1 |
+
+"In components" means rendered by a Base UI composition or a repeated-structure component,
+not that it is converted: the rest is a structural copy with the captured class names. Links
+are counted separately because Base UI has no link primitive; they are between 32 % (Garden
+home, 10 of 31) and 100 % (Garden article, 15 of 15) of the controls on these pages. No route was skipped. Assets not copied: Garden 18 (17 served from
+`cdn.sanity.io`, 1 missing from the mirror), Microsoft 3 (`uhf.microsoft.com`); they stay
+hotlinked.
+
+### Handing the project to the parity pipeline
+
+```sh
+# offline, works now
+bun benchmarks/src/parity/cli.ts inventory <capture> --out inv.json      # routes x viewports x states, gaps
+mochi fingerprint-project /new/dir/project                                # prints the project hash the gate records
+# needs local ports / a visible browser
+mochi serve <capture> --port 8100 &
+(cd /new/dir/project && PORT=3101 bun .output/server/index.mjs) &         # or bun run dev (port 3000)
+bun benchmarks/src/parity/cli.ts run --inventory inv.json --reference http://127.0.0.1:8100 \
+  --candidate http://127.0.0.1:3101 --out .mochi/parity-runs/<new> --profile core --project /new/dir/project
+```
+
+Expect the first comparison to fail broadly: styles are provisional, behavior and motion are
+absent, and header/footer markup that is shared by the original is duplicated per route.
+
 ## Known gaps (kept explicit in the report)
 
 - Initial state of one viewport only; states the capture never entered are
@@ -84,7 +152,7 @@ against the Base UI typings, not that it behaves like the original.
 - `popup-links` navigation, Popover, Menu, Tooltip, Select, Combobox, Checkbox
   and Field are recognized but have no composition emitter yet.
 
-## Later milestones and file boundaries
+## Later milestones and file boundaries (disjoint file sets)
 
 | Milestone | New files only | Reads |
 | --- | --- | --- |
@@ -93,3 +161,5 @@ against the Base UI typings, not that it behaves like the original.
 | Reconstructed assets | `src/semantic/assets/**` | capture `site/` and `resources` |
 | Styles bridge | `impl StyleBridge` in `src/semantic/tokens/bridge.rs` | `semantic::tokens::TokenSet` |
 | Remaining composition emitters | `src/semantic/emit/{popover,menu,select,...}.rs` | `semantic::patterns::Match` |
+| Shared layout routes (header/footer duplicated per route today) | `src/semantic/layout/**` | the per-route component files `project` writes |
+| Responsive variants (one evidence viewport per route today) | `src/semantic/responsive/**` | `Doc` per viewport from `evidence::load` |

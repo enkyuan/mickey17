@@ -25,6 +25,16 @@ pub struct Args {
     /// Also write the TSX project fragment (`components/ui`, compositions, data).
     #[arg(long)]
     pub emit: bool,
+    /// Assemble a complete TanStack Start project from every captured route (routes, root
+    /// document, head, components, data, assets and fonts with provenance, provisional styles).
+    #[arg(long, conflicts_with_all = ["emit", "no_js"])]
+    pub assemble: bool,
+    /// With --assemble: do not run the tokens pipeline (the project then has no stylesheet).
+    #[arg(long, requires = "assemble")]
+    pub no_tokens: bool,
+    /// With --assemble: assemble at most this many routes.
+    #[arg(long, requires = "assemble")]
+    pub routes: Option<usize>,
 }
 
 fn page_evidence(args: &Args) -> Result<PathBuf> {
@@ -62,12 +72,62 @@ fn page_evidence(args: &Args) -> Result<PathBuf> {
     Ok(PathBuf::from(chosen))
 }
 
+fn ensure_safe(path: &str) -> Result<()> {
+    use std::path::{Component, Path};
+    if path.is_empty()
+        || !Path::new(path)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+    {
+        bail!("refusing to write {path}");
+    }
+    Ok(())
+}
+
+fn write_project(args: &Args) -> Result<()> {
+    let project = super::project::assemble(
+        &args.capture,
+        &super::project::Options {
+            viewport: args.viewport.as_deref(),
+            routes: args.routes,
+            tokens: !args.no_tokens,
+        },
+    )?;
+    // Validate every path before touching the disk: a legitimate name such as `v1..2.png` is
+    // fine, a parent or absolute component is not, and a refusal must not leave a half-written tree.
+    for path in project.files.keys() {
+        ensure_safe(path)?;
+    }
+    std::fs::create_dir_all(&args.out)?;
+    let root = args.out.join("project");
+    for (path, bytes) in &project.files {
+        let target = root.join(path);
+        std::fs::create_dir_all(target.parent().unwrap())?;
+        std::fs::write(target, bytes)?;
+    }
+    let r = &project.report;
+    println!(
+        "Assembled {} route(s), {} files, {} assets ({} not copied), {} gap entries. Project: {}. Report: {}",
+        r.routes.len(),
+        r.files,
+        r.assets.copied,
+        r.assets.skipped.len(),
+        r.gaps.len(),
+        root.display(),
+        root.join(".mochi/semantic/project.report.md").display()
+    );
+    Ok(())
+}
+
 pub fn run(args: Args) -> Result<()> {
     ensure!(
         !args.out.exists(),
         "output directory {} already exists",
         args.out.display()
     );
+    if args.assemble {
+        return write_project(&args);
+    }
     let page = page_evidence(&args)?;
     let analysis = analyze_page(&args.capture, &page, !args.no_js)?;
     let emitted = if args.emit {
@@ -77,6 +137,9 @@ pub fn run(args: Args) -> Result<()> {
     };
     let rep = report::build(&analysis, emitted);
     let md = report::markdown(&analysis, &rep);
+    for path in rep.emitted.files.keys() {
+        ensure_safe(path)?;
+    }
     std::fs::create_dir_all(&args.out)?;
     std::fs::write(
         args.out.join("report.json"),
@@ -84,9 +147,6 @@ pub fn run(args: Args) -> Result<()> {
     )?;
     std::fs::write(args.out.join("report.md"), md)?;
     for (path, text) in &rep.emitted.files {
-        if path.contains("..") || path.starts_with('/') {
-            bail!("refusing to write {path}");
-        }
         let target = args.out.join("project").join(path);
         std::fs::create_dir_all(target.parent().unwrap())?;
         std::fs::write(target, text)?;

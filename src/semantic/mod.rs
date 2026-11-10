@@ -11,6 +11,7 @@ pub mod emit;
 pub mod ir;
 pub mod js;
 pub mod patterns;
+pub mod project;
 pub mod report;
 pub mod tokens;
 
@@ -82,21 +83,23 @@ pub fn load_js(capture_dir: &Path, capture: &Capture) -> Vec<js::JsFacts> {
     out
 }
 
+/// Analyze an already loaded capture page (`page` labels it in the report).
+pub fn analyze_capture(
+    capture_dir: &Path,
+    page: &str,
+    capture: &Capture,
+    with_js: bool,
+) -> Result<PageAnalysis> {
+    ensure!(capture.complete, "capture is incomplete: issues are recorded in the evidence");
+    let doc = ir::Doc::from_capture(capture)?;
+    let js = if with_js { load_js(capture_dir, capture) } else { Vec::new() };
+    Ok(PageAnalysis::from_parts(page, doc, js))
+}
+
 /// Load `page_json` (a `reconstruction/pages/page-*.json` path relative to the
 /// capture directory) and analyze it.
 pub fn analyze_page(capture_dir: &Path, page_json: &Path, with_js: bool) -> Result<PageAnalysis> {
     let capture = evidence::load(capture_dir, page_json)
         .with_context(|| format!("loading {}", page_json.display()))?;
-    ensure!(capture.complete, "capture is incomplete: issues are recorded in the evidence");
-    let doc = ir::Doc::from_capture(&capture)?;
-    let js = if with_js { load_js(capture_dir, &capture) } else { Vec::new() };
-    let recognition = patterns::recognize(&doc, &js);
-    let components = components::extract(&doc);
-    Ok(PageAnalysis {
-        page: page_json.display().to_string(),
-        doc,
-        js,
-        recognition,
-        components,
-    })
+    analyze_capture(capture_dir, &page_json.display().to_string(), &capture, with_js)
 }
