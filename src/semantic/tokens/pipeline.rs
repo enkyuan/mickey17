@@ -104,6 +104,9 @@ pub struct Output {
     pub report: Report,
     /// The decided tokens, for emitters that need `token_for` / `class_for`.
     pub tokens: TokenSet,
+    /// Rewritten sheets by corpus index as the style translation reads them: like the written
+    /// files, but keeping empty-valued declarations so their values can be recovered.
+    pub styles_input: BTreeMap<usize, Sheet>,
 }
 
 /// Bundler content hashes are 8 base64url characters after a dash (`styles-B8ae2haK`,
@@ -181,6 +184,28 @@ fn sheet_name(href: Option<&str>, taken: &mut BTreeSet<String>) -> String {
         }
         n += 1;
     }
+}
+
+/// `<link media>` becomes an explicit @media wrapper so the condition survives. @charset and
+/// @namespace are not valid inside @media and apply document-wide anyway, so they stay in front
+/// of it; an @import would lose its condition, which is refused.
+fn wrap_media(nodes: Vec<css::Node>, media: &str, index: usize) -> Result<Vec<css::Node>> {
+    let (mut front, inner): (Vec<css::Node>, Vec<css::Node>) = nodes.into_iter().partition(
+        |n| matches!(n, css::Node::At(a) if matches!(a.name.as_str(), "charset" | "namespace")),
+    );
+    ensure!(
+        !inner
+            .iter()
+            .any(|n| matches!(n, css::Node::At(a) if a.name == "import")),
+        "stylesheet #{index} has a <link media> condition and an @import; that cannot be expressed without changing the import"
+    );
+    front.push(css::Node::At(css::AtRule {
+        name: "media".into(),
+        prelude: css::parse_components(media),
+        raw_prelude: Some(media.to_string()),
+        items: Some(inner.into_iter().map(css::Item::Rule).collect()),
+    }));
+    Ok(front)
 }
 
 /// A `<link media>` value we can carry into an `@media` prelude unchanged: it must parse as
@@ -342,33 +367,19 @@ pub fn run(capture_dir: &Path, options: &Options) -> Result<Output> {
     // Rewrite every distinct sheet.
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let mut sheet_infos = Vec::new();
+    let mut styles_input: BTreeMap<usize, Sheet> = BTreeMap::new();
     for &index in &used {
         // Sheets read from raw text (no CSSOM validation) keep their values: a declaration the
         // browser would have rejected must not become valid by being rewritten.
         let replace_values = !corpus.sheets[index].from_text_source;
         let (mut sheet, stats) = rewrite::rewrite_sheet(&sheets[index], &set, ctx, replace_values);
+        let mut kept =
+            rewrite::rewrite_sheet_with(&sheets[index], &set, ctx, replace_values, false).0;
         if let Some(media) = &sheet_media[&index] {
-            // `<link media>` becomes an explicit @media wrapper so the condition survives.
-            // @charset/@namespace are not valid inside @media and apply document-wide anyway, so
-            // they stay in front of it; an @import would lose its condition, which is refused.
-            let (front, inner): (Vec<css::Node>, Vec<css::Node>) = std::mem::take(&mut sheet.nodes)
-                .into_iter()
-                .partition(|n| matches!(n, css::Node::At(a) if matches!(a.name.as_str(), "charset" | "namespace")));
-            ensure!(
-                !inner
-                    .iter()
-                    .any(|n| matches!(n, css::Node::At(a) if a.name == "import")),
-                "stylesheet #{index} has a <link media> condition and an @import; that cannot be expressed without changing the import"
-            );
-            let items = inner.into_iter().map(css::Item::Rule).collect();
-            sheet.nodes = front;
-            sheet.nodes.push(css::Node::At(css::AtRule {
-                name: "media".into(),
-                prelude: css::parse_components(media),
-                raw_prelude: Some(media.clone()),
-                items: Some(items),
-            }));
+            sheet.nodes = wrap_media(std::mem::take(&mut sheet.nodes), media, index)?;
+            kept.nodes = wrap_media(std::mem::take(&mut kept.nodes), media, index)?;
         }
+        styles_input.insert(index, kept);
         let name = match corpus.sheets[index].href.as_deref() {
             Some(href) => sheet_name(Some(href), &mut taken),
             None => inline_sheet_name(&sheets[index], &mut taken),
@@ -563,6 +574,19 @@ pub fn run(capture_dir: &Path, options: &Options) -> Result<Output> {
         }
     }
     gaps.push("Resolution and verification slow down super-linearly on very deep or very wide element trees (thousands of levels or siblings); the captured sites finish in seconds.".into());
+    let mut empties: BTreeMap<String, usize> = BTreeMap::new();
+    for info in &sheet_infos {
+        for (prop, n) in &info.rewrite.empty_declarations_dropped {
+            *empties.entry(prop.clone()).or_default() += n;
+        }
+    }
+    if !empties.is_empty() {
+        gaps.push(format!(
+            "The capture holds {} declaration(s) with an empty value ({:?}): Chrome serializes a shorthand that contains var() as empty longhands, so the real value is not in the stylesheet text. They are invalid CSS and are not written; the style translation recovers them from the captured computed value where it can.",
+            empties.values().sum::<usize>(),
+            empties
+        ));
+    }
     gaps.extend(set.gaps.iter().cloned());
     gaps.extend(media_gaps);
     let report = Report {
@@ -605,6 +629,7 @@ pub fn run(capture_dir: &Path, options: &Options) -> Result<Output> {
         files,
         report,
         tokens: set,
+        styles_input,
     })
 }
 
@@ -749,10 +774,15 @@ fn markdown(r: &Report) -> String {
 
 /// Write an output tree to a directory that must not exist yet.
 pub fn write_output(out: &Output, dir: &Path) -> Result<()> {
+    write_files(&out.files, dir)
+}
+
+/// Write relative-path -> content files below a directory that must not exist yet.
+pub fn write_files(files: &BTreeMap<String, String>, dir: &Path) -> Result<()> {
     if dir.exists() {
         bail!("{} already exists; choose a new directory", dir.display());
     }
-    for (relative, content) in &out.files {
+    for (relative, content) in files {
         let path = dir.join(relative);
         std::fs::create_dir_all(path.parent().context("no parent")?)?;
         std::fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;

@@ -21,6 +21,13 @@ pub struct Args {
     /// Keep px and rem lengths apart (default: merge them when the root font size is constant).
     #[arg(long)]
     pub no_merge_rem_px: bool,
+    /// Also translate this page's styles into utilities and recipes (a snapshot file below the
+    /// capture, e.g. `reconstruction/pages/page-00000-1440x900.json`) and write the result.
+    #[arg(long)]
+    pub styles: Option<PathBuf>,
+    /// Tailwind package used to compile and check the utilities (default: found automatically).
+    #[arg(long)]
+    pub tailwind_dir: Option<PathBuf>,
     /// Write the output even when the static equality check found differences (the report
     /// status is then `static_differences_found`).
     #[arg(long)]
@@ -63,6 +70,9 @@ pub fn run(args: Args) -> Result<()> {
         min_uses: args.min_uses,
         merge_rem_px: !args.no_merge_rem_px,
     };
+    if let Some(page) = &args.styles {
+        return run_styles(&args, page, options);
+    }
     let output = pipeline::run(&args.capture, &options)?;
     let differences: usize = output
         .report
@@ -91,6 +101,48 @@ pub fn run(args: Args) -> Result<()> {
     }
     pipeline::write_output(&output, &args.out)?;
     println!("{}", summary(&output));
+    println!("wrote {}", args.out.display());
+    Ok(())
+}
+
+fn run_styles(args: &Args, page: &std::path::Path, tokens: Options) -> Result<()> {
+    use super::styles::run::{StyleOptions, translate};
+    let plan = translate(
+        &args.capture,
+        page,
+        &StyleOptions {
+            tokens,
+            tailwind_dir: args.tailwind_dir.clone(),
+            min_share: 2,
+        },
+    )?;
+    let r = &plan.report;
+    println!(
+        "{} elements translated into {} distinct classes ({} arbitrary properties, {} recipes, {} plain-CSS recipes); {} comparisons against {}: {} equal, {} different (status: {}).",
+        r.elements_translated,
+        r.utilities.distinct_classes,
+        r.utilities.arbitrary_properties,
+        r.recipes.shared,
+        r.recipes.fallback_hooks,
+        r.check.compared,
+        r.oracle,
+        r.check.equal,
+        r.check.different,
+        r.status
+    );
+    if r.status != "static_checks_only_not_browser_verified" && !args.allow_differences {
+        for d in r.check.samples.iter().take(8) {
+            eprintln!(
+                "w{} {:?} {} {}: {} -> {}",
+                d.width, d.state, d.element, d.property, d.before, d.after
+            );
+        }
+        anyhow::bail!(
+            "the style translation did not verify (status {}); nothing was written (pass --allow-differences to write anyway)",
+            r.status
+        );
+    }
+    pipeline::write_files(&plan.files, &args.out)?;
     println!("wrote {}", args.out.display());
     Ok(())
 }

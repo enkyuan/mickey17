@@ -404,6 +404,8 @@ impl Dom for Snapshot {
             "required" => (form_control && has("required")).into(),
             "optional" => (form_control && !has("required")).into(),
             "open" => (matches!(tag, "details" | "dialog") && has("open")).into(),
+            // A resting snapshot: nothing is hovered, focused or pressed.
+            "hover" | "active" | "focus" | "focus-visible" | "focus-within" => Tri::No,
             _ => Tri::Unknown,
         }
     }

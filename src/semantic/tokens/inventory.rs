@@ -882,6 +882,47 @@ pub fn root_font_size_is_conditional(sheets: &[(&Sheet, bool)]) -> bool {
         .any(|(sheet, conditional)| sheet.nodes.iter().any(|n| node_has(n, *conditional)))
 }
 
+/// The component class of an element: the first class that is neither a utility nor a
+/// transient state (`is-open`, `js-ready`). Used to name shared style recipes.
+pub fn semantic_class(classes: &[&str]) -> Option<String> {
+    fn transient(c: &str) -> bool {
+        c.starts_with("is-")
+            || c.starts_with("has-")
+            || c.starts_with("js-")
+            || c.starts_with("--")
+            || matches!(
+                c,
+                "active"
+                    | "open"
+                    | "opened"
+                    | "closed"
+                    | "visible"
+                    | "hidden"
+                    | "show"
+                    | "shown"
+                    | "selected"
+                    | "disabled"
+                    | "loading"
+                    | "loaded"
+                    | "ready"
+                    | "current"
+                    | "expanded"
+                    | "collapsed"
+            )
+    }
+    classes
+        .iter()
+        .find(|c| {
+            !looks_like_utility(c)
+                && !transient(c)
+                && !c.is_empty()
+                && c.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+                && !c.starts_with(|ch: char| ch.is_ascii_digit())
+        })
+        .map(|c| (*c).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::css::parse_sheet;

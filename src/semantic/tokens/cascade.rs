@@ -97,6 +97,8 @@ pub struct FlatRule {
     pub sheet: usize,
     /// AND of the enclosing media/supports/container conditions.
     pub active: Tri,
+    /// The enclosing conditions as written, outermost first, joined with ` and `.
+    pub condition: String,
     pub specificity: Specificity,
 }
 
@@ -108,7 +110,29 @@ pub struct Winner {
     /// Longhand set by a shorthand (or unresolved `var()`) whose value is not known here.
     pub opaque: bool,
     pub rule: Option<u32>,
+    /// Position of the declaration inside its rule (source order key together with `rule`).
+    pub idx: usize,
     pub specificity: Specificity,
+    /// Layer the declaration came from (`None` = unlayered).
+    pub layer: Option<Vec<usize>>,
+}
+
+/// Cascade precedence of two winners of the same element: `Less` = `a` is overridden by `b`.
+pub fn winner_cmp(a: &Winner, b: &Winner) -> Ordering {
+    if a.important != b.important {
+        return a.important.cmp(&b.important);
+    }
+    if a.from_inline != b.from_inline {
+        return a.from_inline.cmp(&b.from_inline);
+    }
+    let layers = if a.important {
+        layer_cmp(&a.layer, &b.layer).reverse()
+    } else {
+        layer_cmp(&a.layer, &b.layer)
+    };
+    layers
+        .then(a.specificity.cmp(&b.specificity))
+        .then((a.rule, a.idx).cmp(&(b.rule, b.idx)))
 }
 
 #[derive(Debug, Default)]
@@ -156,6 +180,8 @@ struct Builder<'a> {
 struct Ctx {
     layer: Vec<String>,
     active: Tri,
+    /// Enclosing conditional at-rules as written (`@media (min-width: 40rem)`).
+    cond: Vec<String>,
 }
 
 fn and(a: Tri, b: Tri) -> Tri {
@@ -254,6 +280,7 @@ impl<'a> Builder<'a> {
             order: self.order,
             sheet: self.sheet,
             active: ctx.active,
+            condition: ctx.cond.join(" and "),
             specificity,
         });
         self.order += 1;
@@ -308,6 +335,14 @@ impl<'a> Builder<'a> {
     fn nested_at(&mut self, at: &AtRule, selectors: &SelectorList, ctx: &Ctx) {
         let Some(items) = &at.items else { return };
         let mut inner = ctx.clone();
+        if matches!(
+            at.name.as_str(),
+            "media" | "supports" | "container" | "scope"
+        ) {
+            inner
+                .cond
+                .push(format!("@{} {}", at.name, css::to_css(&at.prelude)));
+        }
         match at.name.as_str() {
             "media" => inner.active = and(inner.active, media::eval_media(&at.prelude, self.env)),
             "supports" => inner.active = and(inner.active, media::eval_supports(&at.prelude)),
@@ -336,6 +371,14 @@ impl<'a> Builder<'a> {
         match at.name.as_str() {
             "media" | "supports" | "container" | "scope" | "layer" | "document" => {
                 let mut inner = ctx.clone();
+                if matches!(
+                    at.name.as_str(),
+                    "media" | "supports" | "container" | "scope" | "document"
+                ) {
+                    inner
+                        .cond
+                        .push(format!("@{} {}", at.name, css::to_css(&at.prelude)));
+                }
                 match at.name.as_str() {
                     "media" => {
                         inner.active = and(inner.active, media::eval_media(&at.prelude, self.env))
@@ -463,6 +506,7 @@ impl Cascade {
             let mut ctx = Ctx {
                 layer: Vec::new(),
                 active: Tri::Yes,
+                cond: Vec::new(),
             };
             if !input.media.trim().is_empty() {
                 ctx.active = and(
@@ -708,7 +752,9 @@ impl Cascade {
                     from_inline: cand.inline,
                     opaque: cand.opaque,
                     rule: cand.rule,
+                    idx: cand.idx,
                     specificity: cand.spec,
+                    layer: cand.layer,
                 },
             );
         }
@@ -768,8 +814,11 @@ mod tests {
         fn is_empty(&self, n: usize) -> bool {
             self.children[n].is_empty()
         }
-        fn state(&self, _: usize, _: &str) -> Tri {
-            Tri::Unknown
+        fn state(&self, _: usize, name: &str) -> Tri {
+            match name {
+                "hover" | "active" | "focus" | "focus-visible" | "focus-within" => Tri::No,
+                _ => Tri::Unknown,
+            }
         }
     }
 

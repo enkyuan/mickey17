@@ -17,6 +17,9 @@ pub struct RewriteStats {
     pub spacing_replacements: usize,
     pub hoisted_declarations_removed: usize,
     pub empty_rules_removed: usize,
+    /// Declarations the capture holds with an empty value (Chrome's serialization of a shorthand
+    /// that contains `var()`); invalid CSS, so they are not written.
+    pub empty_declarations_dropped: BTreeMap<String, usize>,
 }
 
 struct Rewriter<'a> {
@@ -24,6 +27,7 @@ struct Rewriter<'a> {
     ctx: Context,
     stats: RewriteStats,
     replace_values: bool,
+    drop_empty: bool,
 }
 
 fn token_name_of(replacement: &[Component]) -> Option<String> {
@@ -38,6 +42,17 @@ fn token_name_of(replacement: &[Component]) -> Option<String> {
 
 impl Rewriter<'_> {
     fn declaration(&mut self, decl: &Declaration) -> Option<Declaration> {
+        if !decl.is_custom() && decl.value.is_empty() {
+            *self
+                .stats
+                .empty_declarations_dropped
+                .entry(decl.name.clone())
+                .or_default() += 1;
+            if self.drop_empty {
+                return None;
+            }
+            return Some(decl.clone());
+        }
         if decl.is_custom() {
             if self.tokens.hoisted.iter().any(|h| h.name == decl.name) {
                 self.stats.hoisted_declarations_removed += 1;
@@ -162,11 +177,25 @@ pub fn rewrite_sheet(
     ctx: Context,
     replace_values: bool,
 ) -> (Sheet, RewriteStats) {
+    rewrite_sheet_with(sheet, tokens, ctx, replace_values, true)
+}
+
+/// `drop_empty = false` keeps declarations whose value is empty in the capture (a `var()`
+/// shorthand artifact, invalid CSS) so the style translation can recover them; files written
+/// for the project always drop them.
+pub fn rewrite_sheet_with(
+    sheet: &Sheet,
+    tokens: &TokenSet,
+    ctx: Context,
+    replace_values: bool,
+    drop_empty: bool,
+) -> (Sheet, RewriteStats) {
     let mut rewriter = Rewriter {
         tokens,
         ctx,
         stats: RewriteStats::default(),
         replace_values,
+        drop_empty,
     };
     let nodes = sheet
         .nodes

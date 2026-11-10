@@ -206,3 +206,138 @@ viewport units are untouched; sRGB colors compare by 8-bit channels and alpha, l
 descriptors and `@property` registrations are not rewritten; shadow DOM and iframe surfaces are
 not covered; `@container`, `@scope` and vendor `@supports` conditions are undecided; hover/
 pointer media features assume a desktop capture (listed in the report).
+
+# Style translation: computed author styles to Tailwind utilities
+
+`mochi-tokens <capture> --out <new dir> --styles reconstruction/pages/page-00000-1440x900.json`
+(also `tokens::styles::run::translate`) translates the **author styles of one captured page**
+into the classes its emitted elements carry, on top of the token pipeline above. It runs the
+token pipeline first and translates the tokenized stylesheets, so utilities reference the
+central `@theme` tokens. `--tailwind-dir` points at a Tailwind v4 package (default: found in
+`MOCHI_TAILWIND_DIR`, else below `.mochi/mochi-exports` relative to the working directory; pass `--tailwind-dir` when running from elsewhere. Without a Tailwind package or `bun` the check falls back to this crate's own model of the utilities and the report says so).
+
+## What it produces
+
+| File | Content |
+| --- | --- |
+| `src/styles/tokens.css` | the central tokens (above) |
+| `src/styles/recipes.css` | named recipes: `.name { @apply … }` for utility sets shared by ≥ 2 elements, plain CSS for what utilities cannot order (shorthand + longhand in one variant, unsafe values) and for `::before`/`::after` |
+| `src/styles/at-rules.css` | `@keyframes`, `@font-face`, `@property` … carried verbatim |
+| `styles.classes.json` | capture node index -> class string (what `emit::StyleBridge` returns) |
+| `styles.report.{json,md}` | counts, equality result, what was not translated, explicit gaps |
+
+`StylePlan::bridge()` implements `semantic::emit::StyleBridge` (`tokens::bridge`), keyed by
+capture node index; elements it did not cover keep their original classes and are counted.
+
+Project setup: one Tailwind compilation must see everything, because `@apply` in `recipes.css`
+only resolves inside it. Use a single entry stylesheet and import Tailwind's theme and
+utilities only, **not** preflight (the captured site's own reset is part of the author styles
+that were translated; a second reset would disagree with it):
+
+```css
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./tokens.css";
+@import "./at-rules.css";
+@import "./recipes.css";
+```
+
+A file that is compiled separately must start with `@reference "<entry>.css";` to use `@apply`.
+The proof in the report compiles utilities with the real Tailwind package; recipes written as
+plain CSS need nothing.
+
+## How
+
+1. **Layers.** For every element the cascade engine resolves the author declarations at a
+   representative width of every interval between the media thresholds in the sheets, and with
+   one of hover / focus / focus-visible / active forced on that element. Box shorthands are
+   expanded so layers compare property by property.
+2. **Placement.** Mobile-first deltas: the narrowest layer is the base; each wider interval adds
+   `min-[Wpx]:` utilities for what changed (a declaration that disappears becomes `revert`);
+   state layers add `hover:` … utilities for what the state changes, carrying overrides across
+   intervals until a delta cancels them. `focus-visible` builds on `focus`.
+3. **Classes.** Each declaration becomes a named utility only when its Tailwind expansion is
+   exactly that declaration (display, position, flex/align/justify keywords, overflow, text
+   alignment/transform, cursor, spacing and sizing on the `--spacing` scale, token colors,
+   radii, families, opacity, z-index); everything else is an arbitrary property
+   (`[prop:value]`, which Tailwind defines as exactly that declaration) and is counted in the
+   report by property. Utilities that add more than the declaration (`font-*`, `leading-*`,
+   `shadow-*`, `border`, `transition`, `text-<size>`, `select-*`, `px`/`py`, `-z-*`) are never
+   used. A theme that defines `--spacing-0`, `--container-4` … changes what `p-0`/`max-w-4`
+   mean in Tailwind, so those keys fall back to arbitrary properties.
+4. **Recipes.** Elements with identical utility sets and a component class (`nav__link`, not
+   `px-4`, not `is-open`) share a recipe named after it; elements with pseudo-elements or
+   unorderable declarations get a plain-CSS recipe on the same hook. When no component class
+   exists the hook is `styled-<tag>`; name clashes are separated by the parent's component class
+   and, last, a numeric suffix (both counted in the report).
+
+## Equality
+
+With a Tailwind package present the proof is by the cascade engine, not by a model of Tailwind: the CSS the project would
+produce is **compiled by a real Tailwind** (`tailwindcss` 4.3.5 in the runs below), parsed, and
+cascade-resolved for every element at every sampled width (each interval's representative, each
+threshold and the pixel before it, the captured width) and each forced state (hover, focus, focus-visible, focus-within, active; only elements whose
+styles change in some state are re-checked per state, pseudo-elements only at rest), with the elements
+carrying their new class names and no inline `style`. The result must equal the declarations the
+original tokenized stylesheets resolve to in the same environment, value by normalized signature.
+Without a Tailwind package the same check runs against this crate's model of the utilities, and
+the report says so. The model itself is tested against a real Tailwind build for every utility
+it renders (`utilities_expand_exactly_like_a_real_tailwind`).
+
+Measured (page 0, 1440×900, Tailwind 4.3.5; static, not browser-verified; comparisons exclude 6,240 / 0 / 70,056 recovered-from-computed values and 48 / 0 / 69,823 on variables the site never defines):
+
+| Site | Elements | Widths | Comparisons | Different |
+| --- | ---: | ---: | ---: | ---: |
+| Natural | 997 | 48 | 1,063,753 | 0 |
+| Infinite Garden | 1,207 | 21 | 233,594 | 0 |
+| Microsoft AI | 1,378 | 56 | 5,890,405 | 0 |
+
+The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 * -1)`,
+`select-none` adds a `-webkit-` declaration, `p-0` is `0px`, a theme with `--spacing-0` changes
+`p-0`, `!important` winners overriding an inline style): each was fixed or excluded and is covered by a test.
+
+## Explicit gaps (also in every report)
+
+- Pseudo-elements other than `::before`/`::after`, and state selectors on an ancestor
+  (`.card:hover .title`) or on a pseudo-element, are not translated (counted, with examples).
+- Only one state at a time is forced, on the element itself; combinations and states set by
+  script (open, selected, `aria-*`/`data-state` toggled at runtime) exist only as the capture
+  shows them. Tailwind orders state variants in its own fixed order, not the author's source
+  order, so when two states are on at once (pressed + hovered, focused + hovered) a property
+  they both set can resolve differently from the original; the check cannot see it.
+  `:has(<state>)` selectors are counted with the ancestor-state rules and not translated.
+- `hover:` utilities and hover recipe states are wrapped in `@media (hover: hover)`; the
+  original's sticky `:hover` on touch devices is not reproduced.
+- Viewport height, orientation, resolution, color scheme other than the captured one and
+  container queries are not varied; properties behind undecidable conditions are skipped.
+- `!important` is flattened. A declaration the capture serialized with an empty value (a `var()`
+  shorthand artifact of the CSSOM, e.g. `animation-duration: ;`) is never written. Where the
+  element's captured computed style has that longhand, its resting value is used instead,
+  frozen at every width and state: an approximation, listed per property
+  (`recovered_from_computed`, `recovered_in_states`) and **not counted as verified** (the output
+  carries the same text, so equality would be a self-comparison; `recovered_unverified`).
+  Without a computed value the declaration is listed and omitted.
+- Properties behind conditions a capture cannot decide (container queries, unknown
+  pseudo-classes) are removed from the output, including their unconditional value; the report
+  status is then `static_check_incomplete`. A custom property the site reads but never defines
+  is listed (`undefined_in_original`) and carried unchanged.
+- Properties that share a longhand with a shorthand, or are spelled `<shorthand>-…`
+  (`background`/`background-position`, `font`/`font-variant-numeric`, `grid-row`/`grid-row-start`)
+  stay in plain CSS in the author's order, because Tailwind sorts arbitrary properties by its own
+  table and would put a shorthand after the longhand it resets.
+- The emitter integration asks the bridge only for elements that already carry a class attribute;
+  classless elements and `html`/`body` styled by tag or descendant selectors are not asked, so
+  their translated classes must be applied by the emitter, and JS hook classes (`js-*`,
+  `is-open`) are replaced along with the rest unless the emitter keeps them.
+- `@keyframes` and friends are carried verbatim; `animation`/`transition`/`mask`/
+  `animation-timeline` declarations are translated as exact arbitrary properties but their
+  behavior is not verified. SVG presentation attributes and canvas/WebGL drawing are not CSS.
+- Flattening the cascade puts the whole reset on every element, so classes per element are
+  high (see `average_per_element`); recipes absorb repeats only where a component class names them.
+- Running the translation takes about two minutes per page on a large site (cascade resolution at
+  ~50 widths × 5 states); it is not optimized.
+- The browser harness has not been run against a translated project in a real browser.
+  `tokens.equality-harness.js` evaluates like the parity collector (Playwright `evaluate`,
+  Browser pane `javascript_tool`) and is idempotent; compare an original page and the generated
+  app with identical viewport, color scheme and reduced-motion emulation, passing the manifest's
+  `defined_properties` as `introduced`.

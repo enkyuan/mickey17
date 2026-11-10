@@ -652,6 +652,10 @@ fn simple_match<D: Dom + ?Sized>(simple: &Simple, dom: &D, node: usize) -> Tri {
             nth_matches(*a, *b, position).into()
         }
         Simple::Pseudo(name) => pseudo_class(name, dom, node),
+        // Shadow-tree selectors never match anything in a light-DOM document stylesheet.
+        Simple::OtherFunction { name, .. } if matches!(name.as_str(), "host" | "host-context") => {
+            Tri::No
+        }
         Simple::OtherFunction { .. } | Simple::Nesting => Tri::Unknown,
         // Handled by the caller: the pseudo-element picks which style map is addressed.
         Simple::PseudoElement { .. } => Tri::Yes,
@@ -686,10 +690,14 @@ fn pseudo_class<D: Dom + ?Sized>(name: &str, dom: &D, node: usize) -> Tri {
         "any-link" | "link" => {
             (matches!(dom.tag(node), "a" | "area") && dom.attr(node, "href").is_some()).into()
         }
-        // Resting snapshot: nothing hovered, focused, pressed or targeted.
-        "hover" | "active" | "focus" | "focus-visible" | "focus-within" | "visited" | "target"
-        | "target-within" | "local-link" | "modal" | "popover-open" | "fullscreen"
-        | "-webkit-autofill" | "user-invalid" | "user-valid" => Tri::No,
+        // Pointer and focus state is the DOM's to decide: a resting snapshot says No, the
+        // style translator forces one state on one element at a time.
+        "hover" | "active" | "focus" | "focus-visible" | "focus-within" => dom.state(node, name),
+        // Never true in a captured document.
+        "host" | "visited" | "target" | "target-within" | "local-link" | "modal"
+        | "popover-open" | "fullscreen" | "-webkit-autofill" | "user-invalid" | "user-valid" => {
+            Tri::No
+        }
         other => dom.state(node, other),
     }
 }
@@ -925,8 +933,11 @@ mod tests {
         fn is_empty(&self, n: usize) -> bool {
             self.children[n].is_empty()
         }
-        fn state(&self, _: usize, _: &str) -> Tri {
-            Tri::Unknown
+        fn state(&self, _: usize, name: &str) -> Tri {
+            match name {
+                "hover" | "active" | "focus" | "focus-visible" | "focus-within" => Tri::No,
+                _ => Tri::Unknown,
+            }
         }
     }
 
@@ -999,6 +1010,9 @@ mod tests {
         assert_eq!(m("li:hover", 3), Tri::No);
         assert_eq!(m("li:focus-visible", 3), Tri::No);
         assert_eq!(m("li:lang(en)", 3), Tri::Unknown);
+        assert_eq!(m(":host", 0), Tri::No);
+        assert_eq!(m(":host(.x)", 0), Tri::No);
+        assert_eq!(m(":root, :host", 0), Tri::Yes);
         assert_eq!(m("li:not(:lang(en))", 3), Tri::Unknown);
         assert_eq!(m("li:hover:lang(en)", 3), Tri::No);
         assert_eq!(m("a:any-link", 6), Tri::Yes);

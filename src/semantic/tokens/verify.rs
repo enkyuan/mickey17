@@ -300,10 +300,16 @@ fn exact(v: f64) -> String {
 }
 
 fn gsig_into(components: &[Component], ctx: &Context, m: &Metrics, out: &mut String) {
+    gsig_walk(components, ctx, m, out, false);
+}
+
+/// `strip` drops whitespace inside math functions, where `calc(a*2)` and `calc(a * 2)` are the
+/// same value.
+fn gsig_walk(components: &[Component], ctx: &Context, m: &Metrics, out: &mut String, strip: bool) {
     for c in components {
         match c {
             Component::Tok(Tok::Space) => {
-                if !out.ends_with(' ') && !out.ends_with(',') {
+                if !strip && !out.ends_with(' ') && !out.ends_with(',') {
                     out.push(' ');
                 }
             }
@@ -344,20 +350,20 @@ fn gsig_into(components: &[Component], ctx: &Context, m: &Metrics, out: &mut Str
                         None => {
                             out.push_str(&name.to_ascii_lowercase());
                             out.push('(');
-                            gsig_into(inner, ctx, m, out);
+                            gsig_walk(inner, ctx, m, out, true);
                             out.push(')');
                         }
                     }
                 } else {
                     out.push_str(&name.to_ascii_lowercase());
                     out.push('(');
-                    gsig_into(inner, ctx, m, out);
+                    gsig_walk(inner, ctx, m, out, strip);
                     out.push(')');
                 }
             }
             Component::Paren(inner) => {
                 out.push('(');
-                gsig_into(inner, ctx, m, out);
+                gsig_walk(inner, ctx, m, out, strip);
                 out.push(')');
             }
             other => other.write(out),
@@ -680,6 +686,9 @@ pub fn verify_rewrite(
                             "(none)".into(),
                             css::to_css(&a.value),
                         );
+                    }
+                    (Some(b), None) if b.value.is_empty() && !name.starts_with("--") => {
+                        // Empty value in the capture (a `var()` shorthand artifact): not written.
                     }
                     (Some(b), None) => {
                         check.compared += 1;

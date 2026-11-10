@@ -134,6 +134,8 @@ fn cli_refuses_an_existing_output_directory_and_writes_a_new_one() {
         min_uses: 2,
         no_merge_rem_px: false,
         allow_differences: false,
+        styles: None,
+        tailwind_dir: None,
     };
     assert!(cli::run(args(&existing)).is_err());
     let fresh = dir.path().join("fresh");
@@ -242,6 +244,8 @@ fn a_variable_defined_on_one_page_only_makes_the_run_fail_unless_allowed() {
         min_uses: 2,
         no_merge_rem_px: false,
         allow_differences: allow,
+        styles: None,
+        tailwind_dir: None,
     };
     let refused = dir.path().join("refused");
     assert!(cli::run(args(&refused, false)).is_err());
