@@ -176,3 +176,42 @@ fn gate_binds_reference_source_and_route_inventory() {
     std::fs::write(&r, b"{}").unwrap();
     assert!(mochi::parity::check(&root, &c, &r, &b, &out).is_err());
 }
+#[test]
+fn declared_gaps_leave_a_report_but_never_qualify() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("app");
+    std::fs::create_dir_all(root.join("src/routes")).unwrap();
+    std::fs::write(root.join("package.json"), "{}").unwrap();
+    std::fs::write(
+        root.join("src/routes/index.tsx"),
+        "export const Route = createFileRoute('/')({});",
+    )
+    .unwrap();
+    let (mut contract, reference) = fixture();
+    let bytes = serde_json::to_vec(&reference).unwrap();
+    use sha2::{Digest, Sha256};
+    contract["reference_sha256"] = format!("{:x}", Sha256::digest(&bytes)).into();
+    contract["project_sha256"] = project_fingerprint(&root).unwrap().into();
+    contract["gaps"] = json!(["[graphics] canvas pixels not compared"]);
+    let mut candidate = reference.clone();
+    candidate["project_sha256"] = contract["project_sha256"].clone();
+    let paths: Vec<_> = ["contract", "reference", "candidate", "report"]
+        .iter()
+        .map(|n| temp.path().join(format!("{n}.json")))
+        .collect();
+    std::fs::write(&paths[0], serde_json::to_vec(&contract).unwrap()).unwrap();
+    std::fs::write(&paths[1], &bytes).unwrap();
+    std::fs::write(&paths[2], serde_json::to_vec(&candidate).unwrap()).unwrap();
+    let error =
+        mochi::parity::check(&root, &paths[0], &paths[1], &paths[2], &paths[3]).unwrap_err();
+    assert!(error.to_string().contains("parity failed"));
+    let report: Value = serde_json::from_slice(&std::fs::read(&paths[3]).unwrap()).unwrap();
+    assert_eq!(report["status"], "unqualified_coverage_gaps");
+    assert_eq!(report["gaps"][0], "[graphics] canvas pixels not compared");
+    assert!(
+        report["failures"][0]
+            .as_str()
+            .unwrap()
+            .contains("unresolved parity coverage")
+    );
+}

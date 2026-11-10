@@ -181,3 +181,39 @@ text uses the source’s explicit `data-split-original` node to avoid counting i
 visual animation duplicate twice. Selector absence still fails; these mappings
 were derived from the captured DOM, not adjusted to improve a score. Whole-page
 `text` probes retain DOM/screen-reader duplication and are raw text comparisons.
+
+## Whole-page parity pipeline (original capture vs generated app)
+
+`src/parity/` compares **every painting, text, media and control element** of the original
+capture (served by `mochi serve`) with a generated app at identical scripted states. It
+reuses this package's conventions (new output directories only, retained raw evidence,
+calibration with injected regressions, no blended score) and feeds `mochi check-parity`.
+The method, schema, matching rules, the Browser-pane + sink driver and what it can and
+cannot detect are documented in [docs/PARITY.md](../docs/PARITY.md#whole-page-element-pipeline).
+
+```sh
+bun test --cwd benchmarks tests/parity-diff.test.ts tests/parity-sink.test.ts   # pure logic, no browser
+bun benchmarks/src/parity/example.ts                    # offline end-to-end demo (needs Chromium)
+bun benchmarks/src/parity/cli.ts inventory <capture> --out inv.json
+bun benchmarks/src/parity/cli.ts calibrate --inventory inv.json --reference http://127.0.0.1:8100 --out <new dir>
+bun benchmarks/src/parity/cli.ts run --inventory inv.json --reference http://127.0.0.1:8100 \
+  --candidate http://127.0.0.1:3101 --out <new dir> --profile standard --controls
+bun benchmarks/src/parity/cli.ts rediff <run dir> --out <new dir>   # same raw captures, current comparison code
+bun benchmarks/src/parity/cli.ts gate <run dir> --project <app> --out <new dir>   # mochi check-parity
+```
+
+Run directory contents: `inventory.json`, `run.json` (versions, collector and pipeline
+hashes, scheduled / executed / skipped-with-reason), `failures.json` (states that crashed), `states/<name>/{ref,cand,ref2}.json.gz`
+(raw captures), `diff.json.gz`, `summary.json` (or `error.json`), `report.json`, `REPORT.md`. The suite is
+separate from `run.ts`/`schema.ts` manifests: those rate declared probes with the gstack
+driver; this one inventories the capture itself and diffs complete element lists. Its
+`pair` command also diffs captures posted by the Browser pane. `tests/parity-browser.test.ts`
+runs the offline fixtures through real Chromium when Playwright and a browser binary are
+present and is reported as skipped otherwise.
+
+Calibration (`calibrate`) is evidence about the instrument: the original is loaded twice
+(zero items required), then 30+ planted regressions and shifted breakpoints must be
+detected, and the documented blind spots (hover rule, focus ring,
+removed handler in an initial state) must stay undetected until the state class that
+covers them runs. A miss, or a nonzero control, fails calibration and the failing report is
+kept. Passing it says nothing about any candidate.

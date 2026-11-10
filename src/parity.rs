@@ -9,7 +9,8 @@ use std::{
     path::Path,
 };
 
-const MAX_BYTES: u64 = 32 * 1024 * 1024;
+// Whole-page element captures (hundreds of anchors per state) are far larger than hand-picked anchors.
+const MAX_BYTES: u64 = 256 * 1024 * 1024;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
@@ -71,6 +72,9 @@ pub struct Report {
     pub states_checked: usize,
     pub facts_checked: usize,
     pub failures: Vec<String>,
+    /// Coverage gaps declared by the contract. Any gap prevents qualification but, unlike
+    /// malformed input, still produces a retained report with the measured differences.
+    pub gaps: Vec<String>,
     pub scope: &'static str,
 }
 fn read(path: &Path) -> Result<Vec<u8>> {
@@ -315,8 +319,11 @@ pub fn check(
     let contract_bytes = read(contract_path)?;
     let reference_bytes = read(reference_path)?;
     let candidate_bytes = read(candidate_path)?;
-    let contract: Contract =
+    let mut contract: Contract =
         serde_json::from_slice(&contract_bytes).context("parse parity contract")?;
+    // `compare` refuses contracts with gaps; set them aside so the measured differences are
+    // still compared and retained, then fail the report explicitly.
+    let gaps = std::mem::take(&mut contract.gaps);
     let reference: Capture =
         serde_json::from_slice(&reference_bytes).context("parse reference states")?;
     let candidate: Capture =
@@ -379,7 +386,14 @@ pub fn check(
             && candidate.project_sha256.as_ref() == Some(&project_sha256),
         "stale candidate: project source changed"
     );
-    let (facts_checked, failures) = compare(&contract, &reference, &candidate)?;
+    let (facts_checked, mut failures) = compare(&contract, &reference, &candidate)?;
+    let gaps_only = failures.is_empty() && !gaps.is_empty();
+    if !gaps.is_empty() {
+        failures.push(format!(
+            "unresolved parity coverage: {} declared gap(s); the contract cannot qualify",
+            gaps.len()
+        ));
+    }
     ensure!(
         project_fingerprint(project)? == project_sha256,
         "project changed during parity check"
@@ -388,6 +402,8 @@ pub fn check(
     let report = Report {
         status: if passed {
             "matched_declared_contract"
+        } else if gaps_only {
+            "unqualified_coverage_gaps"
         } else {
             "failed"
         }
@@ -399,6 +415,7 @@ pub fn check(
         states_checked: contract.states.len(),
         facts_checked,
         failures,
+        gaps,
         scope: "Only recorded states and measured facts. Capture provenance and coverage require independent review; this is not proof for unobserved behavior or other websites.",
     };
     use std::io::Write;
