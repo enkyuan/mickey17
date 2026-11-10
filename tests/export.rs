@@ -103,7 +103,9 @@ fn emits_real_jsx_props_shared_layouts_literal_routes_and_reproducible_lockfile(
         .arg("export")
         .arg("--compatibility")
         .arg(&source)
-        .args(["--framework", "tanstack-start", "-o"])
+        // Default CLI export recovers client programs per route; this fixture has none,
+        // so every route falls back, but the report differs. Compare the static form.
+        .args(["--no-recover-client", "--framework", "tanstack-start", "-o"])
         .arg(&cli)
         .output()
         .unwrap();
@@ -718,17 +720,14 @@ fn recovered_exports_qualify_static_claims_and_avoid_recovered_component_names()
             || limitation.contains("static PNG snapshots")
             || limitation.contains("Buttons have no click handlers")
         {
-            assert!(
-                limitation.starts_with("On static (non-recovered) routes"),
-                "{limitation}"
-            );
+            assert!(limitation.starts_with("On static routes"), "{limitation}");
         }
     }
     assert!(
         report
             .limitations
             .iter()
-            .any(|l| l.starts_with("Recovered routes keep the deployed programs"))
+            .any(|l| l.starts_with("On recovered routes the capture's canvas"))
     );
 }
 #[test]

@@ -98,6 +98,24 @@ pub struct Reference {
     pub occurrences: usize,
     pub examples: Vec<SourceRef>,
 }
+/// How one captured literal route is exported.
+#[derive(Debug, Serialize)]
+pub struct RouteMode {
+    /// Captured literal path with its query, as in `captured_paths`.
+    pub path: String,
+    /// `recovered_client_program` (runs formatted original build output, not
+    /// semantic source) or `static_structural_replica`.
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Why a route is static, including a refused recovery's error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
 /// What replaced one captured canvas, frame, shadow host or runtime-only surface.
 #[derive(Debug, Serialize)]
 pub struct SurfaceRecord {
@@ -124,8 +142,18 @@ pub struct Report {
     pub schema_version: u32,
     pub framework: String,
     pub input_sha256: String,
-    /// `static_structural_replica` unless client programs were explicitly recovered.
+    /// `static_structural_replica` (no route recovered), `recovered_client_programs`
+    /// (every route) or `recovered_client_programs_on_some_routes_static_replica_on_others`.
     pub runtime: String,
+    /// `static_replica_everywhere`, `explicit_routes_strict` or
+    /// `default_every_route_with_per_route_fallback`.
+    pub client_recovery_mode: String,
+    /// Per captured literal route: recovered client program or static replica, and why.
+    pub route_modes: Vec<RouteMode>,
+    /// SHA-256 of every recovered source file as written (src/compat/recovered/, the
+    /// Client* entry components and, for native custom elements,
+    /// src/recovered-elements.d.ts); inputs are in `client_recovery.sources`.
+    pub recovered_files: BTreeMap<String, String>,
     pub routes: usize,
     pub captured_paths: Vec<String>,
     pub component_sources: BTreeMap<String, SourceRef>,
@@ -1185,29 +1213,70 @@ impl Renderer<'_> {
 /// Generate a new TanStack Start source project from a saved, unchanged model.
 /// This never installs packages, calls a model, executes captured scripts, or
 /// overwrites an existing project. Runtime verification is a separate operation.
+/// Every route is a static structural replica; no client program is recovered.
 pub fn tanstack_start(root: &Path, out: &Path) -> Result<Report> {
-    generate(root, out, false, &BTreeSet::new())
+    generate(root, out, false, ClientMode::Static)
 }
 /// Attach an explicitly selected saved interpretation as review-required source
 /// comments/report metadata. This never calls a provider or auto-applies labels.
 pub fn tanstack_start_with_interpretation(root: &Path, out: &Path) -> Result<Report> {
-    generate(root, out, true, &BTreeSet::new())
+    generate(root, out, true, ClientMode::Static)
 }
-/// Recover selected public client roots as editable modules. This is explicit:
-/// the generated app executes recovered client code, unlike initial-state export.
+/// Recover selected public client roots as editable modules. This is explicit
+/// and strict: a selected route that cannot be recovered fails the export. The
+/// generated app executes recovered client code, unlike initial-state export.
 pub fn tanstack_start_with_clients(
     root: &Path,
     out: &Path,
     interpretation: bool,
     routes: &BTreeSet<String>,
 ) -> Result<Report> {
-    generate(root, out, interpretation, routes)
+    generate(
+        root,
+        out,
+        interpretation,
+        if routes.is_empty() {
+            ClientMode::Static
+        } else {
+            ClientMode::Selected(routes)
+        },
+    )
+}
+/// The compatibility default: recover the client program of every captured
+/// literal route that can be recovered. A route whose modules are unsupported
+/// or refused falls back to the static structural replica for that route only;
+/// the route, the reason and the fallback are recorded in the report.
+pub fn tanstack_start_recovering(root: &Path, out: &Path, interpretation: bool) -> Result<Report> {
+    generate(root, out, interpretation, ClientMode::Available)
+}
+#[derive(Clone, Copy)]
+enum ClientMode<'a> {
+    /// `--no-recover-client`: static replicas everywhere.
+    Static,
+    /// `--recover-client-route`: strict; any refusal aborts the export.
+    Selected(&'a BTreeSet<String>),
+    /// Default: recover what can be recovered, per route.
+    Available,
+}
+/// Final text of a generated source file: unused locals pruned (app source only), then formatted.
+fn finish_source(path: &str, text: &str) -> Result<String> {
+    let pruned = if ["src/components/", "src/layouts/", "src/features/"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+        && path.ends_with(".tsx")
+        || path.ends_with("/data.ts")
+    {
+        structure::prune_unused(text)
+    } else {
+        text.to_owned()
+    };
+    structure::format_source(path, &pruned)
 }
 fn generate(
     root: &Path,
     out: &Path,
     attach_interpretation: bool,
-    client_routes: &BTreeSet<String>,
+    client_mode: ClientMode<'_>,
 ) -> Result<Report> {
     let root = root.canonicalize()?;
     let parent = out
@@ -1275,22 +1344,87 @@ fn generate(
             .any(|n| matches!(&n.content,Content::Element{tag,..} if tag=="button"))
     });
     let helpers = helpers(buttons);
-    let recovery = if client_routes.is_empty() {
-        None
-    } else {
-        Some(crate::recover::plan(&root, &model, client_routes)?)
+    let (recovery, fallbacks) = match client_mode {
+        ClientMode::Static => (None, Vec::new()),
+        ClientMode::Selected(routes) => (
+            Some(crate::recover::plan(&root, &model, routes)?),
+            Vec::new(),
+        ),
+        ClientMode::Available => crate::recover::plan_available(&root, &model)?,
     };
-    let conditions = structure::Conditions::observe(&model, recovery.as_ref());
+    let selected = match client_mode {
+        ClientMode::Selected(routes) => Some(routes),
+        _ => None,
+    };
+    // One record per captured route: routes differing only by query share a
+    // pathname (and its recovery decision) but are listed separately.
+    let mut route_modes = BTreeMap::new();
+    for route in model.routes.values() {
+        let shown = match &route.query {
+            Some(query) => format!("{}?{query}", route.pathname),
+            None => route.pathname.clone(),
+        };
+        let mode = match recovery
+            .as_ref()
+            .and_then(|r| r.routes.get(&route.pathname))
+        {
+            Some(recovered) => RouteMode {
+                path: shown.clone(),
+                mode: "recovered_client_program".into(),
+                component: Some(recovered.component.clone()),
+                module: Some(recovered.module),
+                method: Some(recovered.method.clone()),
+                reason: None,
+            },
+            None => RouteMode {
+                path: shown.clone(),
+                mode: "static_structural_replica".into(),
+                component: None,
+                module: None,
+                method: None,
+                reason: Some(
+                    if let Some(fallback) = fallbacks.iter().find(|f| f.path == route.pathname) {
+                        format!(
+                            "fallback: client recovery refused for this route ({})",
+                            fallback.reason
+                        )
+                    } else if matches!(client_mode, ClientMode::Static) {
+                        "client recovery not requested (--no-recover-client or library default)"
+                            .into()
+                    } else if selected.is_some() {
+                        "not selected with --recover-client-route".into()
+                    } else {
+                        "fallback: no client recovery result for this route".into()
+                    },
+                ),
+            },
+        };
+        route_modes.insert(shown, mode);
+    }
+    let route_modes: Vec<RouteMode> = route_modes.into_values().collect();
+    let conditions = structure::Conditions::observe(&model, &route_modes);
     let report = Report {
         schema_version: 1,
         framework: "tanstack-start".into(),
         input_sha256: model.input_sha256.clone(),
-        runtime: if recovery.is_some() {
-            "recovered_client_programs_on_selected_routes"
-        } else {
-            "static_structural_replica"
+        runtime: match route_modes
+            .iter()
+            .filter(|m| m.mode == "recovered_client_program")
+            .count()
+        {
+            0 => "static_structural_replica",
+            n if n == route_modes.len() => "recovered_client_programs",
+            _ => "recovered_client_programs_on_some_routes_static_replica_on_others",
         }
         .into(),
+        client_recovery_mode: match client_mode {
+            ClientMode::Static => "static_replica_everywhere",
+            ClientMode::Selected(_) => "explicit_routes_strict",
+            ClientMode::Available => "default_every_route_with_per_route_fallback",
+        }
+        .into(),
+        route_modes,
+        recovered_files: BTreeMap::new(),
         routes: model.routes.len(),
         captured_paths: Vec::new(),
         component_sources: BTreeMap::new(),
@@ -1477,6 +1611,30 @@ fn generate(
             r.routes
                 .contains_key(&model.routes[&observation.route].pathname)
         }) {
+            // The recovered program owns these elements: no snapshot is made. Whether
+            // it draws them is not verified here.
+            for (&node, surface) in &observation.capture.surfaces {
+                let tag = match &observation.capture.nodes[node].content {
+                    Content::Element { tag, .. } => tag.clone(),
+                    Content::Text { .. } => String::new(),
+                };
+                renderer.report.surfaces.push(SurfaceRecord {
+                    route: observation.capture.url.clone(),
+                    viewport: [
+                        observation.capture.viewport.width,
+                        observation.capture.viewport.height,
+                    ],
+                    source: SourceRef {
+                        observation: id.clone(),
+                        node,
+                    },
+                    tag,
+                    kind: surface::kind_name(&surface.kind).into(),
+                    replacement: "left_to_recovered_client_program".into(),
+                    bounds: [surface.bounds.width, surface.bounds.height],
+                    asset: None,
+                });
+            }
             continue;
         }
         for (&node, surface) in &observation.capture.surfaces {
@@ -2112,9 +2270,17 @@ fn generate(
     renderer.report.captured_paths = route_urls.values().cloned().collect();
     renderer.report.components = used.len();
     renderer.report.layouts = layout_sources.len();
+    let mut finished = BTreeSet::new();
     if let Some(recovery) = &renderer.report.client_recovery {
         for (path, source) in &recovery.files {
-            files.add(path.clone(), source.clone())?;
+            // Hash the bytes that will be written, not the pre-format text.
+            let text = finish_source(path, source)?;
+            renderer
+                .report
+                .recovered_files
+                .insert(path.clone(), fingerprint(text.as_bytes()));
+            files.add(path.clone(), text)?;
+            finished.insert(path.clone());
         }
     }
     renderer.report.local_assets = public.written.len();
@@ -2134,17 +2300,11 @@ fn generate(
     files.add("EDITING.md", structure::editing_guide(&renderer.report)?)?;
     let mut formatted_bytes = 0usize;
     for (path, text) in files.text {
-        let text = if ["src/components/", "src/layouts/", "src/features/"]
-            .iter()
-            .any(|prefix| path.starts_with(prefix))
-            && path.ends_with(".tsx")
-            || path.ends_with("/data.ts")
-        {
-            structure::prune_unused(&text)
-        } else {
+        let text = if finished.contains(&path) {
             text
+        } else {
+            finish_source(&path, &text)?
         };
-        let text = structure::format_source(&path, &text)?;
         formatted_bytes = formatted_bytes
             .checked_add(text.len())
             .context("formatted source size overflow")?;

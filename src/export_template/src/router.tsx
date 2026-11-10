@@ -1,5 +1,15 @@
 import { createRouter } from '@tanstack/react-router'
+import * as React from 'react'
+import { installOwnerGuard } from './lib/policy'
 import { routeTree } from './routeTree.gen'
+
+// Recovered programs may bundle a production React renderer that shares this
+// app's dev React; see installOwnerGuard. Dev only, no effect in production.
+if (import.meta.env.DEV) {
+  const key = '__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE'
+  const react = React as unknown as Record<string, { A?: unknown } | undefined> & { default?: Record<string, { A?: unknown } | undefined> }
+  installOwnerGuard(react[key] ?? react.default?.[key])
+}
 
 
 export function getRouter() {

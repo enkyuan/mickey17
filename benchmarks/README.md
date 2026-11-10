@@ -81,6 +81,16 @@ Its `ping` and SVG-animation checks only fire when an export contains such
 markup; the current natural and Infinite Garden captures contain none, so those
 cases are covered by the unit tests.
 
+`tests/compat-dev-react.test.ts` covers the dev-only React clash that recovered
+programs can cause (a production-built react-three-fiber reconciler sharing the
+app's development React makes `jsx()` throw `dispatcher.getOwner is not a
+function`). The `installOwnerGuard` unit tests always run; the real-React tests
+mount into happy-dom using an installed export's `react`/`react-dom`:
+
+```sh
+MOCHI_COMPAT_EXPORTS=<export> bun test --cwd benchmarks tests/compat-dev-react.test.ts
+```
+
 ## Calibration before site ratings
 
 ```sh

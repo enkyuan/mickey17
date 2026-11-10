@@ -1,5 +1,14 @@
 use super::*;
 use crate::evidence::SurfaceKind;
+/// Stable report name of a surface kind.
+pub(super) fn kind_name(kind: &SurfaceKind) -> &'static str {
+    match kind {
+        SurfaceKind::Nonvisual => "nonvisual",
+        SurfaceKind::Raster => "raster",
+        SurfaceKind::Frame => "frame",
+        SurfaceKind::Shadow => "shadow",
+    }
+}
 impl Renderer<'_> {
     pub(super) fn surface(&mut self, source: &SourceRef) -> Result<Option<String>> {
         let capture = &self.model.observations[&source.observation].capture;

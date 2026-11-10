@@ -189,11 +189,15 @@ and a project-owned Base UI button wrapper when buttons are present. It refuses 
 output paths and publishes through a staging directory without replacing edited projects.
 Open/recorded closed shadow roots, sandboxed readable frames, viewport-specific markup,
 and explicit canvas/WebGL snapshot components are supported on initial-state routes.
-`--recover-client-route /` opts a selected path into client-source recovery from supported
-captured Turbopack/Flight, split Vite/TanStack, or native custom-element ESM builds. Those routes run formatted recovered
-React code, preserving drawing algorithms and event handlers. Repeat the flag for additional
-paths. Unsupported source formats fail explicitly; other routes keep their initial-state
-representation. See [the export contract](docs/EXPORT.md) for the narrow adapter boundaries.
+By default `--compatibility` also tries client-source recovery for every captured literal route
+(supported captured Turbopack/Flight, split Vite/TanStack, or native custom-element ESM builds). Recovered
+routes run formatted recovered React/custom-element code, preserving drawing algorithms and event handlers;
+that code is minified-origin build output, not semantic source, and its behavior is not verified by the export.
+A route whose modules are unsupported or refused falls back to the static initial-state representation for
+that route only; `route_modes` in `.mochi/export.json` (and the generated README/EDITING.md) list each route,
+whether it runs recovered code or is a static replica, and the refusal reason. `--no-recover-client` exports
+static replicas everywhere. `--recover-client-route /` is the strict form: selected paths must recover or the
+export fails (repeat it for more paths). See [the export contract](docs/EXPORT.md) for the narrow adapter boundaries.
 
 The source clone and its reports are not modified. Generation runs offline and does not
 install dependencies or execute the original site's scripts.

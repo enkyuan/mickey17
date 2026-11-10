@@ -129,9 +129,10 @@ pub(super) struct Conditions {
     pub states: Vec<String>,
     pub viewports: Vec<String>,
     pub recovered_routes: Vec<String>,
+    pub static_routes: Vec<String>,
 }
 impl Conditions {
-    pub(super) fn observe(model: &Project, recovery: Option<&crate::recover::Recovery>) -> Self {
+    pub(super) fn observe(model: &Project, modes: &[crate::export::RouteMode]) -> Self {
         let mut schemes = std::collections::BTreeSet::new();
         let mut states = std::collections::BTreeSet::new();
         let mut viewports = std::collections::BTreeSet::new();
@@ -141,6 +142,13 @@ impl Conditions {
             states.insert(capture.state.clone());
             viewports.insert((capture.viewport.width, capture.viewport.height));
         }
+        let routes = |recovered: bool| {
+            modes
+                .iter()
+                .filter(|m| (m.mode == "recovered_client_program") == recovered)
+                .map(|m| m.path.clone())
+                .collect()
+        };
         Self {
             color_schemes: schemes.into_iter().collect(),
             states: states.into_iter().collect(),
@@ -148,13 +156,15 @@ impl Conditions {
                 .into_iter()
                 .map(|(w, h)| format!("{w}x{h}"))
                 .collect(),
-            recovered_routes: recovery
-                .map(|r| r.routes.keys().cloned().collect())
-                .unwrap_or_default(),
+            recovered_routes: routes(true),
+            static_routes: routes(false),
         }
     }
     fn recovered(&self) -> bool {
         !self.recovered_routes.is_empty()
+    }
+    fn is_static(&self) -> bool {
+        !self.static_routes.is_empty()
     }
 }
 
@@ -166,25 +176,33 @@ pub(super) fn limitations(c: &Conditions) -> Vec<String> {
     let mut out = Vec::new();
     if c.recovered() {
         out.push(format!(
-            "Routes {} run recovered, formatted copies of the deployed client programs (src/compat/recovered/); other routes are static replicas. Recovered code keeps its short names and bundled dependencies and is not authored source.",
+            "Routes {} run recovered, formatted copies of the deployed client programs (src/compat/recovered/). That is original build output with short names and bundled dependencies, not semantic source: the conversion is NOT complete while any route depends on it. What those programs do (animation, canvas/WebGL drawing, event handlers) comes from that code; this export did not run them in a browser, so their behavior is unverified here.",
             c.recovered_routes.join(", ")
         ));
-    } else {
-        out.push("This is a static structural replica: the DOM and cascade observed at capture time, serialized as React elements. No application scripts, controllers, recovered runtime, effects, timers, scroll or pointer logic, or animation drivers exist in the project (src/compat/recovered/ is not generated); the only client code is the shared runtime: src/lib/runtime.tsx (link navigation, viewport-variant switching, canvas snapshot painting, shadow-root attachment), src/lib/document.ts (per-viewport <html>/<body> attributes) and the form-submit guard in src/routes/__root.tsx. The `motion` dependency is installed but not imported.".into());
     }
+    if c.is_static() {
+        out.push(format!(
+            "Routes {} are static structural replicas (the reason for each is in `route_modes`): the DOM and cascade observed at capture time, serialized as React elements, with no application scripts, controllers, effects, timers, scroll or pointer logic, or animation drivers. The `motion` dependency is installed but not imported.",
+            c.static_routes.join(", ")
+        ));
+    }
+    out.push("Shared client code in every export: src/lib/runtime.tsx (link navigation, viewport-variant switching, canvas snapshot painting, shadow-root attachment), src/lib/document.ts (per-viewport <html>/<body> attributes) and the form-submit guard in src/routes/__root.tsx.".into());
     // Recovered routes run the deployed programs, so static-replica statements
-    // must not be made about them.
-    let scope = if c.recovered() {
-        "On static (non-recovered) routes: "
-    } else {
-        ""
-    };
-    out.push(format!("{scope}Animation is not replayed. Where the capture recorded animation state, its observed property values were written into inline `style` strings (diagnostic observed_animation_state_preserved), so a route shows its captured end state and nothing continues or reacts to input."));
-    out.push(format!("{scope}Canvas, WebGL and video surfaces are static PNG snapshots (data-mochi-surface=\"static-snapshot\"); frames are sandboxed srcDoc documents; shadow roots are re-attached after hydration; runtime-only elements with no visual output are omitted. The `surfaces` list records each one per route and viewport."));
-    out.push(format!("{scope}Buttons have no click handlers and `action`, `formaction` and `on*` attributes are removed. No backend is recreated, and the root route cancels every form submit (with one console message) so a submit does not reload the page with field values in the URL."));
-    if c.recovered() {
-        out.push("Recovered routes keep the deployed programs' own animation, drawing and event code; their capture surfaces are not replaced by snapshots. Form submits are still cancelled by the root route because no backend exists.".into());
+    // are made only about static routes.
+    if c.is_static() {
+        let scope = if c.recovered() {
+            "On static routes: "
+        } else {
+            ""
+        };
+        out.push(format!("{scope}Animation is not replayed. Where the capture recorded animation state, its observed property values were written into inline `style` strings (diagnostic observed_animation_state_preserved), so a route shows its captured end state and nothing continues or reacts to input."));
+        out.push(format!("{scope}Canvas, WebGL and video surfaces are static PNG snapshots (data-mochi-surface=\"static-snapshot\"); frames are sandboxed srcDoc documents; shadow roots are re-attached after hydration; runtime-only elements with no visual output are omitted. The `surfaces` list records each one per route and viewport."));
+        out.push(format!("{scope}Buttons have no click handlers and `action`, `formaction` and `on*` attributes are removed. No backend is recreated."));
     }
+    if c.recovered() {
+        out.push("On recovered routes the capture's canvas/WebGL surfaces are not replaced by snapshots; they are left to the recovered program (record replacement `left_to_recovered_client_program` in `surfaces`). Backend services are not recreated, so features that call them will not work. The recovered @unpic image component finds no CDN in this site's own image URLs (also in the original bundle), so props such as `priority` reach the <img>: a React warning in development only, and no fetchpriority or eager loading is applied to those images, as on the original site.".into());
+    }
+    out.push("The root route cancels every form submit (with one console message) because no backend was captured, so a submit does not reload the page with field values in the URL.".into());
     out.push(format!(
         "Observed only with color scheme(s) {} in state(s) {} at viewport(s) {}. Other color schemes, hover/focus/open/scrolled states, authenticated states and other viewports were not captured and are not reproduced.",
         c.color_schemes.join(", "),
@@ -200,12 +218,50 @@ pub(super) fn limitations(c: &Conditions) -> Vec<String> {
     out
 }
 
-fn behavior_section(report: &Report) -> String {
-    if report.client_recovery.is_some() {
-        "## What this is\n\nA compatibility reconstruction with **explicitly recovered client programs** on some routes (see `limitations` in `.mochi/export.json`). Routes with `src/compat/recovered/` run formatted copies of the deployed bundles; every other route is a static replica. Neither is authored application source.\n".into()
-    } else {
-        "## What this is\n\nA **static structural replica** of what was captured, not a working application:\n\n- The DOM and cascade of each captured route and viewport are serialized as React elements. Animation appears only as the end-state values captured into inline `style` strings.\n- There are **no controllers or recovered runtime**: `src/compat/recovered/` does not exist, no captured or recovered effect, timer, scroll or pointer logic exists, nothing from `motion` is imported (it is installed only), and buttons have no click handlers. The only client code is the shared runtime: `src/lib/runtime.tsx` (in-app link navigation, switching between captured viewport variants, painting canvas snapshots, attaching shadow roots), `src/lib/document.ts` (per-viewport `<html>`/`<body>` attributes) and the form-submit guard in `src/routes/__root.tsx`.\n- Canvas/WebGL surfaces are **static PNG snapshots** (`data-mochi-surface=\"static-snapshot\"`); `.mochi/export.json` `surfaces` lists which ones, per route and viewport.\n- Forms do not submit. `src/routes/__root.tsx` cancels every submit because `action`/`on*` attributes were removed and no backend was captured; it logs one console message.\n- Captured with the color scheme(s), state(s) and viewport(s) listed in `limitations`; nothing else (hover, focus, scroll positions, light/dark switching, other widths) was observed.\n- SSR is viewport-aware only by request hint (mobile UA/Client Hint -> smallest capture, else largest); `<html>`/`<body>` attributes follow it. Uncaptured same-origin links keep absolute live-origin URLs and uncaptured remote images stay remote; `external_references` lists them all.\n".into()
+fn route_table(report: &Report) -> String {
+    let mut out = String::from("| Route | Mode | Detail |\n| --- | --- | --- |\n");
+    for mode in &report.route_modes {
+        let (label, detail) = if mode.mode == "recovered_client_program" {
+            (
+                "recovered client program (original build output, unverified in a browser)",
+                format!(
+                    "`{}` via {}",
+                    mode.component.as_deref().unwrap_or(""),
+                    mode.method.as_deref().unwrap_or("")
+                ),
+            )
+        } else {
+            (
+                "static structural replica",
+                mode.reason.clone().unwrap_or_default().replace('|', "/"),
+            )
+        };
+        out.push_str(&format!("| `{}` | {label} | {detail} |\n", mode.path));
     }
+    out
+}
+
+fn behavior_section(report: &Report) -> String {
+    let recovered = report
+        .route_modes
+        .iter()
+        .filter(|m| m.mode == "recovered_client_program")
+        .count();
+    let all = report.route_modes.len();
+    let mut out = String::from("## What this is\n\n");
+    if recovered == 0 {
+        out.push_str("A **static structural replica** of what was captured, not a working application:\n\n- The DOM and cascade of each captured route and viewport are serialized as React elements. Animation appears only as the end-state values captured into inline `style` strings.\n- There are **no controllers or recovered runtime**: `src/compat/recovered/` does not exist, no captured or recovered effect, timer, scroll or pointer logic exists, nothing from `motion` is imported (it is installed only), and buttons have no click handlers. The only client code is the shared runtime: `src/lib/runtime.tsx` (in-app link navigation, switching between captured viewport variants, painting canvas snapshots, attaching shadow roots), `src/lib/document.ts` (per-viewport `<html>`/`<body>` attributes) and the form-submit guard in `src/routes/__root.tsx`.\n- Canvas/WebGL surfaces are **static PNG snapshots** (`data-mochi-surface=\"static-snapshot\"`); `.mochi/export.json` `surfaces` lists which ones, per route and viewport.\n- Forms do not submit. `src/routes/__root.tsx` cancels every submit because `action`/`on*` attributes were removed and no backend was captured; it logs one console message.\n");
+    } else {
+        let mixed = recovered < all;
+        out.push_str(&format!("A compatibility reconstruction in which **{recovered} of {all} captured route(s) run recovered original client code**{} (per-route table below; `route_modes` in `.mochi/export.json`).\n\n- Recovered routes execute formatted copies of the deployed build output (`src/compat/recovered/`). That is minified-origin code with short names and bundled dependencies, **not semantic source**, and the conversion is **not complete** while any route depends on it. This export did not run it in a browser, so its behavior (animation, canvas/WebGL drawing, event handlers) is unverified here. Backend services are not recreated.\n- Canvas/WebGL surfaces on recovered routes are left to that code (`surfaces` records them as `left_to_recovered_client_program`){}.\n", if mixed { " and the rest are static replicas" } else { "" }, if mixed { "; on static routes they are PNG snapshots" } else { "" }));
+        if mixed {
+            out.push_str("- Static routes have no controllers: no effect, timer, scroll or pointer logic, `motion` is installed but not imported, and buttons have no click handlers.\n");
+        }
+        out.push_str("- Forms do not submit: `src/routes/__root.tsx` cancels every submit because no backend was captured; it logs one console message.\n");
+    }
+    out.push_str("- Captured with the color scheme(s), state(s) and viewport(s) listed in `limitations`; nothing else (hover, focus, scroll positions, light/dark switching, other widths) was observed.\n- SSR is viewport-aware only by request hint (mobile UA/Client Hint -> smallest capture, else largest); `<html>`/`<body>` attributes follow it. Uncaptured same-origin links keep absolute live-origin URLs and uncaptured remote images stay remote; `external_references` lists them all.\n\n### Route modes\n\n");
+    out.push_str(&route_table(report));
+    out
 }
 
 pub(super) fn readme(report: &Report) -> Result<String> {
@@ -224,7 +280,7 @@ pub(super) fn editing_guide(report: &Report) -> Result<String> {
     if recovered {
         guide.push_str("- `src/compat/recovered/`: formatted deployed programs for the recovered routes. Short names and bundled dependencies remain; this is application runtime source, so it must be committed. `src/components/Client*.tsx` are the entry components that mount them.\n");
     } else {
-        guide.push_str("- There is no `src/compat/recovered/`: no client program was recovered for this export.\n");
+        guide.push_str("- There is no `src/compat/recovered/`: no client program was recovered for this export (see `route_modes` for each route's reason).\n");
     }
     guide.push_str("- `src/styles/compat/`: captured cascades, intentionally global; not component-scoped CSS Modules.\n- `src/styles/tokens.css`: owner-authored tokens and scoped overrides, loaded after the selected document cascade. Empty by default because semantic tokens have not been inferred.\n- `public/`: required images, icons and fonts; commit them.\n- `.mochi/`: ignored build/evidence metadata, including `export.json` (limitations, surfaces, external references, diagnostics) and `style-audit.json`. These are not runtime dependencies.\n\n## Captured routes\n\n| URL | Route file | Feature directory |\n| --- | --- | --- |\n");
     for path in &report.captured_paths {
@@ -241,8 +297,14 @@ pub(super) fn editing_guide(report: &Report) -> Result<String> {
         guide.push_str(&format!("- {limitation}\n"));
     }
     // Only raster surfaces become snapshots; the others are omitted or re-hosted.
-    let kind = |k: &str| report.surfaces.iter().filter(|s| s.kind == k).count();
-    guide.push_str(&format!("\n## Replaced surfaces\n\n{} surface record(s) in `.mochi/export.json` under `surfaces`: {} static snapshot(s), {} omitted runtime-only element(s), {} sandboxed frame(s), {} shadow root(s). {} distinct URL(s) outside the export under `external_references` and {} capture-time request(s) under `capture_time_requests`.\n", report.surfaces.len(), kind("raster"), kind("nonvisual"), kind("frame"), kind("shadow"), report.external_references.len(), report.capture_time_requests.len()));
+    let kind = |k: &str| {
+        report
+            .surfaces
+            .iter()
+            .filter(|s| s.kind == k && s.replacement != "left_to_recovered_client_program")
+            .count()
+    };
+    guide.push_str(&format!("\n## Replaced surfaces\n\n{} surface record(s) in `.mochi/export.json` under `surfaces`: {} static snapshot(s), {} left to recovered client programs (not verified live here), {} omitted runtime-only element(s), {} sandboxed frame(s), {} shadow root(s). {} distinct URL(s) outside the export under `external_references` and {} capture-time request(s) under `capture_time_requests`.\n", report.surfaces.len(), kind("raster"), report.surfaces.iter().filter(|s| s.replacement == "left_to_recovered_client_program").count(), report.surfaces.iter().filter(|s| s.kind == "nonvisual" && s.replacement != "left_to_recovered_client_program").count(), kind("frame"), kind("shadow"), report.external_references.len(), report.capture_time_requests.len()));
     guide.push_str("\n## Prove an edit\n\nUse `bun install --frozen-lockfile`, `bun run build`, `bun run check`, then `bun start`. Change visible text in the relevant feature/component and verify both the server HTML and hydrated page. Edit a known CSS custom property in `tokens.css` and verify its computed value on desktop and mobile. Add a route file and verify a direct request and client navigation. Restore probe edits after testing.\n\n## Still required for authored-source quality\n\nImplement the behavior the capture could not preserve: interactions, animation drivers, canvas/WebGL drawing and form handling. Replace the static snapshots with owned drawing code, replace compatibility controls with Base UI compositions and explicit state, extract meaningful typed props and data, rebuild fonts and semantic tokens with scoped responsive/theme definitions, and verify keyboard/focus behavior, scroll behavior, responsive states, and screenshots after each replacement.");
     if recovered {
         guide.push_str(" Do not declare a conversion complete while a route still depends on recovered bundled programs.");
@@ -271,8 +333,13 @@ pub(super) fn prune_unused(source: &str) -> String {
         counts
     };
     let mut source = source.to_owned();
-    for (declaration, mentions) in [("const base=useSource();", 1), ("const base=page.base;", 2)] {
-        if source.matches(declaration).count() == 1 && words(&source).get("base") == Some(&mentions)
+    // `base` is a read only where it stands alone; `page.base` is a property access.
+    static STANDALONE_BASE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?:^|[^.\w$])base\b").expect("standalone base")
+    });
+    for declaration in ["const base=useSource();", "const base=page.base;"] {
+        let code = STRING.replace_all(&source, "\"\"");
+        if source.matches(declaration).count() == 1 && STANDALONE_BASE.find_iter(&code).count() == 1
         {
             source = source.replace(declaration, "");
         }
@@ -364,8 +431,11 @@ mod tests {
             !pruned.contains("const base") && !pruned.contains("import"),
             "{pruned}"
         );
-        let page = "export function P({page}){const base=page.base;switch(page.key){case 'a':return <S value={page.base}/>}return null}\n";
+        let page = "export function P({page}){const base=page.base;switch(page.key){case 'a':return <S value={page.base} b={base}/>}return null}\n";
         assert!(prune_unused(page).contains("const base=page.base;"));
+        // A property access `page.base` is not a read of the local.
+        let unread = "export function P({page}){const base=page.base;switch(page.key){case 'a':return <S value={page.base}/>}return null}\n";
+        assert!(!prune_unused(unread).contains("const base"));
     }
     #[test]
     fn imports_the_pruner_cannot_parse_are_kept_as_written() {

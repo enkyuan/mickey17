@@ -156,3 +156,24 @@ export function decodePathname(pathname: string): string | undefined {
   }
   return segments.join('/')
 }
+
+// Recovered client programs can bundle a production-built React renderer
+// (react-reconciler for react-three-fiber) that shares THIS app's React instance.
+// While it renders it assigns its own dispatcher to `ReactSharedInternals.A`. That
+// dispatcher is `{ getCacheForType, cacheSignal }`; React's development JSX
+// runtime additionally calls `A.getOwner()` on every element, so under
+// `vite dev` the first element created inside such a renderer throws
+// "dispatcher.getOwner is not a function". Production React never calls it.
+// Dev-only fix: give every dispatcher assigned to `A` a `getOwner` that reports
+// no owner (it only loses the owner name in dev warnings for those elements).
+export function installOwnerGuard(internals: { A?: unknown } | null | undefined) {
+  if (!internals || typeof internals !== 'object' || Object.getOwnPropertyDescriptor(internals, 'A')?.get) return
+  const withOwner = (dispatcher: unknown) => {
+    if (!dispatcher || typeof dispatcher !== 'object' || typeof (dispatcher as { getOwner?: unknown }).getOwner === 'function') return dispatcher
+    const getOwner = () => null
+    if (Object.isExtensible(dispatcher)) { (dispatcher as { getOwner?: unknown }).getOwner = getOwner; return dispatcher }
+    return Object.assign(Object.create(dispatcher), { getOwner })
+  }
+  let current = withOwner(internals.A)
+  Object.defineProperty(internals, 'A', { configurable: true, enumerable: true, get: () => current, set: (value: unknown) => { current = withOwner(value) } })
+}

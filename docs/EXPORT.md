@@ -24,10 +24,25 @@ and mirror editing retain their existing behavior. Registry version 0.2.0 predat
 ## Recovering client behavior as editable source
 
 ```sh
-mochi export captured --compatibility -o reconstructed --recover-client-route /
+mochi export captured --compatibility -o reconstructed                      # default: recover every route it can
+mochi export captured --compatibility -o reconstructed --no-recover-client   # static replicas everywhere
+mochi export captured --compatibility -o reconstructed --recover-client-route /   # strict: this route must recover
 ```
 
-The opt-in adapters recover public React client components from supported saved
+**Default and fallback.** Without either flag, `--compatibility` tries recovery for all captured
+literal routes. All routes are planned together first; if that is refused, each route alone decides
+its own refusal and the remaining routes are planned together (one at a time only if they still
+conflict), so the recovered files are always exactly what an explicit `--recover-client-route`
+selection of the recovered routes produces. Routes that need different adapters (for example
+Flight and Vite) are not combined. A route that cannot be recovered is exported
+as a static structural replica and recorded under `route_modes` in `.mochi/export.json` with the
+refusal reason; it never aborts the export. `--recover-client-route` is strict: a selected route
+that cannot be recovered fails the export and nothing is published. `route_modes`, `recovered_files`
+(SHA-256 of each recovered file as written) and `client_recovery.sources` (input digests, re-checked
+before publication) make the result auditable. Recovered output is original build output, not
+semantic source, and the export does not run it in a browser.
+
+The adapters (tried by default with `--compatibility`) recover public React client components from supported saved
 Next/Turbopack or split Vite/TanStack build output. The Next adapter reads captured Flight
 component records and the route's observed chunk inventory, including module preloads.
 They do not fetch source, call a model, execute the

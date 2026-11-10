@@ -119,18 +119,24 @@ enum Command {
         #[arg(long, value_enum, default_value = "tanstack-start")]
         framework: Framework,
         /// Generate typed source from a reviewed semantic specification, without recovered bundles.
-        #[arg(long, conflicts_with_all = ["interpretation", "recover_client_routes"])]
+        #[arg(long, conflicts_with_all = ["interpretation", "recover_client_routes", "no_recover_client"])]
         authored_spec: Option<PathBuf>,
-        /// Explicitly export structural compatibility source, which can contain recovered controllers.
+        /// Export structural compatibility source. Client programs are recovered per route by default
+        /// (running original build output); see --no-recover-client and --recover-client-route.
         #[arg(long, conflicts_with = "authored_spec")]
         compatibility: bool,
         /// Attach saved semantic proposals as review-required comments; never calls AI.
         #[arg(long)]
         interpretation: bool,
         /// Recover a captured public client root for this literal path as editable code.
-        /// The generated app executes recovered code; unsupported modules are refused.
+        /// Strict: the generated app executes recovered code and unsupported modules
+        /// fail the export. Without this flag, --compatibility already recovers every
+        /// route it can and falls back to a static replica per refused route.
         #[arg(long = "recover-client-route")]
         recover_client_routes: Vec<String>,
+        /// Do not recover client programs: export a static structural replica of every route.
+        #[arg(long, conflicts_with = "recover_client_routes")]
+        no_recover_client: bool,
     },
     /// Hash editable app inputs before collecting candidate parity measurements.
     FingerprintProject { project: PathBuf },
@@ -448,6 +454,7 @@ fn main() -> Result<()> {
             compatibility,
             interpretation,
             recover_client_routes,
+            no_recover_client,
         } => {
             if let Some(specification) = authored_spec {
                 let report = authored::generate(&site, &specification, &out)?;
@@ -468,14 +475,24 @@ fn main() -> Result<()> {
                     interpretation,
                     &recover_client_routes.into_iter().collect(),
                 )?
-            } else if interpretation {
-                export::tanstack_start_with_interpretation(&site, &out)?
+            } else if no_recover_client {
+                if interpretation {
+                    export::tanstack_start_with_interpretation(&site, &out)?
+                } else {
+                    export::tanstack_start(&site, &out)?
+                }
             } else {
-                export::tanstack_start(&site, &out)?
+                export::tanstack_start_recovering(&site, &out, interpretation)?
             };
+            let recovered = report
+                .route_modes
+                .iter()
+                .filter(|m| m.mode == "recovered_client_program")
+                .count();
             println!(
-                "Generated compatibility source: {} routes, {} structural components and {} shared layouts in {}. Runtime verification not run; see .mochi/export.json and EDITING.md.",
+                "Generated compatibility source: {} routes ({recovered} running recovered client code, {} static replicas), {} structural components and {} shared layouts in {}. Runtime verification not run; see route_modes in .mochi/export.json and EDITING.md.",
                 report.routes,
+                report.route_modes.len() - recovered,
                 report.components,
                 report.layouts,
                 out.display()

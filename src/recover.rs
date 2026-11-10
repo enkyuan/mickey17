@@ -53,6 +53,81 @@ impl Recovery {
         Ok(())
     }
 }
+/// A captured route that could not be recovered and is exported as a static replica.
+#[derive(Debug, Serialize)]
+pub struct RouteFallback {
+    pub path: String,
+    pub reason: String,
+}
+/// Recover every captured literal route that can be recovered. Routes whose
+/// modules are unsupported or refused are returned as fallbacks (to be exported
+/// as static replicas) instead of failing the export.
+///
+/// The result is always one joint `plan` of the accepted routes, exactly what an
+/// explicit `--recover-client-route` selection of them produces: adapters emit
+/// files whose content depends on the whole selection (Vite binding slices,
+/// native element declarations and dispatchers), so separately planned routes
+/// are never merged. All routes are tried together first; if that is refused,
+/// each route alone decides its own refusal, the remaining routes are planned
+/// together, and only if that is refused too are they added one at a time.
+pub fn plan_available(
+    root: &Path,
+    model: &Project,
+) -> Result<(Option<Recovery>, Vec<RouteFallback>)> {
+    let paths: BTreeSet<String> = model.routes.values().map(|r| r.pathname.clone()).collect();
+    if paths.is_empty() {
+        return Ok((None, Vec::new()));
+    }
+    if let Ok(recovery) = plan(root, model, &paths) {
+        return Ok((Some(recovery), Vec::new()));
+    }
+    let mut fallbacks = Vec::new();
+    let mut alone = BTreeSet::new();
+    let mut first = None;
+    for path in paths {
+        match plan(root, model, &BTreeSet::from([path.clone()])) {
+            Ok(recovery) => {
+                alone.insert(path);
+                first.get_or_insert(recovery);
+            }
+            Err(error) => fallbacks.push(RouteFallback {
+                path,
+                reason: format!("{error:#}"),
+            }),
+        }
+    }
+    if alone.len() <= 1 {
+        return Ok((first, fallbacks));
+    }
+    if let Ok(recovery) = plan(root, model, &alone) {
+        return Ok((Some(recovery), fallbacks));
+    }
+    let mut accepted = BTreeSet::new();
+    let mut recovery = None;
+    for path in alone {
+        let mut next = accepted.clone();
+        next.insert(path.clone());
+        match plan(root, model, &next) {
+            Ok(joint) => {
+                accepted = next;
+                recovery = Some(joint);
+            }
+            Err(error) => fallbacks.push(RouteFallback {
+                reason: format!(
+                    "recoverable alone, but not together with {}: {error:#}",
+                    if accepted.is_empty() {
+                        "itself on a second read".to_owned()
+                    } else {
+                        accepted.iter().cloned().collect::<Vec<_>>().join(", ")
+                    }
+                ),
+                path,
+            }),
+        }
+    }
+    fallbacks.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok((recovery, fallbacks))
+}
 #[derive(Debug, Serialize)]
 pub struct RecoveredRoute {
     pub component: String,
