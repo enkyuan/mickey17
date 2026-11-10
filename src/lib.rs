@@ -14,6 +14,7 @@ pub mod mirror;
 pub mod parity;
 pub mod project;
 pub mod recover;
+pub mod semantic;
 pub mod serve;
 pub mod trackers;
 pub mod util;

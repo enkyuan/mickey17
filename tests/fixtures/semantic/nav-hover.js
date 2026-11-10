@@ -1,0 +1,1 @@
+function Nav(){const[m,setM]=x.useState(null);return n.jsxs("nav",{className:"links",children:[n.jsx("div",{onMouseEnter:()=>setM("products"),children:n.jsx(B,{className:"nav-link",text:"Products"})}),n.jsx("div",{onMouseEnter:()=>setM("features"),children:n.jsx(B,{className:"nav-link",text:"Features"})}),n.jsx(B,{className:"nav-link",text:"Pricing",destination:"/pricing"})]})}

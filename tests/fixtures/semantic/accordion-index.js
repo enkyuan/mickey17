@@ -1,0 +1,1 @@
+function A({items}){const[o,s]=x.useState(0);return n.jsx("ul",{children:items.map((e,i)=>{const a=i===o;return n.jsxs("li",{className:"row",children:[n.jsx("button",{type:"button",className:"hd","aria-expanded":a,"aria-controls":"p"+i,onClick:()=>s(i),children:e}),n.jsx("section",{className:"pn",id:"p"+i,inert:!a,children:"x"})]},e)})})}

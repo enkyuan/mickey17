@@ -166,6 +166,8 @@ enum Command {
         #[arg(long)]
         keep_latest: bool,
     },
+    /// Recognize Base UI patterns and repeated components in one captured page; with --emit, write typed TSX.
+    Semantic(mochi::semantic::cli::Args),
     /// Preview a clone on a loopback HTTP server.
     Serve {
         site: PathBuf,
@@ -258,6 +260,7 @@ fn main() -> Result<()> {
                 report.failures.len()
             );
         }
+        Command::Semantic(args) => mochi::semantic::cli::run(args)?,
         Command::Clean {
             workspace,
             apply,

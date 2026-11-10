@@ -1,0 +1,15 @@
+<main>
+<div role="group" aria-label="View"><button type="button" aria-pressed="true">Grid</button><button type="button" aria-pressed="false">List</button></div>
+<input type="checkbox" role="switch" aria-checked="false" aria-label="Dark mode">
+<label>Agree <input type="checkbox" name="agree"></label>
+<div role="radiogroup" aria-label="Plan"><div role="radio" aria-checked="true" tabindex="0">Free</div><div role="radio" aria-checked="false" tabindex="-1">Pro</div></div>
+<input type="search" role="combobox" aria-controls="lb" aria-expanded="false" aria-label="Search">
+<ul id="lb" role="listbox" aria-label="Results"><li role="option">One</li></ul>
+<select aria-label="Country"><option>NL</option><option>US</option></select>
+<button aria-haspopup="menu" aria-expanded="false" aria-controls="m1">Actions</button>
+<div role="menu" id="m1" aria-label="Actions"><button role="menuitem">Edit</button><button role="menuitem">Delete</button></div>
+<button aria-describedby="tip">Info</button><div role="tooltip" id="tip">More</div>
+<div role="slider" aria-valuenow="3" tabindex="0" aria-label="Volume"></div>
+<input type="text" aria-label="Name"><textarea aria-label="Bio"></textarea>
+<button type="button">Save</button><a href="/x">Link</a>
+</main>
