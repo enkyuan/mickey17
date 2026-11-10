@@ -33,7 +33,13 @@ impl PageAnalysis {
     pub fn from_parts(page: &str, doc: ir::Doc, js: Vec<js::JsFacts>) -> PageAnalysis {
         let recognition = patterns::recognize(&doc, &js);
         let components = components::extract(&doc);
-        PageAnalysis { page: page.to_owned(), doc, js, recognition, components }
+        PageAnalysis {
+            page: page.to_owned(),
+            doc,
+            js,
+            recognition,
+            components,
+        }
     }
 }
 
@@ -53,7 +59,9 @@ pub fn load_js(capture_dir: &Path, capture: &Capture) -> Vec<js::JsFacts> {
         ..Default::default()
     };
     for r in &capture.resources {
-        let Ok(u) = url::Url::parse(&r.url) else { continue };
+        let Ok(u) = url::Url::parse(&r.url) else {
+            continue;
+        };
         if !u.path().ends_with(".js") && !u.path().ends_with(".mjs") {
             continue;
         }
@@ -67,7 +75,10 @@ pub fn load_js(capture_dir: &Path, capture: &Capture) -> Vec<js::JsFacts> {
         }
         let path: PathBuf = site.join(rel);
         let Ok(meta) = std::fs::metadata(&path) else {
-            out.push(skipped(rel, "listed as a resource but not present under site/"));
+            out.push(skipped(
+                rel,
+                "listed as a resource but not present under site/",
+            ));
             continue;
         };
         if meta.len() > MAX_JS_BYTES {
@@ -90,9 +101,16 @@ pub fn analyze_capture(
     capture: &Capture,
     with_js: bool,
 ) -> Result<PageAnalysis> {
-    ensure!(capture.complete, "capture is incomplete: issues are recorded in the evidence");
+    ensure!(
+        capture.complete,
+        "capture is incomplete: issues are recorded in the evidence"
+    );
     let doc = ir::Doc::from_capture(capture)?;
-    let js = if with_js { load_js(capture_dir, capture) } else { Vec::new() };
+    let js = if with_js {
+        load_js(capture_dir, capture)
+    } else {
+        Vec::new()
+    };
     Ok(PageAnalysis::from_parts(page, doc, js))
 }
 
@@ -101,5 +119,10 @@ pub fn analyze_capture(
 pub fn analyze_page(capture_dir: &Path, page_json: &Path, with_js: bool) -> Result<PageAnalysis> {
     let capture = evidence::load(capture_dir, page_json)
         .with_context(|| format!("loading {}", page_json.display()))?;
-    analyze_capture(capture_dir, &page_json.display().to_string(), &capture, with_js)
+    analyze_capture(
+        capture_dir,
+        &page_json.display().to_string(),
+        &capture,
+        with_js,
+    )
 }
