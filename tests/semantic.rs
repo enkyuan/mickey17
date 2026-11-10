@@ -898,6 +898,40 @@ fn accordion_items_keep_the_content_beside_their_trigger_and_panel() {
         src.contains("className=\"row\""),
         "the wrapper div stays: {src}"
     );
+    // The captured list and items are kept as `ul`/`li`, not replaced by the part's `div`.
+    assert!(src.contains("render={<ul />}"), "{src}");
+    assert!(src.contains("render={<li />}"), "{src}");
+}
+
+#[test]
+fn parts_keep_the_captured_tag_and_tabs_with_icons_keep_their_markup() {
+    let nav = emit::emit(
+        &PageAnalysis::from_parts(
+            "nav",
+            Doc::from_html(&fixture("nav-hover.html")),
+            vec![js::extract("nav-hover.js", &fixture("nav-hover.js"))],
+        ),
+        &EmitOptions::default(),
+    );
+    let c = nav
+        .components
+        .iter()
+        .find(|c| c.primitive == Primitive::NavigationMenu)
+        .unwrap_or_else(|| panic!("hover menu not emitted: {:?}", nav.skipped));
+    let src = &nav.files[&c.file];
+    assert!(src.contains("render={<"), "{src}");
+    assert!(
+        !src.contains("<NavigationMenuItem>\n"),
+        "no Item wrapper for bare links: {src}"
+    );
+    let tabs = r#"<div role="tablist" class="t" aria-label="Install method"><button role="tab" id="a" aria-selected="true" aria-controls="pa"><svg width="1"><path d="M0"/></svg><span>One</span></button><button role="tab" id="b" aria-selected="false" aria-controls="pb"><svg width="1"><path d="M1"/></svg><span>Two</span></button></div><div role="tabpanel" id="pa" aria-labelledby="a">A</div><div role="tabpanel" id="pb" aria-labelledby="b" hidden>B</div>"#;
+    let (e, _) = emit_html(tabs);
+    let src = component(&e, Primitive::Tabs);
+    assert!(
+        src.contains("<svg") && src.contains("<span>One</span>"),
+        "{src}"
+    );
+    assert!(!src.contains(".map("), "{src}");
 }
 
 #[test]
@@ -1077,6 +1111,7 @@ fn assembling_natural_gives_a_complete_project_without_a_recovered_bundle() {
             viewport: Some("1440x900"),
             routes: None,
             tokens: false,
+            styles: mochi::semantic::project::StyleSource::CapturedSheets,
         },
     )
     .unwrap();
@@ -1156,6 +1191,30 @@ fn assembling_natural_gives_a_complete_project_without_a_recovered_bundle() {
             "{public}"
         );
     }
+    // Every image the emitted markup names is under public/ (the repeated product cards once
+    // named files that were never copied while the report said nothing was missing).
+    let dangling: Vec<_> = project
+        .report
+        .assets
+        .skipped
+        .iter()
+        .filter(|s| s.reason.contains("no file is present under public/"))
+        .collect();
+    assert!(dangling.is_empty(), "{dangling:?}");
+    for image in [
+        "pay-graphic-1.jpg",
+        "pay-graphic-3.jpg",
+        "request-graphic-1.jpg",
+        "request-graphic-3.jpg",
+    ] {
+        let public = format!("public/assets/images/products/{image}");
+        assert!(files.contains_key(&public), "{public} not copied");
+        assert!(
+            files.iter().any(|(p, b)| p.starts_with("src/")
+                && std::str::from_utf8(b).is_ok_and(|t| t.contains(&public[6..]))),
+            "{image} is not referenced by any emitted file"
+        );
+    }
     // The report keeps the gaps it cannot close.
     let gaps = project.report.gaps.join("\n");
     for needle in ["motion", "graphics", "behavior", "styles"] {
@@ -1167,6 +1226,101 @@ fn assembling_natural_gives_a_complete_project_without_a_recovered_bundle() {
         inv.component_elements + inv.plain_elements,
         inv.body_elements
     );
+}
+
+#[test]
+fn props_of_a_repeated_component_go_through_the_asset_mapping() {
+    // The values a repeated-structure component receives are URLs the project must serve: a
+    // slot value that bypasses the mapping leaves the page requesting a file that was never copied.
+    let a = PageAnalysis::from_parts("cards", Doc::from_html(CARDS), Vec::new());
+    let map = |u: &str| u.strip_suffix(".png").map(|s| format!("/local{s}.webp"));
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            urls: Some(&map),
+            ..EmitOptions::default()
+        },
+    );
+    let jsx = e.page.unwrap().jsx;
+    for who in ["bo", "cy"] {
+        assert!(jsx.contains(&format!("/local/{who}.webp")), "{jsx}");
+        assert!(!jsx.contains(&format!("\"/{who}.png\"")), "{jsx}");
+    }
+}
+
+/// A bridge that answers for every element, as a style translation does.
+struct EveryElement(&'static str);
+impl emit::StyleBridge for EveryElement {
+    fn class_name(&self, _doc: &Doc, _node: usize, _original: &[String]) -> String {
+        self.0.to_owned()
+    }
+}
+
+#[test]
+fn the_style_bridge_is_asked_for_classless_elements_and_script_hooks_survive() {
+    let html = r#"<body class="js-body page"><main><p>text</p><button class="js-toggle btn">go</button></main></body>"#;
+    let a = PageAnalysis::from_parts("x", Doc::from_html(html), Vec::new());
+    let bridge = EveryElement("flex gap-2");
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            style: &bridge,
+            ..EmitOptions::default()
+        },
+    );
+    let jsx = e.page.unwrap().jsx;
+    // The class-less <main> and <p> get the translation; the hook stays beside it; the
+    // captured name of a styled class does not.
+    assert!(jsx.contains("<main className=\"flex gap-2\">"), "{jsx}");
+    assert!(jsx.contains("<p className=\"flex gap-2\">"), "{jsx}");
+    assert!(jsx.contains("className=\"flex gap-2 js-toggle\""), "{jsx}");
+    assert!(!jsx.contains("btn"), "{jsx}");
+    // <html>/<body> attributes take the same route.
+    let doc = Doc::from_html(html);
+    let body = doc.nodes.iter().find(|n| n.tag == "body").unwrap().id;
+    let (props, _) = emit::element_props(&doc, body, &bridge);
+    assert!(
+        props.contains(&("className".to_owned(), "flex gap-2 js-body".to_owned())),
+        "{props:?}"
+    );
+}
+
+#[test]
+fn tab_classes_with_quotes_are_valid_jsx_and_the_selected_tab_is_not_the_template() {
+    struct ByNode;
+    impl emit::StyleBridge for ByNode {
+        fn class_name(&self, doc: &Doc, node: usize, _o: &[String]) -> String {
+            // The selected tab looks different in the capture; the others carry a quote.
+            if doc.node(node).aria_bool("aria-selected") == Some(true) {
+                "selected-look".to_owned()
+            } else {
+                "[content:\"x\"] idle".to_owned()
+            }
+        }
+    }
+    let a = PageAnalysis::from_parts(
+        "tabs",
+        Doc::from_html(&fixture("tabs-aria.html")),
+        Vec::new(),
+    );
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            style: &ByNode,
+            ..EmitOptions::default()
+        },
+    );
+    let c = e
+        .components
+        .iter()
+        .find(|c| c.primitive == Primitive::Tabs)
+        .unwrap();
+    let src = &e.files[&c.file];
+    assert!(!src.contains("\\\""), "Debug-style escapes in JSX: {src}");
+    assert!(src.contains("className={'[content:\"x\"] idle'}"), "{src}");
+    assert!(!src.contains("selected-look"), "{src}");
 }
 
 #[test]
@@ -1262,6 +1416,7 @@ fn assembling_garden_and_microsoft_keeps_child_routes_apart_and_runs_nothing_fro
                 viewport: None,
                 routes: None,
                 tokens: false,
+                styles: mochi::semantic::project::StyleSource::CapturedSheets,
             },
         )
         .unwrap();

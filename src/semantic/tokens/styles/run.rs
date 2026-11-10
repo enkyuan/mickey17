@@ -28,6 +28,9 @@ pub struct StyleOptions {
     pub tailwind_dir: Option<PathBuf>,
     /// A group of elements with identical utilities becomes a named recipe from this size on.
     pub min_share: usize,
+    /// Recipe names already in use by other pages of the same project: this page's recipes take
+    /// other names, so one stylesheet can carry the recipes of several pages.
+    pub reserved_names: BTreeSet<String>,
 }
 
 impl StyleOptions {
@@ -36,6 +39,7 @@ impl StyleOptions {
             tokens: Options::default(),
             tailwind_dir: None,
             min_share: 2,
+            reserved_names: BTreeSet::new(),
         }
     }
 }
@@ -127,6 +131,8 @@ pub struct StylePlan {
     pub files: BTreeMap<String, String>,
     pub report: StyleReport,
     pub tokens: TokenSet,
+    /// Names of the recipes `recipes.css` defines.
+    pub recipe_names: BTreeSet<String>,
 }
 
 const SKIPPED_TAGS: &[&str] = &[
@@ -648,7 +654,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             Err(e) => bail!("could not ask Tailwind which recipe names it generates CSS for: {e}"),
         }
     }
-    let mut taken: BTreeSet<String> = BTreeSet::new();
+    let mut taken: BTreeSet<String> = opts.reserved_names.clone();
     let mut recipe_of: HashMap<String, String> = HashMap::new();
     for p in pending {
         let mut name = p
@@ -1029,6 +1035,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         files,
         report,
         tokens: out.tokens,
+        recipe_names: recipe_of.into_values().collect(),
     })
 }
 
@@ -1194,7 +1201,7 @@ mod tests {
             bridge.class_name(&doc, 99, &["x".into(), "y".into()]),
             "x y"
         );
-        assert_eq!(bridge.missed.get(), 1);
+        assert_eq!(bridge.missed.borrow().len(), 1);
     }
 
     #[test]

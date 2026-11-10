@@ -30,10 +30,19 @@ pub struct Args {
     #[arg(long, conflicts_with_all = ["emit", "no_js"])]
     pub assemble: bool,
     /// With --assemble: do not run the tokens pipeline (the project then has no stylesheet).
-    #[arg(long, requires = "assemble")]
+    #[arg(long, requires = "assemble", conflicts_with = "captured_css")]
     pub no_tokens: bool,
-    /// With --assemble: assemble at most this many routes.
+    /// Instead of emitting anything: compare each captured route with the HTML the assembled
+    /// project server-rendered for it (a directory of `<route ns>.html`) and write the structural
+    /// report (`structure.json`, `structure.md`) to --out.
+    #[arg(long, conflicts_with_all = ["emit", "assemble", "no_js"])]
+    pub structure_diff: Option<PathBuf>,
+    /// With --assemble: keep the captured class names and import the captured stylesheets
+    /// instead of translating each element's styles into Tailwind utilities.
     #[arg(long, requires = "assemble")]
+    pub captured_css: bool,
+    /// With --assemble or --structure-diff: use at most this many routes.
+    #[arg(long)]
     pub routes: Option<usize>,
 }
 
@@ -91,6 +100,11 @@ fn write_project(args: &Args) -> Result<()> {
             viewport: args.viewport.as_deref(),
             routes: args.routes,
             tokens: !args.no_tokens,
+            styles: if args.captured_css {
+                super::project::StyleSource::CapturedSheets
+            } else {
+                super::project::StyleSource::Translated
+            },
         },
     )?;
     // Validate every path before touching the disk: a legitimate name such as `v1..2.png` is
@@ -127,6 +141,23 @@ pub fn run(args: Args) -> Result<()> {
     );
     if args.assemble {
         return write_project(&args);
+    }
+    if let Some(ssr) = &args.structure_diff {
+        let routes = super::project::compare_structure(
+            &args.capture,
+            ssr,
+            args.viewport.as_deref(),
+            args.routes,
+        )?;
+        std::fs::create_dir_all(&args.out)?;
+        std::fs::write(
+            args.out.join("structure.json"),
+            serde_json::to_vec_pretty(&routes)?,
+        )?;
+        let md = super::project::structure::markdown(&routes);
+        std::fs::write(args.out.join("structure.md"), &md)?;
+        println!("{md}");
+        return Ok(());
     }
     let page = page_evidence(&args)?;
     let analysis = analyze_page(&args.capture, &page, !args.no_js)?;

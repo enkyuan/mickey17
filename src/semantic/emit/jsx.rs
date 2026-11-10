@@ -85,6 +85,36 @@ const STATE_SUFFIXES: &[&str] = &[
     "collapsed",
 ];
 
+/// Classes a script selects by (`js-menu-toggle`); they carry no style.
+pub fn is_script_hook(class: &str) -> bool {
+    class.starts_with("js-") || class.starts_with("js_")
+}
+
+/// What the bridge says for `classes`, plus the script hook classes (`js-*`) the translation
+/// would otherwise take away: they style nothing, but they are how a script finds the element.
+pub fn translate_classes(
+    style: &dyn StyleBridge,
+    doc: &Doc,
+    id: NodeId,
+    classes: &[String],
+) -> String {
+    let cn = style.class_name(doc, id, classes);
+    if cn == classes.join(" ") {
+        return cn;
+    }
+    let have: BTreeSet<&str> = cn.split_ascii_whitespace().collect();
+    let hooks: Vec<&str> = classes
+        .iter()
+        .map(String::as_str)
+        .filter(|c| is_script_hook(c) && !have.contains(c))
+        .collect();
+    match (cn.is_empty(), hooks.is_empty()) {
+        (_, true) => cn,
+        (true, false) => hooks.join(" "),
+        (false, false) => format!("{cn} {}", hooks.join(" ")),
+    }
+}
+
 /// A class that encodes a state a primitive now owns: `block--active`, `is-open`. Utility
 /// variants (`is-active:opacity-100`, `has-[..]:`) and framework classes (`is-layout-flex`)
 /// are styling and are kept.
@@ -753,7 +783,9 @@ impl<'a> Jsx<'a> {
         }
     }
 
-    /// The `className` value an element would get (state classes dropped), or empty.
+    /// The `className` value an element would get (state classes dropped), or empty. The bridge
+    /// is asked for every element, class-less ones included: a translation can style an element
+    /// by tag or ancestor selectors that the original markup never named.
     pub fn class_value(&self, id: NodeId) -> String {
         let n = self.doc.node(id);
         let mut classes: Vec<String> = Vec::new();
@@ -767,15 +799,17 @@ impl<'a> Jsx<'a> {
                 classes.push(c.clone());
             }
         }
-        if classes.is_empty() {
-            String::new()
-        } else {
-            self.style.class_name(self.doc, id, &classes)
-        }
+        self.translated_class(id, &classes)
+    }
+
+    fn translated_class(&self, id: NodeId, classes: &[String]) -> String {
+        translate_classes(self.style, self.doc, id, classes)
     }
 
     /// The value of an attribute that points at an asset, mapped to where the project serves it.
-    fn rewrite_url(&self, tag: &str, name: &str, value: &str) -> String {
+    /// Map an asset URL attribute to where the project serves it (also used for the values a
+    /// repeated-structure component receives as props).
+    pub fn rewrite_url(&self, tag: &str, name: &str, value: &str) -> String {
         let Some(map) = self.urls else {
             return value.to_owned();
         };
@@ -843,11 +877,9 @@ impl<'a> Jsx<'a> {
                 classes.push(c.clone());
             }
         }
-        if !classes.is_empty() || n.has_attr("class") {
-            let cn = self.style.class_name(self.doc, id, &classes);
-            if !cn.is_empty() {
-                out.push(format!("className={}", attr_value(&cn)));
-            }
+        let cn = self.translated_class(id, &classes);
+        if !cn.is_empty() {
+            out.push(format!("className={}", attr_value(&cn)));
         }
         for (name, value) in &n.attrs {
             if matches!(name.as_str(), "class" | "data-component") || skip.contains(&name.as_str())
@@ -1117,12 +1149,17 @@ impl<'a> Jsx<'a> {
 /// Props for a document element (`html`, `body`) as JSX property names and string values.
 /// `style` is dropped and non-standard unhyphenated attributes are returned in the second list,
 /// so the caller can report what it could not carry.
-pub fn element_props(doc: &Doc, id: NodeId) -> (Vec<(String, String)>, Vec<String>) {
+pub fn element_props(
+    doc: &Doc,
+    id: NodeId,
+    style: &dyn StyleBridge,
+) -> (Vec<(String, String)>, Vec<String>) {
     let n = doc.node(id);
     let mut props = Vec::new();
     let mut dropped = Vec::new();
-    if !n.classes.is_empty() {
-        props.push(("className".to_owned(), n.classes.join(" ")));
+    let class = translate_classes(style, doc, id, &n.classes);
+    if !class.is_empty() {
+        props.push(("className".to_owned(), class));
     }
     for (name, value) in &n.attrs {
         if matches!(name.as_str(), "class" | "data-component") {

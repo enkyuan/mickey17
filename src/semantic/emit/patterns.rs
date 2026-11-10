@@ -212,7 +212,7 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         let key = t.key.clone().ok_or("tab without key")?;
         let label = plain_label(doc, t.node).unwrap_or_else(|| {
             gaps.push(format!(
-                "tab `{key}` has non-text content; only its text is emitted"
+                "tab `{key}` has non-text content; its data row keeps the text only, the list keeps the captured markup"
             ));
             doc.visible_text(t.node, 200)
         });
@@ -235,11 +235,18 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         "// Tab values and labels read from the capture; `value` keys come from {}.\nexport const {id}Items = [\n{items}] as const\n\nexport type {ty}Value = (typeof {id}Items)[number]['value']\n",
         tabs[0].key_source.as_deref().unwrap_or("the capture")
     );
-    let tab_class = jsx.class_value(tabs[0].node);
+    // Styles are read per captured element, so the tab that was selected carries the selected
+    // look: every tab takes the class of the first one that was not.
+    let selected_key = m.props.get("defaultValue").cloned();
+    let template_tab = tabs
+        .iter()
+        .find(|t| t.key.is_some() && t.key != selected_key)
+        .unwrap_or(&tabs[0]);
+    let tab_class = jsx.class_value(template_tab.node);
     let tab_attrs: Vec<String> = {
         let mut a = vec!["key={tab.value}".to_owned(), "value={tab.value}".to_owned()];
         if !tab_class.is_empty() {
-            a.push(format!("className={:?}", tab_class));
+            a.push(format!("className={}", super::jsx::attr_value(&tab_class)));
         }
         if has_href {
             a.push("nativeButton={false}".to_owned());
@@ -249,9 +256,19 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
     };
     let tab_panels = parts(m, "Panel");
     let all_panels = tab_panels.len() == tabs.len();
-    let differing_tab_classes = tabs.iter().any(|t| jsx.class_value(t.node) != tab_class);
+    let differing_tab_classes = tabs
+        .iter()
+        .filter(|t| t.key != selected_key)
+        .any(|t| jsx.class_value(t.node) != tab_class);
     if differing_tab_classes {
-        gaps.push("tabs carry different class lists after dropping state classes; the first tab's classes are used".into());
+        gaps.push("tabs carry different class lists after dropping state classes; the first unselected tab's classes are used".into());
+    }
+    if let Some(sel) = tabs
+        .iter()
+        .find(|t| t.key.is_some() && t.key == selected_key)
+        && jsx.class_value(sel.node) != tab_class
+    {
+        gaps.push("the selected tab's captured styles differ from the others'; the selected look is not emitted (no state variant is derived from a capture of one state)".into());
     }
     let controlled = matches!(m.state, StateModel::Controlled { .. });
     let default = m.props.get("defaultValue").cloned();
@@ -262,20 +279,23 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         jsx.class_value(root)
     };
     let list_attrs = {
-        let mut a = Vec::new();
+        let mut a: Vec<String> = keep_tag(doc, list, "div").into_iter().collect();
         if !list_class.is_empty() {
-            a.push(format!("className={:?}", list_class));
+            a.push(format!("className={}", super::jsx::attr_value(&list_class)));
         }
         if let Some(l) = doc.node(list).attr("aria-label") {
-            a.push(format!("aria-label={:?}", l));
+            a.push(format!("aria-label={}", super::jsx::attr_value(l)));
         }
         a
     };
-    let root_attrs = if root_class.is_empty() {
+    let mut root_attrs: Vec<String> = if root == list {
         Vec::new()
     } else {
-        vec![format!("className={:?}", root_class)]
+        keep_tag(doc, root, "div").into_iter().collect()
     };
+    if !root_class.is_empty() {
+        root_attrs.push(format!("className={}", super::jsx::attr_value(&root_class)));
+    }
     let (props_ty, sig, root_extra) = if controlled {
         (
             format!(
@@ -318,20 +338,52 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
     let mut root_all = root_attrs;
     root_all.extend(root_extra);
     root_all.push("{...props}".to_owned());
-    let list_children = element(
-        &w(Primitive::Tabs, "Tab"),
-        &tab_attrs,
-        Some("      {tab.label}\n"),
-        3,
-    );
-    let list_el = element(
-        &w(Primitive::Tabs, "List"),
-        &list_attrs,
-        Some(&format!(
-            "  {{{id}Items.map((tab) => (\n{list_children}  ))}}\n"
-        )),
-        0,
-    );
+    // A tab that holds more than text (an icon, a wrapper) cannot be a `{ value, label }` row:
+    // each tab is then written out with the children the capture shows.
+    let rich_tabs = tabs.iter().any(|t| {
+        doc.descendants(t.node)
+            .into_iter()
+            .any(|d| doc.node(d).is_element())
+    });
+    let list_el = if rich_tabs {
+        let mut written = String::new();
+        for t in &tabs {
+            let key = t.key.clone().ok_or("tab without key")?;
+            let mut attrs = vec![format!("value={}", ts_string(&key))];
+            if !tab_class.is_empty() {
+                attrs.push(format!("className={}", super::jsx::attr_value(&tab_class)));
+            }
+            if t.render_as.as_deref() == Some("a") {
+                attrs.push("nativeButton={false}".to_owned());
+                attrs.push(format!(
+                    "render={{<a href={} />}}",
+                    super::jsx::attr_value(doc.node(t.node).attr("href").unwrap_or(""))
+                ));
+            }
+            written.push_str(&element(
+                &w(Primitive::Tabs, "Tab"),
+                &attrs,
+                Some(&jsx.children(t.node, 2)),
+                1,
+            ));
+        }
+        element(&w(Primitive::Tabs, "List"), &list_attrs, Some(&written), 0)
+    } else {
+        let list_children = element(
+            &w(Primitive::Tabs, "Tab"),
+            &tab_attrs,
+            Some("      {tab.label}\n"),
+            3,
+        );
+        element(
+            &w(Primitive::Tabs, "List"),
+            &list_attrs,
+            Some(&format!(
+                "  {{{id}Items.map((tab) => (\n{list_children}  ))}}\n"
+            )),
+            0,
+        )
+    };
     let mut tab_imports: Vec<&str> = vec!["TabsList", "TabsRoot", "TabsTab"];
     // The list and the panels replace their nodes; everything else in the root stays in place.
     let mut body_jsx = cx.jsx();
@@ -341,6 +393,7 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         for p in &tab_panels {
             let key = p.key.clone().ok_or("tab panel without key")?;
             let mut pattrs = vec![format!("value={}", ts_string(&key))];
+            pattrs.extend(keep_tag(doc, p.node, "div"));
             pattrs.extend(part_attrs(&jsx, p.node, &[]));
             // Panels the capture holds while their tab is not selected stay mounted.
             if doc.inert(p.node) || doc.hidden(p.node) {
@@ -372,12 +425,17 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         inner.push_str("      {children}\n");
     }
     let source = format!(
-        "import type {{ ComponentProps{rn} }} from 'react'\n{imports}import {{ {id}Items, type {ty}Value }} from '{file}'\n\n{props_ty}\n\nexport function {name}({sig}: Props) {{\n  return (\n{root}  )\n}}\n",
+        "import type {{ ComponentProps{rn} }} from 'react'\n{imports}import {{ {items_import}type {ty}Value }} from '{file}'\n\n{props_ty}\n\nexport function {name}({sig}: Props) {{\n  return (\n{root}  )\n}}\n",
         rn = if all_panels { "" } else { ", ReactNode" },
         imports = import_line(
             Primitive::Tabs,
             &tab_imports.iter().map(|s| s.to_string()).collect()
         ),
+        items_import = if rich_tabs {
+            String::new()
+        } else {
+            format!("{id}Items, ")
+        },
         file = cx.data_import(name),
         root = element(&w(Primitive::Tabs, "Root"), &root_all, Some(&inner), 2),
     );
@@ -423,7 +481,8 @@ fn toggle_group(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         );
     }
     let body = group_jsx.children(root, 3);
-    let mut root_attrs = part_attrs(&jsx, root, &[]);
+    let mut root_attrs: Vec<String> = keep_tag(cx.doc, root, "div").into_iter().collect();
+    root_attrs.extend(part_attrs(&jsx, root, &[]));
     let ty = type_name(name);
     let keys: Vec<String> = items.iter().filter_map(|t| t.key.clone()).collect();
     // The caller may control it with value/onValueChange; the captured selection is the default.
@@ -585,7 +644,9 @@ fn disclosure(
                     jsx.overrides.insert(t.node, trigger_el);
                 }
             }
-            let mut pattrs = part_attrs(&jsx, panels[i].node, &[]);
+            let mut pattrs: Vec<String> =
+                keep_tag(doc, panels[i].node, "div").into_iter().collect();
+            pattrs.extend(part_attrs(&jsx, panels[i].node, &[]));
             if keep {
                 pattrs.push("keepMounted".into());
             }
@@ -615,7 +676,8 @@ fn disclosure(
         let t = triggers[0];
         let mut tattrs = part_attrs(&jsx, t.node, &[]);
         tattrs.sort();
-        let mut pattrs = part_attrs(&jsx, panels[0].node, &[]);
+        let mut pattrs: Vec<String> = keep_tag(doc, panels[0].node, "div").into_iter().collect();
+        pattrs.extend(part_attrs(&jsx, panels[0].node, &[]));
         if keep {
             pattrs.push("keepMounted".into());
         }
@@ -646,7 +708,9 @@ fn disclosure(
     let mut root_attrs = if triggers.iter().any(|t| t.node == root) {
         Vec::new()
     } else {
-        part_attrs(&jsx, root, &[])
+        let mut a: Vec<String> = keep_tag(doc, root, "div").into_iter().collect();
+        a.extend(part_attrs(&jsx, root, &[]));
+        a
     };
 
     let source = if accordion {
@@ -765,6 +829,13 @@ fn switch(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
 
 // ---------------------------------------------------------------------------
 
+/// `render={<tag />}` when the captured element is not the tag the Base UI part renders, so the
+/// composition keeps the captured element instead of adding another beside it.
+fn keep_tag(doc: &Doc, node: NodeId, default: &str) -> Option<String> {
+    let tag = doc.node(node).tag.as_str();
+    (tag != default && !tag.is_empty()).then(|| format!("render={{<{tag} />}}"))
+}
+
 fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
     let doc = cx.doc;
     let mut jsx = cx.jsx();
@@ -816,6 +887,7 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
         // The trigger and its dropdown replace the trigger node; the rest of the item stays.
         jsx.overrides.insert(triggers[i].node, pair);
         let mut iattrs = vec![format!("value={}", ts_string(key))];
+        iattrs.extend(keep_tag(doc, item.node, "li"));
         iattrs.extend(part_attrs(&jsx, item.node, &[]));
         item_src.insert(
             item.node,
@@ -842,12 +914,8 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
                 Some(&jsx.children(c, 1)),
                 0,
             );
-            body.push_str(&element(
-                &w(Primitive::NavigationMenu, "Item"),
-                &[],
-                Some(&indent_block(&link, 4)),
-                3,
-            ));
+            // `NavigationMenu.Link` needs no `Item`: a wrapper would be an element the capture lacks.
+            body.push_str(&indent_block(&link, 3));
         } else {
             body.push_str(&jsx.render(c, 3));
         }
@@ -873,17 +941,24 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
             2,
         )
     };
-    let list_attrs = list
-        .filter(|l| *l != root)
-        .map(|l| part_attrs(&jsx, l, &[]))
-        .unwrap_or_default();
+    let mut list_attrs: Vec<String> = Vec::new();
+    match list.filter(|l| *l != root) {
+        Some(l) => {
+            list_attrs.extend(keep_tag(doc, l, "ul"));
+            list_attrs.extend(part_attrs(&jsx, l, &[]));
+        }
+        // One captured element holds the items: Root keeps it, List is the one element Base UI
+        // needs beside it (a `div`, not a list the capture never had).
+        None => list_attrs.push("render={<div />}".into()),
+    }
     let list_el = element(
         &w(Primitive::NavigationMenu, "List"),
         &list_attrs,
         Some(&indent_block(&body, 1)),
         3,
     );
-    let mut root_attrs = part_attrs(&jsx, root, &[]);
+    let mut root_attrs: Vec<String> = keep_tag(doc, root, "nav").into_iter().collect();
+    root_attrs.extend(part_attrs(&jsx, root, &[]));
     root_attrs.push("{...props}".into());
     let mut inner = list_el;
     inner.push_str(&popup);
@@ -1400,11 +1475,20 @@ fn group_components(cx: &mut Cx<'_>, taken: &BTreeSet<String>, out: &mut Emitted
     // Calls first (the bodies render nested groups through them).
     for p in &pending {
         let g = &a.components.groups[p.group];
+        let mapper = cx.jsx();
         for (ix, inst) in g.instances.iter().enumerate() {
             let mut props = Vec::new();
             for s in &g.slots {
                 let n = s.name.clone().unwrap();
-                let v = &s.values[ix];
+                // A prop that carries an asset URL goes through the same mapping as inline markup,
+                // so the file is copied and the reference points at it.
+                let v = &match (s.kind, s.attr.as_deref()) {
+                    (crate::semantic::components::SlotKind::Attribute, Some(attr)) => {
+                        let el = crate::semantic::components::element_at(doc, *inst, &s.path);
+                        mapper.rewrite_url(doc.node(el).tag.as_str(), attr, &s.values[ix])
+                    }
+                    _ => s.values[ix].clone(),
+                };
                 props.push(if s.ts_type == "number" {
                     format!("{n}={{{v}}}")
                 } else {

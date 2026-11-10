@@ -114,6 +114,7 @@ fn run_styles(args: &Args, page: &std::path::Path, tokens: Options) -> Result<()
             tokens,
             tailwind_dir: args.tailwind_dir.clone(),
             min_share: 2,
+            reserved_names: Default::default(),
         },
     )?;
     let r = &plan.report;

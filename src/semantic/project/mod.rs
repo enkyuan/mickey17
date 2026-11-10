@@ -7,7 +7,10 @@
 mod assets;
 mod head;
 mod inventory;
+mod refs;
 mod routes;
+pub mod structure;
+mod styles;
 mod template;
 
 use super::emit::{self, EmitOptions, OriginalClasses};
@@ -24,6 +27,18 @@ pub use assets::{AssetEntry, AssetSkip};
 pub use inventory::RouteInventory;
 pub use routes::{RoutePlan, RouteSkip};
 
+/// Where the project's styles come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StyleSource {
+    /// Each element carries the Tailwind utilities and shared recipes its computed author styles
+    /// translate into (one central tokens file).
+    #[default]
+    Translated,
+    /// Elements keep their captured class names and the captured stylesheets (tokenized) are
+    /// imported as they are.
+    CapturedSheets,
+}
+
 pub struct Options<'a> {
     /// Evidence viewport (`1440x900`); default: the widest captured per page.
     pub viewport: Option<&'a str>,
@@ -31,6 +46,7 @@ pub struct Options<'a> {
     pub routes: Option<usize>,
     /// Run the tokens pipeline and include its central styles and rewritten stylesheets.
     pub tokens: bool,
+    pub styles: StyleSource,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,13 +110,13 @@ struct Document {
     dropped: Vec<String>,
 }
 
-fn document_attrs(doc: &Doc) -> Document {
+fn document_attrs(doc: &Doc, style: &dyn emit::StyleBridge) -> Document {
     let find = |tag: &str| doc.nodes.iter().find(|n| n.tag == tag).map(|n| n.id);
     let mut dropped = Vec::new();
     let mut props = |tag: &str| {
         find(tag)
             .map(|id| {
-                let (p, d) = emit::element_props(doc, id);
+                let (p, d) = emit::element_props(doc, id, style);
                 dropped.extend(d.into_iter().map(|a| format!("{tag}@{a}")));
                 p
             })
@@ -132,7 +148,29 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
     let mut ui: BTreeSet<String> = BTreeSet::new();
     let mut custom: BTreeSet<String> = BTreeSet::new();
 
-    for plan in &plans {
+    // Styles first: the translation decides which class names the markup carries.
+    let mut gaps_styles: Vec<String> = Vec::new();
+    let translation = if opts.tokens && opts.styles == StyleSource::Translated {
+        match styles::translate_routes(capture_dir, &plans, None) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                gaps_styles.push(format!(
+                    "styles: the translation into utilities failed ({e:#}); the captured stylesheets are imported instead and elements keep their captured class names"
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    gaps.append(&mut gaps_styles);
+
+    for (route_ix, plan) in plans.iter().enumerate() {
+        let bridge = translation.as_ref().map(|t| t.plans[route_ix].bridge());
+        let style: &dyn emit::StyleBridge = match &bridge {
+            Some(b) => b,
+            None => &OriginalClasses,
+        };
         let capture = evidence::load(capture_dir, Path::new(&plan.evidence))
             .with_context(|| format!("loading {}", plan.evidence))?;
         let base = Url::parse(&capture.url)?;
@@ -142,7 +180,7 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
         let emitted = emit::emit(
             &analysis,
             &EmitOptions {
-                style: &OriginalClasses,
+                style,
                 namespace: &plan.ns,
                 page: true,
                 urls: Some(&rewrite),
@@ -199,7 +237,7 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
                 meta.push(("httpEquiv".to_owned(), h.clone(), m.content.clone()));
             }
         }
-        let document = document_attrs(&analysis.doc);
+        let document = document_attrs(&analysis.doc, style);
         let route_head = routes::RouteHead {
             title: &capture.metadata.title,
             meta,
@@ -265,6 +303,23 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
                 ));
             }
         }
+        if let Some(b) = &bridge {
+            let missed = b.missed.borrow();
+            if !missed.is_empty() {
+                gaps.push(format!(
+                    "{}: {} emitted element(s) are not covered by the style translation and keep their captured class names, if any (nothing styles them)",
+                    plan.path,
+                    missed.len()
+                ));
+            }
+        }
+        let misnested = invalid_paragraphs(&analysis.doc);
+        if misnested > 0 {
+            gaps.push(format!(
+                "{}: {misnested} <p> element(s) contain block-level elements in the capture (built by script, which allows it); the HTML parser closes a <p> at such a child, so the server HTML is restructured and React may report a hydration mismatch",
+                plan.path
+            ));
+        }
         let mut inv = inventory::route(&plan.path, &analysis, &emitted);
         if inv.inline_style_attributes_in_capture > 0 {
             gaps.push(format!(
@@ -312,7 +367,62 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
         status: "no stylesheet is included: the pages render unstyled".into(),
     };
     let mut app_css = template::APP_CSS.to_owned();
-    if opts.tokens {
+    if let Some(t) = &translation {
+        // One Tailwind compilation sees tokens, carried at-rules and every route's recipes.
+        for (name, text) in [
+            ("tokens.css", &t.tokens_css),
+            ("at-rules.css", &t.at_rules_css),
+            ("recipes.css", &t.recipes_css),
+        ] {
+            assets.scan_css(text, &origin, &format!("css:{name}"));
+            put(&mut files, &format!("src/styles/{name}"), text.clone());
+            app_css.push_str(&format!("@import \"./{name}\";\n"));
+        }
+        for (plan, tp) in plans.iter().zip(&t.plans) {
+            // `url(..)` inside an arbitrary-value class names a file the project must serve.
+            let joined: String = tp.classes.values().cloned().collect::<Vec<_>>().join(" ");
+            let base = Url::parse(&plan.url)?;
+            for u in assets::css_urls(&joined) {
+                assets.resolve(&u, &base, &format!("class:{}", plan.path));
+            }
+            for (path, text) in styles::evidence_files(&plan.ns, tp) {
+                put(&mut files, &path, text);
+            }
+        }
+        styles.source = "mochi tokens: computed author styles translated into Tailwind utilities and shared recipes";
+        styles.tokens = t.plans.first().map_or(0, |p| p.tokens.tokens.len());
+        styles.sheets = vec![
+            "src/styles/tokens.css".into(),
+            "src/styles/at-rules.css".into(),
+            "src/styles/recipes.css".into(),
+        ];
+        let statuses: Vec<String> = t
+            .statuses
+            .iter()
+            .map(|(route, status)| format!("{route}: {status}"))
+            .collect();
+        styles.status = format!(
+            "static equality checks only, not browser-verified ({})",
+            statuses.join("; ")
+        );
+        gaps.extend(t.gaps.iter().cloned());
+        for (plan, tp) in plans.iter().zip(&t.plans) {
+            let r = &tp.report;
+            gaps.push(format!(
+                "styles: {}: {} element(s) translated into {} distinct classes ({} arbitrary properties, {} shared recipes, {} plain-CSS recipes); static check `{}` over {} comparisons; details in .mochi/provenance/styles/{}.styles.report.md",
+                plan.path,
+                r.elements_translated,
+                r.utilities.distinct_classes,
+                r.utilities.arbitrary_properties,
+                r.recipes.shared,
+                r.recipes.fallback_hooks,
+                r.status,
+                r.check.compared,
+                plan.ns
+            ));
+        }
+        gaps.push("styles: styles of interactive states are baked as the capture showed them (the selected tab's look, an open menu); no state variant is derived from a capture of one state".into());
+    } else if opts.tokens {
         match super::tokens::pipeline::run(capture_dir, &Default::default()) {
             Ok(out) => {
                 let mut sheets: Vec<(usize, String)> = out
@@ -370,10 +480,26 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
     }
 
     // Assets and fonts, with provenance.
-    let (asset_files, entries, skipped_assets) = assets.finish();
+    let (asset_files, entries, mut skipped_assets) = assets.finish();
     let bytes: u64 = entries.iter().map(|e| e.bytes).sum();
     for (path, data) in asset_files {
         files.insert(path, data);
+    }
+    // What the emitted files actually point at, independent of what the resolver was asked.
+    let dangling = refs::dangling(&files);
+    for d in &dangling {
+        skipped_assets.push(assets::AssetSkip {
+            url: d.url.clone(),
+            reason: "referenced by an emitted file but no file is present under public/".into(),
+            referenced_by: d.file.clone(),
+        });
+    }
+    if !dangling.is_empty() {
+        gaps.push(format!(
+            "assets: {} root-relative asset reference(s) in the emitted files have no file under public/ (they answer 404): {}",
+            dangling.len(),
+            dangling.iter().take(6).map(|d| d.url.as_str()).collect::<Vec<_>>().join(", ")
+        ));
     }
     put(
         &mut files,
@@ -473,6 +599,96 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
     );
     put(&mut files, "README.md", readme(&report));
     Ok(Project { files, report })
+}
+
+/// `<p>` elements that hold block-level content: valid in a DOM built by script, not in HTML.
+fn invalid_paragraphs(doc: &Doc) -> usize {
+    const BLOCK: &[&str] = &[
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "details",
+        "div",
+        "dl",
+        "fieldset",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "main",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "ul",
+    ];
+    doc.nodes
+        .iter()
+        .filter(|n| n.is_element() && n.tag == "p")
+        .filter(|n| {
+            doc.descendants(n.id).into_iter().any(|d| {
+                let c = doc.node(d);
+                c.is_element() && BLOCK.contains(&c.tag.as_str())
+            })
+        })
+        .count()
+}
+
+/// Compare every route of a capture with the HTML the assembled project server-rendered for it
+/// (`<ssr_dir>/<route ns>.html`, written by `scripts/semantic/ssr-check.mjs --save`).
+pub fn compare_structure(
+    capture_dir: &Path,
+    ssr_dir: &Path,
+    viewport: Option<&str>,
+    routes: Option<usize>,
+) -> Result<Vec<structure::RouteStructure>> {
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(capture_dir.join("manifest.json"))
+            .context("reading capture manifest.json")?,
+    )?;
+    let (plans, _) = routes::plan(&manifest, viewport, routes);
+    let mut out = Vec::new();
+    for plan in &plans {
+        let Ok(html) = std::fs::read_to_string(ssr_dir.join(format!("{}.html", plan.ns))) else {
+            out.push(structure::RouteStructure {
+                route: plan.path.clone(),
+                note: Some(format!(
+                    "no rendered page {}.html in {}",
+                    plan.ns,
+                    ssr_dir.display()
+                )),
+                ..Default::default()
+            });
+            continue;
+        };
+        let capture = evidence::load(capture_dir, Path::new(&plan.evidence))
+            .with_context(|| format!("loading {}", plan.evidence))?;
+        let analysis = analyze_capture(capture_dir, &plan.evidence, &capture, true)?;
+        let dialog = analysis.recognition.matches.iter().any(|m| {
+            matches!(
+                m.primitive,
+                super::patterns::Primitive::Dialog | super::patterns::Primitive::AlertDialog
+            )
+        });
+        out.push(structure::compare(
+            &plan.path,
+            &analysis.doc,
+            &Doc::from_html(&html),
+            dialog,
+        ));
+    }
+    Ok(out)
 }
 
 /// Same-origin link targets (extension-less paths) that are not an assembled route.

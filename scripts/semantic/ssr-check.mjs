@@ -14,13 +14,21 @@ const visibleText = (html) =>
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+// --save <dir> writes each route's HTML to <dir>/<name>.html, named like the assembler's route
+// namespace (`/` is `home`, `/About/x_y` is `about-x_y`: segments joined by `-`, lower-cased), the
+// input of `mochi semantic <capture> --structure-diff <dir>`.
+const args = process.argv.slice(2)
+const saveAt = args.indexOf('--save')
+const saveDir = saveAt >= 0 ? args.splice(saveAt, 2)[1] : null
+if (saveDir) (await import('node:fs')).mkdirSync(saveDir, { recursive: true })
 let failed = 0
 const seen = new Map()
-for (const path of process.argv.slice(2)) {
+for (const path of args) {
   const res = await fetchFn(new Request('http://localhost' + path))
   const html = await res.text()
   const title = (html.match(/<title>([^<]*)<\/title>/) || [])[1]
   const text = visibleText(html)
+  if (saveDir) (await import('node:fs')).writeFileSync(`${saveDir}/${path === '/' ? 'home' : path.split('/').filter(Boolean).join('-').toLowerCase()}.html`, html)
   console.log(res.status, path, 'bytes=' + html.length, 'text=' + text.length, 'title=' + JSON.stringify(title), 'img=' + (html.match(/<img /g) || []).length)
   if (res.status !== 200 || html.length < 1000) failed++
   if (seen.has(text)) {

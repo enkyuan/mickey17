@@ -16,7 +16,7 @@ pub const ROUTER: &str = "import { createRouter } from '@tanstack/react-router'\
 
 pub const DOCUMENT_TS: &str = "/** `<html>` and `<body>` attributes of a captured route, as JSX property names. */\nexport type RouteDocument = {\n  html: Record<string, string>\n  body: Record<string, string>\n}\n";
 
-pub const APP_CSS: &str = "/* Tailwind v4 theme layer and utilities. Nothing in the assembled markup uses a Tailwind\n * utility yet; the project report says where the page styles come from. */\n@layer theme, base, components, utilities;\n@import \"tailwindcss/theme.css\" layer(theme);\n@import \"tailwindcss/utilities.css\" layer(utilities);\n";
+pub const APP_CSS: &str = "/* Tailwind v4 theme and utilities, no preflight: the captured site's own reset is part of the\n * styles that were translated. The imports below are added by the assembler. */\n@layer theme, base, components, utilities;\n@import \"tailwindcss/theme.css\" layer(theme);\n@import \"tailwindcss/utilities.css\" layer(utilities);\n";
 
 /// The root route: one document for every captured route. `imports` are the style imports.
 pub fn root_route(imports: &[String]) -> String {

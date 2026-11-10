@@ -4,19 +4,20 @@
 use super::styles::run::StylePlan;
 use crate::semantic::emit::StyleBridge;
 use crate::semantic::ir::{Doc, NodeId};
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 pub struct TailwindBridge<'a> {
     plan: &'a StylePlan,
     /// Elements asked for that the translation did not cover (they keep their original classes).
-    pub missed: Cell<usize>,
+    pub missed: RefCell<BTreeSet<NodeId>>,
 }
 
 impl StylePlan {
     pub fn bridge(&self) -> TailwindBridge<'_> {
         TailwindBridge {
             plan: self,
-            missed: Cell::new(0),
+            missed: RefCell::new(BTreeSet::new()),
         }
     }
 }
@@ -26,7 +27,7 @@ impl StyleBridge for TailwindBridge<'_> {
         match self.plan.classes.get(&node) {
             Some(classes) => classes.clone(),
             None => {
-                self.missed.set(self.missed.get() + 1);
+                self.missed.borrow_mut().insert(node);
                 original.join(" ")
             }
         }

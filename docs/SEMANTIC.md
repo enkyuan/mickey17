@@ -69,7 +69,7 @@ against the Base UI typings, not that it behaves like the original.
 ## Assembling a whole project
 
 ```sh
-mochi semantic <capture> --out /new/dir --assemble [--viewport 1440x900] [--routes N] [--no-tokens]
+mochi semantic <capture> --out /new/dir --assemble [--viewport 1440x900] [--routes N] [--no-tokens | --captured-css]
 cd /new/dir/project && bun install --frozen-lockfile && bun run check && bun run build
 bun run dev                                  # http://127.0.0.1:3000 (PORT=... overrides)
 ```
@@ -88,7 +88,8 @@ one stack and `--frozen-lockfile` stays valid. Nothing under `src/export*` is to
 | Page | `src/pages/<route>.tsx`: the captured `<body>` as TSX with Base UI compositions and repeated-structure components in place; compositions that need page state (controlled tabs, the dialog's `pathname`, hover-nav `dropdowns`) get their hooks and props there |
 | Components | `src/components/<route>/…`, data in `src/data/<route>/…` (namespaced per route so identical names never collide), wrappers in `src/components/ui/` |
 | Assets, fonts | files referenced by `src`/`srcset`/`poster` and by `url()` in the stylesheets (found with the CSS tokenizer) are copied byte for byte from the capture's `site/` to `public/<same path>`, so root-relative references need no rewriting; `.mochi/provenance/assets.json` lists source, size, SHA-256 and referrers, and what was not copied |
-| Styles | provisional: `mochi tokens` output (`src/styles/tokens.css` plus the rewritten captured stylesheets), imported by the root route. Not Tailwind utilities; replaced when the tokens bridge (`emit::StyleBridge`) lands |
+| Styles | default: the `tokens` workstream's translation of each route's computed author styles (`translate`, per captured page) into Tailwind utilities and shared recipes, applied through `emit::StyleBridge` (`StylePlan::bridge()`). The bridge is asked for **every** emitted element, class-less ones and `<html>`/`<body>` (via `element_props`) included; `js-*` hook classes stay beside the translated classes. One central `src/styles/tokens.css`, the carried `@keyframes`/`@font-face`/`@property` rules (`at-rules.css`, one copy of each) and every route's recipes (`recipes.css`) are imported by `src/styles/app.css` (Tailwind theme and utilities, no preflight), so one Tailwind compilation resolves the `@apply`s. Recipe names are unique across routes (`StyleOptions::reserved_names`); per-route reports and class maps are under `.mochi/provenance/styles/`. `--captured-css` keeps the captured class names and imports the tokenized captured stylesheets instead (also the fallback, with a gap, when the translation fails). Static equality checks only; `url()` in an arbitrary-value class is copied as an asset |
+| Structure | the Base UI parts keep the captured element (`render={<ul />}`, `<li />`, `<section />` …) where it differs from the part's default tag; tabs that hold more than text are written out with their captured children; a bare link in a navigation list is a `NavigationMenu.Link` without an `Item` wrapper |
 
 `scripts/semantic/verify-project.sh <project> / /pay ...` runs the three commands and then
 server-renders each route.
@@ -114,9 +115,8 @@ browser were **not** checked here.
 "In components" means rendered by a Base UI composition or a repeated-structure component,
 not that it is converted: the rest is a structural copy with the captured class names. Links
 are counted separately because Base UI has no link primitive; they are between 32 % (Garden
-home, 10 of 31) and 100 % (Garden article, 15 of 15) of the controls on these pages. No route was skipped. Assets not copied: Garden 18 (17 served from
-`cdn.sanity.io`, 1 missing from the mirror), Microsoft 3 (`uhf.microsoft.com`); they stay
-hotlinked.
+home, 10 of 31) and 100 % (Garden article, 15 of 15) of the controls on these pages. No route was skipped. Assets not copied: Garden 17 (served from
+`cdn.sanity.io`), Microsoft 3 (`uhf.microsoft.com`), Natural 0; they stay hotlinked.
 
 ### Handing the project to the parity pipeline
 
@@ -131,8 +131,34 @@ bun benchmarks/src/parity/cli.ts run --inventory inv.json --reference http://127
   --candidate http://127.0.0.1:3101 --out .mochi/parity-runs/<new> --profile core --project /new/dir/project
 ```
 
-Expect the first comparison to fail broadly: styles are provisional, behavior and motion are
-absent, and header/footer markup that is shared by the original is duplicated per route.
+Expect the first comparison to differ broadly: styles are statically checked only, behavior and
+motion are absent, and header/footer markup that is shared by the original is duplicated per route.
+
+### Offline structure comparison
+
+```sh
+(cd project && bun run build && bun ../../scripts/semantic/ssr-check.mjs --save ../ssr / /pay)
+mochi semantic <capture> --out /new/report --structure-diff /new/ssr    # structure.json, structure.md
+```
+
+Aligns the captured `<body>` with the server-rendered one (children by tag and own text,
+recursively) and sorts every unmatched element: not emitted by design (script, style, link,
+framework runtime elements), a dialog popup (Base UI mounts it in a portal on the client),
+hidden in the capture, moved (same tag and text under another parent: a wrapper Base UI needs),
+added by a Base UI part, or no counterpart. It reads no geometry, so it separates "the
+element is not there" from "the parity matcher could not pair it"; it does not replace the
+browser run. Server HTML only: portal content is absent from it by construction.
+
+Snapshot at this commit (translated projects, server HTML against the evidence DOM at the widest
+viewport; recompute with the commands above, no test pins these numbers): Garden is
+element-for-element equal except the framework's announcer (2 captured elements) and the 6
+scripts the server adds. Natural `/pay`: 310 captured, 182 rendered, 163 matched; 134 of the
+unmatched are the mobile-nav dialog (a client portal, absent from server HTML by construction),
+7 + 7 are elements under a Base UI wrapper. Microsoft AI: 1331 of 1379 matched on `/`, 894 of 897
+on `/models`, 959 of 984 on the model page; the unmatched are mostly `<p>` elements that hold
+`<div>`s (valid in the script-built DOM, restructured by the HTML parser; counted as a gap per
+route) and hidden or svg elements. Pairing in the browser harness depends on geometry, which this
+comparison does not read.
 
 ## Known gaps (kept explicit in the report)
 
@@ -146,8 +172,16 @@ absent, and header/footer markup that is shared by the original is duplicated pe
   linked element, or inside repeated-structure components, are listed as gaps.
 - Accordion without a heading emits no `Accordion.Header`; the runtime behavior
   of that arrangement is not exercised.
-- Original class names are kept (state modifiers dropped and listed) until the
-  styles workstream plugs a `StyleBridge` backed by `semantic::tokens`.
+- Styles are baked per captured element: the selected tab or the open menu keeps the look the
+  capture showed, no state variant is derived from a single captured state (a tabs gap says
+  when the selected tab's styles differ). The translation takes about 2.5 minutes per page on
+  a release build, and `recipes.css` is large (Natural `/` alone is ~4 MB: plain-CSS recipes
+  repeat the full declaration set per width interval instead of only what changes); both
+  belong to the tokens workstream.
+- Base UI needs a `Root` element around a `List` (Tabs, NavigationMenu): where the capture
+  has one element for both, the render has one extra wrapper `div`.
+- A root-relative asset reference in an emitted file with no file under `public/` is counted as
+  not copied and listed (`refs::dangling`, independent of what the resolver was asked).
 - Utility-class detection for naming is a prefix/digit heuristic.
 - `popup-links` navigation, Popover, Menu, Tooltip, Select, Combobox, Checkbox
   and Field are recognized but have no composition emitter yet.
