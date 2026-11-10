@@ -12,6 +12,7 @@ pub mod ir;
 pub mod js;
 pub mod patterns;
 pub mod report;
+pub mod tokens;
 
 use crate::evidence::{self, Capture};
 use anyhow::{Context, Result, ensure};
