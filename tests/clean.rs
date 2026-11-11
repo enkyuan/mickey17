@@ -1173,7 +1173,13 @@ fn cargo_target_with_a_held_build_lock_is_refused() {
 fn extra_workspace_evidence_names_are_protected() {
     let ws = workspace();
     let r = ws.path();
-    for name in ["handoff", "references", "qualification", "verification-gpu"] {
+    for name in [
+        "handoff",
+        "references",
+        "qualification",
+        "verification-gpu",
+        "evidence",
+    ] {
         built(&r.join(name).join("proj"));
     }
     built(&r.join("site"));
@@ -1184,7 +1190,13 @@ fn extra_workspace_evidence_names_are_protected() {
             .iter()
             .all(|p| p.starts_with(r.canonicalize().unwrap().join("site")))
     );
-    for name in ["handoff", "references", "qualification", "verification-gpu"] {
+    for name in [
+        "handoff",
+        "references",
+        "qualification",
+        "verification-gpu",
+        "evidence",
+    ] {
         assert!(r.join(name).join("proj/.output").exists(), "{name}");
         assert!(
             clean::plan(&r.join(name), &Options::default()).is_err(),
@@ -1203,4 +1215,625 @@ fn workspace_containing_repositories_warns() {
     let mut out = Vec::new();
     clean::print_table(&plan, &mut out).unwrap();
     assert!(String::from_utf8(out).unwrap().contains("WARNING"));
+}
+
+// ---- the `.mochi` layout of docs/WORKSPACE.md -----------------------------------------------
+
+/// Every evidence directory of the layout; each holds a built project so that a missed
+/// name would show up as a `remove` row.
+const LAYOUT_EVIDENCE: &[&str] = &[
+    "evidence/trials/20261108-normalized/natural",
+    "evidence/captures",
+    "evidence/source-packs",
+    "evidence/previous-projects",
+    "evidence/semantic-conversion",
+    "evidence/references",
+    "evidence/qualification",
+    "evidence/handoff",
+    "runs/verification",
+    "runs/verification-gpu-disabled",
+];
+
+/// A populated workspace in the new layout: evidence, a hand-edited project, generated
+/// exports and a cargo cache.
+fn layout(r: &Path) {
+    for dir in LAYOUT_EVIDENCE {
+        built(&r.join(dir).join("proj"));
+    }
+    let cap = r.join("evidence/trials/20261108-normalized/natural/capture");
+    write(cap.join("manifest.json"), "{}");
+    write(cap.join("site/index.html"), "captured");
+    write(cap.join("reconstruction/model.json"), "{}");
+    built(&r.join("evidence/trials/20261108-microsoft-ai/project-final"));
+    built(&r.join("projects/natural"));
+    built(&r.join("generated/exports/natural-compat"));
+    write(r.join("cache/target/CACHEDIR.TAG"), CARGO_TAG);
+    write(r.join("cache/target/debug/deps/libx.rlib"), "obj");
+}
+/// Every path below `dir` (symlinks not followed) as relative text.
+fn tree_of(r: &Path, dir: &str) -> BTreeSet<String> {
+    snapshot(&r.join(dir))
+}
+/// Set the modification time of every entry below `dir` (files first, then directories).
+fn set_age_all(dir: &Path, seconds_ago: u64) {
+    for e in WalkDir::new(dir).contents_first(true) {
+        set_age(e.unwrap().path(), seconds_ago);
+    }
+}
+
+// Value: protects=nothing below `evidence/`, `runs/verification*` or a capture layout is planned or removed, while the generated exports, the hand-edited project's build output and the cargo cache under `cache/target` still are; fails_when=a project inside evidence/trials, evidence/captures, evidence/source-packs, evidence/previous-projects, evidence/semantic-conversion, evidence/references, evidence/qualification, evidence/handoff or runs/verification* loses its build output or appears in the table; why_new=the workspace layout move; seam=library plan and apply; no_claim=layouts other than the documented one
+#[test]
+fn layout_evidence_is_never_planned_and_generated_output_is() {
+    let ws = workspace();
+    let r = ws.path();
+    layout(r);
+    let evidence_before = tree_of(r, "evidence");
+    let runs_before = tree_of(r, "runs");
+    let plan = clean::plan(
+        r,
+        &Options {
+            deps: true,
+            cargo: true,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let root = r.canonicalize().unwrap();
+    for c in &plan.candidates {
+        assert!(
+            !c.path.starts_with(root.join("evidence")) && !c.path.starts_with(root.join("runs")),
+            "evidence or run output planned: {c:?}"
+        );
+    }
+    assert_eq!(find(&plan, "cache/target").class, Class::Cargo);
+    assert_eq!(find(&plan, "cache/target").status, Status::Remove);
+    find(&plan, "generated/exports/natural-compat/.output");
+    find(&plan, "projects/natural/.output");
+    let (_, report) = apply(
+        r,
+        Options {
+            deps: true,
+            cargo: true,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert!(!report.removed.is_empty());
+    assert_eq!(evidence_before, tree_of(r, "evidence"));
+    assert_eq!(runs_before, tree_of(r, "runs"));
+    assert!(!r.join("cache/target").exists());
+    assert!(!r.join("generated/exports/natural-compat/.output").exists());
+    assert!(
+        r.join("generated/exports/natural-compat/src/app.tsx")
+            .exists()
+    );
+    assert!(r.join("projects/natural/src/app.tsx").exists());
+}
+
+// Value: protects=every evidence directory name of the new layout is skipped on its own, wherever the project sits below it; fails_when=dropping any one of the names from the protected set makes that directory's build output a `remove` row; why_new=the workspace layout move; seam=library plan; no_claim=names outside the layout
+#[test]
+fn every_layout_evidence_name_is_skipped_individually() {
+    for dir in LAYOUT_EVIDENCE {
+        let ws = workspace();
+        built(&ws.path().join("site"));
+        built(&ws.path().join(dir).join("proj"));
+        let plan = clean::plan(ws.path(), &Options::default()).unwrap();
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|c| !c.path.to_string_lossy().contains(dir)),
+            "{dir}: {:?}",
+            plan.candidates
+        );
+        find(&plan, "site/.output");
+        let (_, report) = apply(ws.path(), Options::default()).unwrap();
+        let site = ws.path().canonicalize().unwrap().join("site");
+        assert!(
+            !report.removed.is_empty() && report.removed.iter().all(|p| p.starts_with(&site)),
+            "{dir}: {:?}",
+            report.removed
+        );
+        assert!(ws.path().join(dir).join("proj/.output").exists(), "{dir}");
+    }
+}
+
+// Value: protects=a workspace that is, or lies inside, an evidence directory of the new layout is refused, so `mochi clean .mochi/evidence/trials/x/project` cannot reach into evidence; fails_when=any of these directories is accepted as the workspace; why_new=the workspace layout move; seam=library plan; no_claim=an unrelated directory that merely has an `evidence` ancestor in its path is refused too, by design
+#[test]
+fn layout_evidence_directories_are_refused_as_workspaces() {
+    let ws = workspace();
+    let r = ws.path();
+    layout(r);
+    let mut refused = vec![
+        "evidence".to_string(),
+        "evidence/trials".to_string(),
+        "evidence/trials/20261108-normalized/natural".to_string(),
+        "evidence/trials/20261108-normalized/natural/capture".to_string(),
+        "evidence/trials/20261108-microsoft-ai/project-final".to_string(),
+        "runs/verification".to_string(),
+        "runs/verification-gpu-disabled".to_string(),
+    ];
+    refused.extend(LAYOUT_EVIDENCE.iter().map(|d| format!("{d}/proj")));
+    let before = snapshot(r);
+    for dir in &refused {
+        assert!(
+            clean::plan(&r.join(dir), &Options::default()).is_err(),
+            "{dir} was accepted as a workspace"
+        );
+        assert!(apply(&r.join(dir), Options::default()).is_err(), "{dir}");
+    }
+    assert_eq!(before, snapshot(r));
+    // The workspace itself, `.mochi` in the layout, is fine.
+    assert!(clean::plan(r, &Options::default()).is_ok());
+}
+
+// Value: protects=old run output is listed only when --runs is given, and a plain dry run or apply never touches it; fails_when=a default `mochi clean --apply` removes anything under generated/parity-runs or runs/logs; why_new=retention added for the layout; seam=library and real CLI; no_claim=nothing
+#[test]
+fn runs_are_not_selected_by_default() {
+    let ws = workspace();
+    let r = ws.path();
+    for n in ["a", "b", "c"] {
+        write(
+            r.join("generated/parity-runs").join(n).join("report.json"),
+            "{}",
+        );
+    }
+    write(r.join("runs/logs/x.log"), "log");
+    built(&r.join("site"));
+    let before = tree_of(r, "generated");
+    let plan = clean::plan(r, &Options::default()).unwrap();
+    assert!(plan.candidates.iter().all(|c| c.class != Class::Runs));
+    assert!(
+        plan.notes.iter().any(|n| n.contains("--runs")),
+        "{:?}",
+        plan.notes
+    );
+    apply(r, Options::default()).unwrap();
+    assert_eq!(before, tree_of(r, "generated"));
+    assert!(r.join("runs/logs/x.log").exists());
+}
+
+// Value: protects=--runs keeps the newest N run groups (a directory and the files that share its name), removes the older ones through descriptors, is idempotent, and leaves everything else in generated/ and runs/ alone; fails_when=a newer run is removed, the group's .log is orphaned, a sibling directory such as generated/exports, runs/other or runs/verification is touched, or a second --apply fails; why_new=retention added for the layout; seam=library apply; no_claim=run mtimes on filesystems that do not record them
+#[test]
+fn keep_runs_keeps_the_newest_groups_and_removes_older_ones() {
+    let ws = workspace();
+    let r = ws.path();
+    let runs = r.join("generated/parity-runs");
+    for (name, age) in [("a", 400), ("b", 300), ("c", 200), ("d", 100)] {
+        write(runs.join(name).join("states/s.json"), "{}");
+        set_age_all(&runs.join(name), age);
+    }
+    write(runs.join("a.log"), "old log");
+    set_age(&runs.join("a.log"), 400);
+    write(runs.join("d.log"), "new log");
+    set_age(&runs.join("d.log"), 100);
+    write(r.join("generated/exports/site/keep.txt"), "x");
+    write(r.join("generated/notes.log"), "not a run dir child");
+    write(r.join("runs/other/x"), "x");
+    write(r.join("runs/verification/results.json"), "{}");
+    write(runs.join(".DS_Store"), "hidden");
+    let options = || Options {
+        runs: true,
+        keep_runs: Some(2),
+        ..Options::default()
+    };
+    let plan = clean::plan(r, &options()).unwrap();
+    assert_eq!(find(&plan, "parity-runs/a").status, Status::Remove);
+    assert_eq!(find(&plan, "parity-runs/a.log").status, Status::Remove);
+    assert_eq!(find(&plan, "parity-runs/b").status, Status::Remove);
+    assert_eq!(find(&plan, "parity-runs/c").status, Status::KeptRecent);
+    assert_eq!(find(&plan, "parity-runs/d").status, Status::KeptRecent);
+    assert_eq!(find(&plan, "parity-runs/d.log").status, Status::KeptRecent);
+    assert_eq!(find(&plan, "parity-runs/a").class, Class::Runs);
+    let outside = tree_of(r, "generated/exports");
+    let (text, report) = apply(r, options()).unwrap();
+    assert_eq!(report.removed.len(), 3, "{text}");
+    for gone in ["a", "a.log", "b"] {
+        assert!(!runs.join(gone).exists(), "{gone}");
+    }
+    for kept in ["c", "d", "d.log", ".DS_Store"] {
+        assert!(runs.join(kept).exists(), "{kept}");
+    }
+    assert_eq!(outside, tree_of(r, "generated/exports"));
+    assert!(r.join("generated/notes.log").exists());
+    assert!(r.join("runs/other/x").exists());
+    assert!(r.join("runs/verification/results.json").exists());
+    // A second --apply finds nothing and succeeds.
+    let (_, again) = apply(r, options()).unwrap();
+    assert!(again.removed.is_empty() && again.failed.is_empty());
+}
+
+// Value: protects=runs/logs files are pruned by age while evidence-named entries and hidden files in it are not; fails_when=`verification-*.log`, `handoff` or `.DS_Store` below runs/logs is removed; why_new=retention added for the layout; seam=library apply; no_claim=nothing
+#[test]
+fn runs_logs_prunes_files_but_not_evidence_named_entries() {
+    let ws = workspace();
+    let r = ws.path();
+    let logs = r.join("runs/logs");
+    write(logs.join("old.log"), "old");
+    write(logs.join("new.log"), "new");
+    write(logs.join("verification-old.log"), "evidence by name");
+    write(logs.join("handoff/note.md"), "evidence by name");
+    write(logs.join(".DS_Store"), "hidden");
+    for (n, age) in [
+        ("old.log", 500),
+        ("new.log", 10),
+        ("verification-old.log", 900),
+    ] {
+        set_age(&logs.join(n), age);
+    }
+    set_age_all(&logs.join("handoff"), 900);
+    let (_, report) = apply(
+        r,
+        Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.removed.len(), 1, "{report:?}");
+    assert!(!logs.join("old.log").exists());
+    for kept in [
+        "new.log",
+        "verification-old.log",
+        "handoff/note.md",
+        ".DS_Store",
+    ] {
+        assert!(logs.join(kept).exists(), "{kept}");
+    }
+}
+
+// Value: protects=a KEEP file pins a run group and does not use up one of the N places, and --keep protects a run directory; fails_when=a pinned or --keep'd run is removed, or a pin pushes a newer unpinned run out of the kept set; why_new=committed reports cite runs by name, so pruning needs a durable pin; seam=library apply; no_claim=nothing
+#[test]
+fn runs_can_be_pinned_by_a_keep_file_or_by_keep() {
+    let ws = workspace();
+    let r = ws.path();
+    let runs = r.join("generated/parity-runs");
+    for (name, age) in [
+        ("cited", 900),
+        ("pathkept", 800),
+        ("old", 700),
+        ("mid", 300),
+        ("new", 100),
+    ] {
+        write(runs.join(name).join("run.json"), "{}");
+        set_age_all(&runs.join(name), age);
+    }
+    write(runs.join("cited/KEEP"), "cited by docs/parity-reports");
+    set_age_all(&runs.join("cited"), 900);
+    let (_, report) = apply(
+        r,
+        Options {
+            runs: true,
+            keep_runs: Some(1),
+            keep: vec![runs.join("pathkept")],
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let removed: BTreeSet<String> = report
+        .removed
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        removed,
+        BTreeSet::from(["old".to_string(), "mid".to_string()])
+    );
+    for kept in ["cited", "pathkept", "new"] {
+        assert!(runs.join(kept).exists(), "{kept}");
+    }
+}
+
+// Value: protects=--runs can never reach evidence: a run directory with a capture layout or an evidence directory inside is REFUSED, evidence-named and capture-layout entries are not candidates, and symlinked entries or symlinked generated/, parity-runs, runs or logs are never followed; fails_when=any of those files disappears, or a link target outside the workspace loses data; why_new=retention must not add a path to evidence; seam=library apply; no_claim=Windows junctions
+#[test]
+fn runs_never_reach_evidence_or_follow_symlinks() {
+    use std::os::unix::fs::symlink;
+    let base = workspace();
+    let r = base.path().join("ws");
+    let out = base.path().join("outside");
+    write(out.join("precious.txt"), "outside");
+    let runs = r.join("generated/parity-runs");
+    // Run directories that hold evidence inside.
+    write(runs.join("has-capture/inner/manifest.json"), "{}");
+    write(runs.join("has-capture/inner/site/index.html"), "captured");
+    write(runs.join("has-pack/source-packs/spec.json"), "reviewed");
+    write(runs.join("has-pack/KEEPALIVE"), "not a pin");
+    // Entries that are evidence by name or by layout are not candidates at all.
+    write(runs.join("capture-1/manifest.json"), "{}");
+    write(runs.join("capture-1/site/index.html"), "captured");
+    write(runs.join("layout/manifest.json"), "{}");
+    write(runs.join("layout/site/index.html"), "captured");
+    write(runs.join("handoff/note.md"), "note");
+    // A symlinked entry.
+    symlink(&out, runs.join("link")).unwrap();
+    for n in ["has-capture", "has-pack", "capture-1", "layout", "handoff"] {
+        set_age_all(&runs.join(n), 5000);
+    }
+    let plan = clean::plan(
+        &r,
+        &Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    // Evidence by name or layout, evidence inside, and symlinks are never candidates.
+    for n in [
+        "capture-1",
+        "layout",
+        "handoff",
+        "link",
+        "has-capture",
+        "has-pack",
+    ] {
+        assert!(
+            plan.candidates.iter().all(|c| !c.path.ends_with(n)),
+            "{n} planned: {:?}",
+            plan.candidates
+        );
+    }
+    assert!(plan.refused() == 0, "{:?}", plan.candidates);
+    let report = apply_lenient(
+        &r,
+        Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    );
+    assert!(report.removed.is_empty(), "{report:?}");
+    for kept in [
+        "has-capture/inner/site/index.html",
+        "has-pack/source-packs/spec.json",
+        "capture-1/site/index.html",
+        "layout/site/index.html",
+        "handoff/note.md",
+    ] {
+        assert!(runs.join(kept).exists(), "{kept}");
+    }
+    assert!(out.join("precious.txt").exists());
+    // Symlinked run directories at every level are skipped with a note.
+    for (link_at, target_name) in [
+        ("generated/parity-runs", "a"),
+        ("runs/logs", "b"),
+        ("runs", "c"),
+        ("generated", "d"),
+    ] {
+        let ws2 = base.path().join(format!("ws-{target_name}"));
+        let target = base.path().join(format!("target-{target_name}"));
+        write(target.join("parity-runs/old/f"), "x");
+        write(target.join("logs/old.log"), "x");
+        write(target.join("old/f"), "x");
+        fs::create_dir_all(ws2.join(Path::new(link_at).parent().unwrap())).unwrap();
+        symlink(&target, ws2.join(link_at)).unwrap();
+        let before = snapshot(&target);
+        let report = apply_lenient(
+            &ws2,
+            Options {
+                runs: true,
+                keep_runs: Some(1),
+                ..Options::default()
+            },
+        );
+        assert!(report.removed.is_empty(), "{link_at}: {report:?}");
+        assert_eq!(before, snapshot(&target), "{link_at}");
+    }
+}
+
+// Value: protects=a run entry swapped for a symlink (or another directory) between planning and --apply is not followed or deleted; fails_when=the link target outside the workspace loses data; why_new=runs are removed through descriptors like every other class; seam=library plan then apply; no_claim=a process allowed to rename the planned directories themselves
+#[test]
+fn run_entry_replaced_after_planning_is_not_followed() {
+    use std::os::unix::fs::symlink;
+    let base = workspace();
+    let r = base.path().join("ws");
+    let out = base.path().join("outside");
+    write(out.join("precious.txt"), "outside");
+    let runs = r.join("generated/parity-runs");
+    write(runs.join("old/f"), "x");
+    write(runs.join("old.log"), "x");
+    write(runs.join("new/f"), "x");
+    set_age_all(&runs.join("old"), 900);
+    set_age(&runs.join("old.log"), 900);
+    let plan = clean::plan(
+        &r,
+        &Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(find(&plan, "parity-runs/old").status, Status::Remove);
+    fs::remove_dir_all(runs.join("old")).unwrap();
+    symlink(&out, runs.join("old")).unwrap();
+    fs::remove_file(runs.join("old.log")).unwrap();
+    write(runs.join("old.log/inner"), "now a directory");
+    let mut sink = Vec::new();
+    let report = clean::apply(&plan, &mut sink).unwrap();
+    assert_eq!(report.failed.len(), 2, "{report:?}");
+    assert!(out.join("precious.txt").exists());
+    assert!(runs.join("old.log/inner").exists());
+}
+
+// Value: protects=--keep-runs is validated and only valid with --runs; fails_when=`--keep-runs 0` is accepted (it would remove every unpinned run), or the flag is silently ignored without --runs; why_new=retention added for the layout; seam=real CLI; no_claim=nothing
+#[test]
+fn keep_runs_requires_runs_and_a_positive_count() {
+    let ws = workspace();
+    let r = ws.path();
+    write(r.join("generated/parity-runs/old/f"), "x");
+    write(r.join("generated/parity-runs/new/f"), "x");
+    set_age_all(&r.join("generated/parity-runs/old"), 900);
+    let home = workspace();
+    let run = |args: &[&str]| {
+        let mut all: Vec<&std::ffi::OsStr> = args.iter().map(|a| a.as_ref()).collect();
+        all.push(r.as_os_str());
+        mochi_clean(r, home.path(), &all)
+    };
+    assert!(!run(&["--keep-runs", "1"]).status.success());
+    assert!(!run(&["--runs", "--keep-runs", "0"]).status.success());
+    assert!(
+        clean::plan(
+            r,
+            &Options {
+                runs: true,
+                keep_runs: Some(0),
+                ..Options::default()
+            }
+        )
+        .is_err()
+    );
+    let dry = run(&["--runs", "--keep-runs", "1"]);
+    assert!(dry.status.success(), "{dry:?}");
+    let text = String::from_utf8_lossy(&dry.stdout);
+    assert!(
+        text.contains("parity-runs/old") && text.contains("remove"),
+        "{text}"
+    );
+    assert!(r.join("generated/parity-runs/old/f").exists());
+    let applied = run(&["--runs", "--keep-runs", "1", "--apply"]);
+    assert!(applied.status.success(), "{applied:?}");
+    assert!(!r.join("generated/parity-runs/old").exists());
+    assert!(r.join("generated/parity-runs/new/f").exists());
+}
+
+// Value: protects=a run that holds evidence inside is not a candidate and its whole group is kept (its .log is not deleted, it uses none of the N places), and `--runs --apply` still succeeds because nothing is REFUSED; fails_when=`x.log` is removed while `x/` (with an `evidence/` subdirectory) stays, a kept slot is lost to it, or the apply exits non-zero; why_new=the real calibration-natural-* runs hold an `evidence/` subdirectory; seam=library run; no_claim=nothing
+#[test]
+fn a_run_holding_evidence_keeps_its_whole_group() {
+    let ws = workspace();
+    let r = ws.path();
+    let runs = r.join("generated/parity-runs");
+    write(runs.join("cal-8/evidence/a.json.gz"), "reviewed");
+    write(runs.join("cal-8/report.json"), "{}");
+    write(runs.join("cal-8.log"), "log");
+    write(runs.join("old/f"), "x");
+    write(runs.join("new/f"), "x");
+    set_age_all(&runs.join("cal-8"), 900);
+    set_age(&runs.join("cal-8.log"), 900);
+    set_age_all(&runs.join("old"), 800);
+    let mut out = Vec::new();
+    let report = clean::run(
+        r,
+        &Options {
+            apply: true,
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+        &mut out,
+    )
+    .expect("nothing is REFUSED, so the apply succeeds");
+    assert_eq!(report.removed.len(), 1, "{report:?}");
+    assert!(!runs.join("old").exists());
+    for kept in ["cal-8/evidence/a.json.gz", "cal-8.log", "new/f"] {
+        assert!(runs.join(kept).exists(), "{kept}");
+    }
+}
+
+// Value: protects=a KEEP list file pins groups made of files alone and the runs derived from a pinned run (`-gate`, `-final`, `-rediff`); fails_when=a listed log, or the gate of a pinned run, is pruned, or the KEEP list itself is a candidate; why_new=committed reports cite logs, inventories and gates; seam=library apply; no_claim=nothing
+#[test]
+fn a_keep_list_pins_file_groups_and_derived_runs() {
+    let ws = workspace();
+    let r = ws.path();
+    let logs = r.join("runs/logs");
+    write(logs.join("final-rust-tests.log"), "cited");
+    write(logs.join("examples-results.json"), "cited");
+    write(logs.join("scratch.log"), "old");
+    write(logs.join("newest.log"), "new");
+    write(
+        logs.join("KEEP"),
+        "# cited by VALIDATION.md\nfinal-rust-tests.log\nexamples-results\n",
+    );
+    for n in [
+        "final-rust-tests.log",
+        "examples-results.json",
+        "scratch.log",
+    ] {
+        set_age(&logs.join(n), 900);
+    }
+    let runs = r.join("generated/parity-runs");
+    write(runs.join("cited/run.json"), "{}");
+    write(runs.join("cited-gate/check.json"), "{}");
+    write(runs.join("cited-rediff/s.json"), "{}");
+    write(runs.join("cited-sem/other.json"), "{}");
+    write(runs.join("fresh/run.json"), "{}");
+    write(runs.join("KEEP"), "cited\n");
+    for n in ["cited", "cited-gate", "cited-rediff", "cited-sem"] {
+        set_age_all(&runs.join(n), 900);
+    }
+    let (_, report) = apply(
+        r,
+        Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let removed: BTreeSet<String> = report
+        .removed
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        removed,
+        BTreeSet::from(["scratch.log".to_string(), "cited-sem".to_string()])
+    );
+    for kept in [
+        "runs/logs/final-rust-tests.log",
+        "runs/logs/examples-results.json",
+        "runs/logs/newest.log",
+        "runs/logs/KEEP",
+        "generated/parity-runs/cited",
+        "generated/parity-runs/cited-gate",
+        "generated/parity-runs/cited-rediff",
+        "generated/parity-runs/fresh",
+        "generated/parity-runs/KEEP",
+    ] {
+        assert!(r.join(kept).exists(), "{kept}");
+    }
+}
+
+// Value: protects=a capture-layout (or evidence-named) member keeps the rest of its group (`x.log`, `x.done`), and KEEP entries written as `x/` or `dir/x/` pin group `x`; fails_when=`x.log` is removed beside a protected `x/`, or a KEEP line with a slash pins nothing; why_new=second review of the retention; seam=library apply; no_claim=nothing
+#[test]
+fn protected_members_keep_their_group_and_keep_lines_are_normalised() {
+    let ws = workspace();
+    let r = ws.path();
+    let runs = r.join("generated/parity-runs");
+    write(runs.join("x/manifest.json"), "{}");
+    write(runs.join("x/site/index.html"), "captured");
+    write(runs.join("x.log"), "log");
+    write(runs.join("x.done"), "done");
+    write(runs.join("cited/run.json"), "{}");
+    write(runs.join("cited.log"), "log");
+    write(runs.join("other/run.json"), "{}");
+    write(runs.join("fresh/run.json"), "{}");
+    write(runs.join("KEEP"), "generated/parity-runs/cited/\n");
+    for n in ["x", "cited", "other"] {
+        set_age_all(&runs.join(n), 900);
+    }
+    for n in ["x.log", "x.done", "cited.log"] {
+        set_age(&runs.join(n), 900);
+    }
+    let (_, report) = apply(
+        r,
+        Options {
+            runs: true,
+            keep_runs: Some(1),
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.removed.len(), 1, "{report:?}");
+    assert!(!runs.join("other").exists());
+    for kept in [
+        "x/site/index.html",
+        "x.log",
+        "x.done",
+        "cited/run.json",
+        "cited.log",
+        "fresh/run.json",
+    ] {
+        assert!(runs.join(kept).exists(), "{kept}");
+    }
 }

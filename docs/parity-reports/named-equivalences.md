@@ -53,4 +53,4 @@ and stay major. Microsoft AI's other candidate-only additions are on role-swappe
 kinds. No state's status changed.
 
 Selector counts above were taken from the captured stylesheets and inline `<style>` blocks under each capture's `site/` directory
-(`.mochi/trials/20261108-normalized/{natural,infinitegarden}/capture`, `.mochi/trials/20261108-microsoft-ai/capture-modules`), not from the projects.
+(`.mochi/evidence/trials/20261108-normalized/{natural,infinitegarden}/capture`, `.mochi/evidence/trials/20261108-microsoft-ai/capture-modules`), not from the projects.

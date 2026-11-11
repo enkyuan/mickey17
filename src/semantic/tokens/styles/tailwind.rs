@@ -12,13 +12,13 @@ use std::process::{Command, Stdio};
 const SCRIPT: &str = include_str!("../../../../scripts/tokens/tailwind-compile.mjs");
 
 /// Find a Tailwind package: `MOCHI_TAILWIND_DIR`, or the first `node_modules/tailwindcss`
-/// of an export below `.mochi/mochi-exports` (relative to the working directory).
+/// of an export below `.mochi/generated/exports` (relative to the working directory).
 pub fn locate() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("MOCHI_TAILWIND_DIR") {
         let p = PathBuf::from(dir);
         return p.join("dist/lib.mjs").is_file().then_some(p);
     }
-    let exports = Path::new(".mochi/mochi-exports");
+    let exports = Path::new(".mochi/generated/exports");
     let mut entries: Vec<PathBuf> = std::fs::read_dir(exports)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))

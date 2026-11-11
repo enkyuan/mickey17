@@ -1,6 +1,6 @@
 // Sink server for the Browser pane path. The pane cannot write files, and a collection is
 // too large to read back through a tool result, so the page POSTs it here.
-//   bun scripts/parity/sink.ts --port 8765 --dir .mochi/parity-runs/pane-1
+//   bun scripts/parity/sink.ts --port 8765 --dir .mochi/generated/parity-runs/pane-1
 //   GET  /collect.js, /pane.js     the collector and the page-side helper (so the page can load them)
 //   POST /save/<name>.json         stores the body; an existing name is refused (409)
 //   GET  /list                     names saved so far
@@ -45,6 +45,6 @@ export function createSink({ dir, port = 8765 }: { dir: string; port?: number })
 
 if (import.meta.main) {
   const arg = (n: string, d: string) => { const i = process.argv.indexOf('--' + n); return i < 0 ? d : process.argv[i + 1]; };
-  const s = createSink({ dir: arg('dir', '.mochi/parity-runs/pane'), port: +arg('port', '8765') });
-  console.error(`parity sink on http://127.0.0.1:${s.port} -> ${resolve(arg('dir', '.mochi/parity-runs/pane'))}`);
+  const s = createSink({ dir: arg('dir', '.mochi/generated/parity-runs/pane'), port: +arg('port', '8765') });
+  console.error(`parity sink on http://127.0.0.1:${s.port} -> ${resolve(arg('dir', '.mochi/generated/parity-runs/pane'))}`);
 }

@@ -149,7 +149,7 @@ Steps that fail only on the candidate are differences. A state that crashed is r
 ### Inventory, derived from the capture
 
 ```sh
-bun benchmarks/src/parity/cli.ts inventory <capture> --out .mochi/parity-runs/site-inventory.json
+bun benchmarks/src/parity/cli.ts inventory <capture> --out .mochi/generated/parity-runs/site-inventory.json
 ```
 
 Routes and site origins come from `manifest.json`; viewports, controls (tabs, disclosures,
@@ -175,9 +175,9 @@ mochi serve <capture> --port 8100 &                       # original
 (cd <export> && PORT=3101 bun .output/server/index.mjs) & # generated app (or bun run dev with its own port)
 bun benchmarks/src/parity/cli.ts run --inventory inv.json \
   --reference http://127.0.0.1:8100 --candidate http://127.0.0.1:3101 \
-  --out .mochi/parity-runs/new-run --profile standard --controls --workers 2 \
+  --out .mochi/generated/parity-runs/new-run --profile standard --controls --workers 2 \
   --project <export>      # optional; recorded for the gate
-bun benchmarks/src/parity/cli.ts gate .mochi/parity-runs/new-run --project <export> --out .mochi/parity-runs/new-run-gate
+bun benchmarks/src/parity/cli.ts gate .mochi/generated/parity-runs/new-run --project <export> --out .mochi/generated/parity-runs/new-run-gate
 ```
 
 Needs `playwright-core` (resolved from `MOCHI_PLAYWRIGHT`, `benchmarks/node_modules`, or
@@ -218,7 +218,7 @@ Constraints, all observed:
    **sink server** receives POSTs instead:
 
 ```sh
-bun scripts/parity/sink.ts --port 8765 --dir .mochi/parity-runs/pane-1        # or a launch.json entry
+bun scripts/parity/sink.ts --port 8765 --dir .mochi/generated/parity-runs/pane-1        # or a launch.json entry
 ```
 ```
 preview_start {url: "http://127.0.0.1:8100/"}              # original
@@ -229,20 +229,20 @@ navigate {url: "http://127.0.0.1:3101/"}                   # candidate; globals 
 javascript_tool: (same two calls) …capture('home.desktop1440.initial.cand')
 ```
 ```sh
-bun benchmarks/src/parity/cli.ts pair --ref .mochi/parity-runs/pane-1/home.desktop1440.initial.ref.json \
-  --cand .mochi/parity-runs/pane-1/home.desktop1440.initial.cand.json --origins https://www.natural.com --out pair.json
+bun benchmarks/src/parity/cli.ts pair --ref .mochi/generated/parity-runs/pane-1/home.desktop1440.initial.ref.json \
+  --cand .mochi/generated/parity-runs/pane-1/home.desktop1440.initial.cand.json --origins https://www.natural.com --out pair.json
 ```
 
 The sink serves `collect.js` / `pane.js`, grants CORS to loopback origins only (the pages under test) and answers 403 to any POST or GET that carries a non-loopback `Origin`, refuses non-JSON bodies,
 unsafe names and overwrites, and listens on loopback only. Interactions in the pane are
 done with `computer` clicks / `find` before `capture`. The pane sends no error list, so
 console errors are not compared on that path. A `launch.json` entry for the sink:
-`{"name":"parity-sink","runtimeExecutable":"bun","runtimeArgs":["scripts/parity/sink.ts","--port","8765","--dir",".mochi/parity-runs/pane"],"port":8765}`.
+`{"name":"parity-sink","runtimeExecutable":"bun","runtimeArgs":["scripts/parity/sink.ts","--port","8765","--dir",".mochi/generated/parity-runs/pane"],"port":8765}`.
 
 ### Calibration
 
 ```sh
-bun benchmarks/src/parity/cli.ts calibrate --inventory inv.json --reference http://127.0.0.1:8100 --out .mochi/parity-runs/calibration-1
+bun benchmarks/src/parity/cli.ts calibrate --inventory inv.json --reference http://127.0.0.1:8100 --out .mochi/generated/parity-runs/calibration-1
 ```
 
 The original is loaded twice (an identical control, which must produce zero differences; it
