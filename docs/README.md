@@ -74,6 +74,7 @@ a follow-up after those pull requests merge: `AGENT_SURFACE.md` to `agent-surfac
 | [reports/2026-11-10-parity-default-recovery-and-semantic-assemble.md](reports/2026-11-10-parity-default-recovery-and-semantic-assemble.md) | Parity of default-recovery compat exports and a semantic assemble output |
 | [reports/2026-11-10-parity-semantic-final-outputs.md](reports/2026-11-10-parity-semantic-final-outputs.md) | Parity of the semantic assemble outputs of the three example sites |
 | [reports/2026-11-11-workspace-audit.md](reports/2026-11-11-workspace-audit.md) | Audit of the `.mochi/` workspace and the layout/prune plan |
+| [reports/2026-11-11-orchestration-handoff.md](reports/2026-11-11-orchestration-handoff.md) | Handoff: state of the PRs, sessions, workstreams and pending decisions at the end of 2026-11-11 |
 
 ## Overlaps worth knowing about
 
