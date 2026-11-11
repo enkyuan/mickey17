@@ -148,32 +148,21 @@ export function sensitiveLocation(loc: string): boolean {
 }
 
 /**
- * A card number anywhere in the text. Digits form groups separated by single separators (space, `.`, `_`, `/`, `-`, NBSP; full-width
- * digits are normalised). A window is one group or the whole groups of a span of up to 19 groups, 13 to 19 digits long and
- * Luhn-valid, or the same with the first group cut to its last 4 or 6 digits and the last group cut to its first 3, 4 or 5, so
- * digits glued in front of the number or an expiry date behind it do not hide it. A single unseparated run is tested whole. Comma
- * separated cards are recognised only in card layouts (4-4-4-4[-n] and 4-6-5), so lists of numbers and prices are not cards.
- * Any card network qualifies (Maestro, Mir, RuPay, ... as well as Visa and Mastercard); values that are not cards but pass the
- * checksum by chance are withheld, the safe direction. Work is bounded and the bounds fail closed.
+ * A card number anywhere in the text. Digits form groups separated by single separators (space, comma, `.`, `_`, `/`, `-`, NBSP;
+ * full-width digits are normalised; a separator may be two characters, `, `). A window is one group, or the whole groups of a span
+ * of groups, 13 to 19 digits long and Luhn-valid, or the same with the first group cut to its last 4 or 6 digits and the last group
+ * cut to its first 3, 4 or 5, so digits glued in front of the number or an expiry date behind it do not hide it. A span must look like
+ * card grouping: every interior group has 3 or more digits, or the whole run has groups of one length (`40 12 88 88 ...`); this keeps version strings,
+ * dates, IPs and price lists (1 to 2 digit groups) from reading as cards. A single unseparated run is tested whole. Any card network
+ * qualifies; values that are not cards but pass the checksum by chance are withheld, the safe direction. Work is bounded and the
+ * bounds fail closed.
  */
 function cardIn(text: string): boolean {
     if (text.length > 1_048_576) return true;
     const t = text.normalize("NFKC");
-    for (const m of t.matchAll(/(?<![\d.])\d{4}, ?\d{6}, ?\d{5}(?!\d)/g)) if (luhnStr(m[0].replace(/\D/g, ""))) return true;
-    // Comma separated groups: any 3 to 5 consecutive groups in a card layout (4-4-4-4, 4-6-5, with a glued expiry group before or after).
-    for (const m of t.matchAll(/(?<![\d.])\d{4}(?:, ?\d{4,6}){2,6}(?!\d)/g)) {
-        const groups = m[0].split(/[^0-9]+/).filter(Boolean);
-        for (let i = 0; i < groups.length; i++) {
-            let digits = groups[i]!;
-            for (let j = i + 1; j < groups.length && j < i + 5; j++) {
-                digits += groups[j]!;
-                if (digits.length >= 13 && digits.length <= 19 && luhnStr(digits)) return true;
-            }
-        }
-    }
     let runs = 0;
     let work = 0;
-    for (const m of t.matchAll(/\d(?:[ \u00a0._/-]{0,2}\d)*/g)) {
+    for (const m of t.matchAll(/\d(?:[ \u00a0,._/-]{0,2}\d)*/g)) {
         if (m[0].length < 13) continue;
         if (++runs > 4096) return true;
         const groups = m[0].split(/[^0-9]+/).filter(Boolean);
@@ -187,16 +176,28 @@ function cardIn(text: string): boolean {
             if (test(groups[0]!)) return true;
             continue;
         }
+        // Digit-by-digit or pair-by-pair spacing (`4 0 1 2 8 ...`, `40 12 88 ...`): every group of the run has the same length.
+        const runUniform = groups.every((g) => g.length === groups[0]!.length);
         for (let i = 0; i < groups.length; i++) {
             const first = groups[i]!;
             if (test(first)) return true;
-            const firsts = [first, ...[4, 6].filter((k) => k < first.length).map((k) => first.slice(-k))];
+            // A card's first group has 3 or more digits (or the window is uniform, or the first group is cut from a longer glued run).
+            const firsts = [...(first.length >= 3 ? [first] : []), ...[4, 6].filter((k) => k < first.length).map((k) => first.slice(-k))];
             let body = "";
-            for (let j = i + 1; j < groups.length && j < i + 19; j++) {
+            let interiorOk = true;
+            for (let j = i + 1; j < groups.length && j < i + 24; j++) {
                 const last = groups[j]!;
                 if (first.length + body.length > 31) break;
-                const lasts = [last, ...[3, 4, 5].filter((k) => k < last.length).map((k) => last.slice(0, k))];
-                for (const f of firsts) for (const l of lasts) if (test(f + body + l)) return true;
+                if (j > i + 1) {
+                    // groups i+1 .. j-1 are interior
+                    const g = groups[j - 1]!;
+                    if (g.length < 3) interiorOk = false;
+                }
+                if (interiorOk || runUniform) {
+                    const lasts = [...(last.length >= 3 ? [last] : []), ...[3, 4, 5].filter((k) => k < last.length).map((k) => last.slice(0, k))];
+                    for (const f of firsts) for (const l of lasts) if (test(f + body + l)) return true;
+                    if (runUniform && test(first + body + last)) return true;
+                }
                 body += last;
             }
             if (work > 20_000_000) return true;
@@ -277,7 +278,7 @@ export function slugOkLocation(loc: string): boolean {
 
 /** A path segment that is plainly not a secret: a word, a slug, a short number, a date or version, or a short prefixed id (`st_12345`, `a1b2c3`). */
 const readableSegment = (s: string): boolean =>
-    /^[A-Za-z]{3,}$/.test(s) || slugLike(s) || /^\d{1,4}$/.test(s) || /^\d{4}-\d{2}(?:-\d{2})?$/.test(s) || /^v?\d+(?:\.\d+)+$/.test(s) || /^[a-z]{1,6}_?\d{1,8}$/i.test(s);
+    /^[A-Za-z]{3,}$/.test(s) || slugLike(s) || /^\d{1,4}$/.test(s) || /^\d{4}-\d{2}(?:-\d{2})?$/.test(s) || /^v?\d{1,4}(?:\.\d{1,4})+$/.test(s) || /^[a-z]{1,6}_?\d{1,5}$/i.test(s);
 
 /** A host name (`www.shop24.de`): letters, digits and dots ending in a real TLD. */
 const HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,10}|localhost|\d{1,3}(?:\.\d{1,3}){3})$/i;

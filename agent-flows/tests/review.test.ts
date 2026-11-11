@@ -1211,3 +1211,67 @@ describe("round 10", () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 11
+
+describe("round 11", () => {
+    const note = (n: string, loc = "note") => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })])]);
+
+    test("cards in comma layouts of any group count, with glued prefixes, 3-digit last groups and mixed separators are withheld", () => {
+        for (const n of ["6864,6626,9394,2170,4012,8888,8888,1881", "row: 6864,6626,9394,2170,4012,8888,8888,1881", "Card no.4012,8888,8888,1881 exp 12/27", "ref 94012,8888,8888,1881", "6222,0210,0000,0000,009", "6222, 0210, 0000, 0000, 009", "4012, 8888 8888, 1881", "4012 ,8888 ,8888 ,1881"]) {
+            expect(toJson(note(n)), n).not.toMatch(/4012,|4012, |4012 ,|6222|6864|94012|4012 8888/);
+        }
+    });
+
+    test("version strings, IPs, dates, coordinates and price lists are not cards", () => {
+        const r = new Rng(21);
+        let kept = 0;
+        const total = 200;
+        for (let i = 0; i < total; i++) {
+            const versions = Array.from({ length: 5 }, () => `${r.below(20)}.${r.below(30)}.${r.below(99)}`).join(" ");
+            const prices = Array.from({ length: 6 }, () => `${r.below(300)}.${String(r.below(100)).padStart(2, "0")}`).join(" ");
+            if (toJson(note(versions)).includes(versions) && toJson(note(prices)).includes(prices)) kept++;
+        }
+        expect(kept).toBe(total);
+        expect(toJson(note("34.0522,-118.2437"))).toContain("34.0522,-118.2437");
+    });
+
+    test("different operation names at one step block, including short names with digits", () => {
+        const run = (ops: string[], field = "method") => ops.map((o) => req(ops.indexOf(o), "POST", `${B}/rpc`, { body: jsonBody({ [field]: o }) }));
+        const g = (a: string[], b: string[], f?: string) => graphOf([doc("a", run(a, f)), doc("b", run(b, f))]);
+        for (const [a, b] of [["checkout2", "payment2"], ["fetchV1", "fetchV2"], ["sync3", "sync4"], ["Q1Report", "Q2Report"], ["UPDATE_SHIPPING_ADDRESS", "CONFIRM_PAYMENT_METHOD"]] as const) {
+            expect(g(["start", a], ["start", b]).status, `${a} / ${b}`).toBe("blocked");
+        }
+        const get = (op: string, nonce: string) => req(0, "GET", `${B}/rpc?op=${op}&action=${nonce}`);
+        const g2 = graphOf([doc("a", [get("cartV2", "n_8f2Kq9ZxLm41"), { ...get("userV2", "n_Ab3Kq9ZxLm42"), id: "q9", tMs: 1100 }]), doc("b", [get("userV2", "n_Zq81mXk9L2f8"), { ...get("cartV2", "n_Wp47nRj3T6c5"), id: "q9", tMs: 1100 }])]);
+        expect(g2.status).toBe("blocked");
+        const two = (a: string, _b: string, nonceA: string, nonceB: string) => doc(a, [req(0, "POST", `${B}/rpc`, { body: jsonBody({ method: a === "a" ? "cartV2" : "userV2", op: nonceA }) }), req(1, "POST", `${B}/rpc`, { body: jsonBody({ method: a === "a" ? "userV2" : "cartV2", op: nonceB }) })]);
+        expect(graphOf([two("a", "", "n_8f2Kq9ZxLm41", "n_Ab3Kq9ZxLm42"), two("b", "", "n_Zq81mXk9L2f8", "n_Wp47nRj3T6c5")]).status).toBe("blocked");
+    });
+
+    test("random nonces in operation fields never block; neither do parameter-driven rotations", () => {
+        const r = new Rng(77);
+        const shapes: (() => string)[] = [
+            () => `${r.hex(8)}-${r.hex(4)}-4${r.hex(3)}-a${r.hex(3)}-${r.hex(12)}`, () => r.hex(32),
+            () => Array.from({ length: 22 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[r.below(62)]).join(""),
+            () => Array.from({ length: 16 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[r.below(62)]).join(""),
+        ];
+        for (const shape of shapes) {
+            let blocked = 0;
+            for (let i = 0; i < 50; i++) {
+                const mk = (run: string) => doc(run, [req(0, "POST", `${B}/rpc`, { body: jsonBody({ action: shape() }) }), req(1, "POST", `${B}/rpc`, { body: jsonBody({ action: "poll" }) })]);
+                if (graphOf([mk("a"), mk("b")]).status === "blocked") blocked++;
+            }
+            expect(blocked, shape.toString().slice(0, 60)).toBeLessThanOrEqual(3);
+        }
+        expect(graphOf([doc("a", [req(0, "POST", `${B}/rpc`, { body: jsonBody({ addToCart_x: 1, action: "addToCart_k9QmZ2xLp8Rt" }) })]), doc("b", [req(0, "POST", `${B}/rpc`, { body: jsonBody({ addToCart_x: 1, action: "addToCart_Zq81mXk9L2f8" }) })])]).status).toBe("resolved");
+        const mk = (run: string, ops: string[]) => doc(run, ops.map((o, i) => req(i, "POST", `${B}/rpc`, { body: jsonBody({ action: o }) })), [["first", ops[0]!], ["second", ops[1]!]]);
+        expect(graphOf([mk("a", ["sortPrice", "sortName"]), mk("b", ["sortName", "sortRating"])]).status).toBe("resolved");
+    });
+
+    test("word-prefixed 7-8 digit codes and long version numbers in paths are withheld", () => {
+        expect(toJson(note("https://s.test/reset/code_48291374/confirm"))).not.toContain("code_48291374");
+        expect(toJson(note("https://s.test/reset/4829137402938.7/"))).not.toContain("4829137402938");
+    });
+});

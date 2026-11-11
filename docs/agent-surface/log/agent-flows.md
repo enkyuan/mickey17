@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (133 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (138 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -320,12 +320,23 @@ H2 a single digit group was never tested on its own and spans were limited to 7 
 over-redacted after the comma change (commas count only in card layouts 4-4-4-4, 4-6-5 and 4-6-6, with 2 to 6 further groups, scanned for any 13 to 19 digit span). Known and kept: a value judged
 an id that is really a short abbreviation name with a digit (`getTxn2`) escapes the per-step check (a swap of it is still caught by the reordering check); 6-digit codes in paths are not redacted.
 
-**Round 11:** re-review of the round-10 delta only — see below once it has run.
+**Round 11 (Opus, high; round-10 delta only): 2 HIGH regressions, 3 MEDIUM.** Round-10 fixes confirmed (swaps/shifts/rotations incl. 3 runs and param steps, single-group and long-span cards, price lists and coordinates, versioned
+prefixes, cost bounds). Fixed and pinned ("round 11"): H1 cards in comma layouts leaked (past 7 groups, preceded by `.` or a glued digit, 19-digit 4-4-4-4-3, mixed separators): the two comma regexes are gone; the generic scan counts a comma as a separator
+again, and a span of groups must look like card grouping (every interior group has 3+ digits, or the whole run has groups of one length; a full first or last group needs 3+ digits, shorter ones only as cuts of a longer
+glued group), which keeps version strings, dates, IPs, price lists and coordinates (1 to 2 digit groups) from reading as cards; H2 different operations at one step paired silently when judged ids
+(`checkout2`/`payment2`, `fetchV1`/`fetchV2`, `Q1Report`/`Q2Report`, `UPDATE_SHIPPING_ADDRESS`/`CONFIRM_PAYMENT_METHOD`): an id is now a token-grade or 10+ character weak-evidence value whose real words cover less than 70% of its
+characters (so short names with digits and word-built long names are compared, and nonces of any common shape are not); the swap check runs twice, over all operation fields and over name-like ones only (a swap next to a per-run nonce field),
+and ignores values a run parameter explains (M2: no false block for parameter-driven rotations); M1 random nonces blocking (0 to 8% of 50 runs per shape in the test, was up to 63%); M3 over-redaction of space-separated versions/prices;
+low: word-prefixed codes in paths limited to 5 digits, version numbers to 4-digit parts. Known and kept: a swap of operations that embed a per-run id inside a longer value, and a swap of hash-valued operations next to a varying second
+operation field, still resolve; a short name with a digit that reads as a token (`getTxn2` is compared; a 10+ character abbreviation with digits can be judged an id) escapes the per-step check.
+
+After round 11 no separate re-review of these last fixes was run (they are covered by the regression tests above). Eleven review rounds in total found highs in four of the last five, each a regression of the previous round's new
+heuristic; the redaction and alignment heuristics are best-effort.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 133 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 138 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -343,7 +354,7 @@ an id that is really a short abbreviation name with a digit (`getTxn2`) escapes 
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (133 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (138 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).
 
 ## Secret-scanner hygiene (mechanical change, no behaviour change)

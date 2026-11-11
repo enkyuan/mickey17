@@ -1,6 +1,6 @@
 // Alignment, cross-request matching and value classing.
 
-import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
+import { hasTokenPiece, isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
@@ -290,18 +290,16 @@ function operationOf(loc: string, value: string): string | null {
 }
 
 /**
- * A value that is an identifier or nonce rather than a name. A piece (the whole value, or a `/`-separated segment of 8+ characters)
- * is an id when it has a digit or is long and does not read as at least two real words (camelCase, `.`, `_`, `-` pieces of 3+
- * letters with a vowel). `checkoutStep1`, `eth_getTransactionCount`, `orders/v2/create` and `getShoppingCartContents` are names;
- * `k9QmZ2xLp8Rt`, `act_8f2Kq9ZxLm41`, hashes, UUIDs and `/cart/update/c_8f2Kq9ZxLm41` are ids. A swap of ids is caught as a reordering.
+ * A value that is an identifier or nonce rather than a name: it contains a token-grade word (14+ characters with a digit, or 20+) or is a 10+ character token (weak evidence: not a short word), and
+ * real words make up less than 70% of its characters. `checkout2`, `fetchV1`, `sync3`, `Q1Report` (short, not token-grade) and
+ * `getCartItemsV2`, `eth_getTransactionCount`, `UPDATE_SHIPPING_ADDRESS`, `getShoppingCartContents` (token-grade but made of words) are names;
+ * UUIDs, hashes, `k9QmZ2xLp8Rt`-style nonces, `addToCart_k9QmZ2xLp8Rt` and URLs carrying an id are ids. A swap of ids is caught by the reordering check.
  */
 function idLikeOperation(v: string): boolean {
-    const idPiece = (p: string): boolean => {
-        if (!/\d/.test(p) && p.length < 16) return false;
-        const pieces = p.split(/[^A-Za-z]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/).filter(Boolean);
-        return pieces.filter((w) => /^(?:[a-z]{3,15}|[A-Z][a-z]{2,14}|[A-Z]{3,6})$/.test(w) && /[aeiouAEIOU]/.test(w)).length < 2;
-    };
-    return v.includes("/") ? v.split("/").some((seg) => seg.length >= 8 && idPiece(seg)) : idPiece(v);
+    if (!hasTokenPiece(v) && !(v.length >= 10 && isWeakEvidence(v))) return false;
+    const pieces = v.split(/[^A-Za-z]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/).filter(Boolean);
+    const wordLetters = pieces.filter((w) => /^(?:[a-z]{3,15}|[A-Z][a-z]{2,14}|[A-Z]{3,12})$/.test(w) && /[aeiouAEIOU]/.test(w)).reduce((n, p) => n + p.length, 0);
+    return wordLetters / v.length < 0.7;
 }
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
@@ -313,21 +311,33 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
     }
     // Reordering: an operation that one run issues at a step appears in the other run at a different step (a swap, rotation or
     // shift), and the runs disagree at that other step. Whatever the shape of the values (names, hashes, ids), the requests
-    // to one endpoint are then not alignable by position.
-    const tuples = runs.map((r) => r.reqMap.map((m) => [...m].map(([loc, v]) => [loc, operationOf(loc, v)] as const).filter(([, o]) => o !== null).map(([loc, o]) => `${loc}=${o}`).sort(cmp).join("\u0001")));
-    for (let x = 0; x < tuples.length; x++) {
-        for (let y = x + 1; y < tuples.length; y++) {
-            const tx = tuples[x]!;
-            const ty = tuples[y]!;
-            for (let i = 0; i < tx.length; i++) {
-                if (tx[i] === "" || tx[i] === ty[i]) continue;
-                const k = ty.findIndex((t, j) => j !== i && t === tx[i] && tx[j] !== t);
-                if (k >= 0) return "runs are not alignable: the same operation is issued at different steps in different runs (the requests were reordered)";
-            }
-            for (let i = 0; i < ty.length; i++) {
-                if (ty[i] === "" || ty[i] === tx[i]) continue;
-                const k = tx.findIndex((t, j) => j !== i && t === ty[i] && ty[j] !== t);
-                if (k >= 0) return "runs are not alignable: the same operation is issued at different steps in different runs (the requests were reordered)";
+    // to one endpoint are then not alignable by position. Checked on all operation fields (so a swap of hashes is seen) and on
+    // the name-like ones only (so a swap is still seen when another field carries a per-run nonce). Values that a run parameter
+    // explains are left out.
+    const tupleSets = [false, true].map((namesOnly) =>
+        runs.map((r, ri) =>
+            r.reqMap.map((m, i) => {
+                const pv = paramValues(recs, runs, i)[ri]!;
+                return [...m]
+                    .map(([loc, v]) => [loc, operationOf(loc, v)] as const)
+                    .filter(([, o]) => o !== null && !pv.has(o) && !(namesOnly && idLikeOperation(o)))
+                    .map(([loc, o]) => `${loc}=${o}`)
+                    .sort(cmp)
+                    .join("\u0001");
+            }),
+        ),
+    );
+    for (const tuples of tupleSets) {
+        for (let x = 0; x < tuples.length; x++) {
+            for (let y = x + 1; y < tuples.length; y++) {
+                for (const [tx, ty] of [[tuples[x]!, tuples[y]!], [tuples[y]!, tuples[x]!]] as const) {
+                    for (let i = 0; i < tx.length; i++) {
+                        if (tx[i] === "" || tx[i] === ty[i]) continue;
+                        if (ty.some((t, j) => j !== i && t === tx[i] && tx[j] !== t)) {
+                            return "runs are not alignable: the same operation is issued at different steps in different runs (the requests were reordered)";
+                        }
+                    }
+                }
             }
         }
     }
