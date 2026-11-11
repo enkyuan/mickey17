@@ -113,3 +113,15 @@ Round 5 (delta review of round-4 fixes) found 1 blocker and 4 majors, all fixed 
 2-4. **Name rules restructured** instead of patched: secret words are *strong* (password, secret, jwt, bearer, credential, sid, nonce, otp, api key...) or *weak* (token, auth, authorization, session, signature) with property *qualifiers* (type, length, hint, date, enabled...) clearing both and `method`/`reference` clearing only weak words; namespace words (next, cart, checkout, page) no longer clear a name, so `next-auth.session-token`, `checkout_session_token`, `cart_sig`, `otp_code` are credentials; pagination and cart handles are an exact allow list (`next_page_token`, `cart_token`...). A bare `token`/`key` pointer segment takes its parent segment (`/checkout/token` fine, `/auth/token` flagged). Inputs use a stricter list (session_token, oauth_token, csrf_token, authorization, auth, otp_code, auth_code, payment_method_nonce, card_pin... need a label; `session_id`, `sid`, `signature`, `pin_code`, `auth_method`, `payment_method` do not). Response-body credentials (`/access_token`, `/refresh_token`...) may not be placed in a URL.
 5. Card words in URLs include run-together forms (`cardnumber`, `ccnum`, `creditcard(s)`, `cardno`, trailing digits) as whole tokens.
 517 tests. Round 5 also verified: URL decode and userinfo fixes, the receipt matrix (every status x effect x response class), naive secrets still caught.
+
+## 2026-11-10 Review round 6 (final gate): clean
+
+Round 6 (Opus 5.5 high, scoped to blockers/majors on the round-5 delta) returned "NO BLOCKER OR MAJOR FINDINGS": ~250 realistic and credential names compared before/after, the sentence rule verified linear, no throws on degenerate names, no naive credential newly passing. Minor edge cases it noted, accepted: the pagination/cart allow list is exact (`X-Cart-Token`, `cursor_token`, S3 `NextContinuationToken` are flagged), and a conference `/session_id` taken from a response body is barred from URLs.
+
+### Review verdict summary
+
+Rounds 1-6, each by a fresh Opus 5.5 high reviewer given the diff and spec sections: 15 + 12 + 14 + 6 + 5 findings, all fixed with regression tests or documented as accepted limits; round 6 clean. Every finding was reproduced by probe before fixing.
+
+### Prepared PR text
+
+PR opened from `feat/agent-schema` against `feat/tanstack-exporter`; the body is the one used in the PR itself.
