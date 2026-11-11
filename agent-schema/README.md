@@ -46,10 +46,18 @@ bun run generate   # rewrite schema/agent-surface.schema.json
   `MarkedText`, `MarkedValue`, `SurfaceText`). Everything else is a grammar: ids are slugs, names and pointers
   (`Name`) are token characters with no whitespace, roles are the ARIA enum. A test walks the generated JSON Schema
   (properties, array items, record keys) and fails if a new bare string appears without review.
-- `check.ts` also scans for surface-authored text that repeats a page string verbatim after case, whitespace and
-  zero-width normalisation. Only page strings of 20+ characters and 3+ words count (so a heading like "Checkout"
-  does not trip it), and matching is by three-word shingle, so it is linear in the text. It catches copying, not
-  paraphrase or a copy starting mid-word; treat it as a tripwire, not a proof.
+- `check.ts` also scans for surface-authored text that shares a run of 5 words (12 characters of unspaced script
+  such as CJK or Thai) with page text, after case-folding, with punctuation, whitespace and format characters
+  ignored. Short page strings (under one run) never count, so a heading like "Checkout" does not trip it. Every
+  window is hashed once, so cost is linear in the text. It catches copying (including a sentence lifted from a longer
+  paragraph, quoting or punctuation changes), not paraphrase. It is a tripwire, not a proof.
+- Secret and card detection are heuristics, listed so they can be reviewed and tested (`isSecretName`,
+  `isSecretValue`, `isCardName`, `isCardConstant` in `check.ts`, table-driven tests in `test/checks.test.ts`):
+  names are matched on token boundaries after camelCase/punctuation splitting (so `x-author` and `token_type` are
+  fine, `api_key` and `sessionId` are not); a 15-19 digit Luhn-valid run counts as a card only when grouped like one
+  or in a card-named field or URL. They will have false negatives (an unknown credential shape, a card number with an
+  unusual separator) and rare false positives; the run-time layer (redaction, canary-secret scans) is the real defence,
+  these checks stop the obvious cases from being committed to a surface.
 - Money rules are keyed on what a request carries, not only on its label: a request with a `payment-token`
   input, or a step that can raise 3-D Secure/SCA, must be `financial`, and a financial action or step names its
   payment method and an idempotency key that is a caller input of the request.

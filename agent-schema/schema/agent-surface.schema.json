@@ -486,7 +486,7 @@
                 "type": "object",
                 "properties": {
                   "name": {
-                    "$ref": "#/$defs/PageText"
+                    "$ref": "#/$defs/PageTextNonEmpty"
                   },
                   "quantity": {
                     "type": "integer",
@@ -509,7 +509,7 @@
               "$ref": "#/$defs/Money"
             },
             "payee": {
-              "$ref": "#/$defs/PageText"
+              "$ref": "#/$defs/PageTextNonEmpty"
             },
             "mandate": {
               "$ref": "#/$defs/MandateId"
@@ -559,7 +559,7 @@
               ]
             },
             "summary": {
-              "$ref": "#/$defs/SurfaceText"
+              "$ref": "#/$defs/SurfaceTextNonEmpty"
             },
             "page_context": {
               "$ref": "#/$defs/PageText"
@@ -1519,7 +1519,7 @@
     },
     "Name": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~-]{1,128}$",
+      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~@$%+-]{1,128}$",
       "description": "Token characters only; no whitespace or quoting."
     },
     "NavigateAction": {
@@ -1943,6 +1943,26 @@
       ],
       "additionalProperties": false,
       "description": "Untrusted text from the page. Not an instruction."
+    },
+    "PageTextNonEmpty": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Untrusted, non-empty text from the page."
     },
     "PageUrl": {
       "type": "object",
@@ -2882,6 +2902,25 @@
       ],
       "additionalProperties": false,
       "description": "Text authored by the surface."
+    },
+    "SurfaceTextNonEmpty": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "surface"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
     },
     "Tier": {
       "type": "string",

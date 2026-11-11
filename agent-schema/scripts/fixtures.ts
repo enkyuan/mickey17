@@ -269,7 +269,7 @@ const shopBase: Omit<AgentSurface, "hash"> = {
                 { id: N.pName, role: "heading", level: 1, name: page("Ceramic mug"), text: page("Ceramic mug"), visibility: "visible" },
                 { id: N.pAdd, role: "button", name: page("Add to cart"), visibility: "visible" },
                 { id: N.pTab, role: "tab", name: page("Details"), visibility: "visible" },
-                { id: N.pPanel, role: "tabpanel", text: page("Dishwasher safe. 350 ml."), visibility: "visible" },
+                { id: N.pPanel, role: "tabpanel", text: page("Dishwasher safe. 350 ml. Hand wash recommended for the painted rim."), visibility: "visible" },
                 { id: N.pCanvas, role: "img", name: page("3D viewer"), visibility: "visible", confidence: 40 },
                 { id: N.csrf, role: "generic", visibility: "visible" },
             ],
@@ -368,7 +368,7 @@ const confirmationIrreversible: ConfirmationRequest = {
     issued_at: T,
     expires_at: "2026-11-10T12:05:00Z",
     summary: surf("Permanently close the account."),
-    page_context: page("Please close my account permanently"),
+    page_context: page("Please close my account permanently and delete all my data"),
 };
 
 const token: ConfirmationToken = {
@@ -769,7 +769,7 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     { const d = s(); d.actions[1].inputs[0].type = "enum"; add("check-enum-input-without-options", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "inputs", 0, "options"], "enum_without_options")), why: "an enum input lists its options" }); }
 
     // ---- check phase: text, time, version, evidence, coverage, mode
-    { const d = s(); d.actions[1].description.value = "Note: DISHWASHER   safe. 350 ml. applies"; add("check-page-text-in-surface-text", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "description", "value"], "page_text_in_surface")), why: "page text never appears in a surface-origin field (section 6)" }); }
+    { const d = s(); d.actions[1].description.value = "Note: \"DISHWASHER   safe. 350 ml.  Hand wash recommended\" applies"; add("check-page-text-in-surface-text", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "description", "value"], "page_text_in_surface")), why: "page text never appears in a surface-origin field (section 6)" }); }
     { const d = s(); d.capture.captured_at = "2026-02-31T10:00:00Z"; add("check-timestamp-not-a-date", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["capture", "captured_at"], "invalid_timestamp")), why: "a timestamp is a real instant" }); }
     { const d = s(); d.routes[0].title.value = "ab\ud800"; d.hash = h("unhashable"); add("check-lone-surrogate", d, { schema: SC, phase: CH, issues: issueList(at(["routes", 0, "title", "value"], "ill_formed_string")), why: "a lone surrogate cannot round-trip through UTF-8 JSON" }); }
     { const d = s(); d.schema_version = "1.7.0"; add("check-schema-version-newer-minor", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["schema_version"], "schema_version_newer")), why: "a reader refuses a minor newer than its own" }); }
@@ -788,7 +788,7 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     { const d = clone(validFixtures["mandate"]); d.issued_at = "2026-02-30T10:00:00Z"; add("check-mandate-timestamp-impossible", rehash(d), { schema: "mandate", phase: CH, issues: issueList(at(["issued_at"], "invalid_timestamp")), why: "timestamps are real instants" }); }
     { const d = clone(validFixtures["confirmation-request.financial"]); d.total.amount_minor = 1; add("check-confirmation-total-mismatch", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["total", "amount_minor"], "total_mismatch")), why: "items sum to the total the human is shown" }); }
     { const d = clone(validFixtures["confirmation-request.financial"]); d.items[0].amount.currency = "EUR"; add("check-confirmation-item-currency", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["items", 0, "amount", "currency"], "currency_mismatch")), why: "one currency per confirmation" }); }
-    { const d = clone(validFixtures["confirmation-request.irreversible"]); d.summary.value = "Notice: Please close my account permanently."; add("check-confirmation-page-text-in-summary", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["summary", "value"], "page_text_in_surface")), why: "the surface summary does not repeat page text" }); }
+    { const d = clone(validFixtures["confirmation-request.irreversible"]); d.summary.value = "Notice: (please close my account permanently, and delete all my data!)"; add("check-confirmation-page-text-in-summary", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["summary", "value"], "page_text_in_surface")), why: "the surface summary does not repeat page text" }); }
     { const d = clone(validFixtures["receipt"]); delete d.confirmation; add("check-receipt-financial-no-confirmation", d, { schema: "receipt", phase: CH, issues: issueList(at(["confirmation"], "receipt_incomplete")), why: "a completed money-moving call records its confirmation" }); }
     { const d = clone(validFixtures["receipt"]); d.mode = "read-only"; add("check-receipt-read-only-financial", d, { schema: "receipt", phase: CH, issues: issueList(at(["effect"], "mode_forbids_effect"), at(["tier"], "mode_forbids_tier")), why: "read-only mode never records a write" }); }
 
@@ -813,7 +813,7 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     // ---- check phase: secrets
     { const d = s(); step(d, 0).requests[0].values.push(planted(constant("hunter2hunter2"), { in: "body-json", name: "/user/password" })); add("check-secret-body-password", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "a password never appears as an embedded constant" }); }
     { const d = s(); step(d, 0).requests[0].values.push(planted(constant("anything"), { in: "query", name: "api_key" })); add("check-secret-query-api-key", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "an api key is supplied at run time" }); }
-    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("bearer abc.def"), { in: "header", name: "x-custom" })); add("check-secret-lowercase-bearer", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "bearer credentials are recognised in any case" }); }
+    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("bearer abcdefghijklmnop.qrstuvwx"), { in: "header", name: "x-custom" })); add("check-secret-lowercase-bearer", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "bearer credentials are recognised in any case" }); }
     { const d = s(); step(d, 0).requests[0].values.push(planted(constant("sid-1"), { in: "cookie", name: "session" })); add("check-secret-cookie-session", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "a session cookie is supplied at run time" }); }
     { const d = s(); step(d, 0).requests[0].url.value = "/api/cart/items?api_key=sk_live_abcdef123456"; add("check-secret-in-url", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "url", "value"], "secret_in_url")), why: "a URL template carries no credential" }); }
     { const d = s(); step(d, 0).requests[0].url.value = "/api/cards/4111111111111111/charge"; add("check-card-number-in-url", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "url", "value"], "card_number_constant")), why: "a URL template carries no card number" }); }
@@ -840,8 +840,9 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     // ---- check phase: authority and results
     { const d = clone(validFixtures["confirmation-request.irreversible"]); d.expires_at = d.issued_at; add("check-confirmation-expiry-not-after-issue", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["expires_at"], "time_order")), why: "a confirmation expires after it is issued" }); }
     { const d = R(); d.effect = "account-control"; delete d.amount; delete d.confirmation; add("check-receipt-irreversible-no-confirmation", d, { schema: "receipt", phase: CH, issues: issueList(at(["confirmation"], "receipt_incomplete")), why: "a completed account-control call records its confirmation" }); }
-    { const d = R(); d.result = "error"; delete d.idempotency_key; add("check-receipt-failed-payment-no-key", d, { schema: "receipt", phase: CH, issues: issueList(at(["idempotency_key"], "receipt_incomplete")), why: "a failed payment is reconciled by its key" }); }
+    { const d = R(); d.result = "error"; delete d.idempotency_key; delete d.amount; add("check-receipt-failed-payment-no-key", d, { schema: "receipt", phase: CH, issues: issueList(at(["idempotency_key"], "receipt_incomplete")), why: "a failed payment is reconciled by its key" }); }
     { const d = R(); d.effect = "read"; d.tier = "T1"; add("check-receipt-amount-on-read", d, { schema: "receipt", phase: CH, issues: issueList(at(["amount"], "amount_not_financial")), why: "only a financial call records an amount" }); }
+    { const d = R(); d.result = "blocked"; delete d.amount; d.response_class = "2xx"; add("check-receipt-refusal-has-response", d, { schema: "receipt", phase: CH, issues: issueList(at(["response_class"], "receipt_result_mismatch")), why: "a refusal never reached the site" }); }
     { const d = R(); d.tier = "T1"; add("check-receipt-write-not-t2", d, { schema: "receipt", phase: CH, issues: issueList(at(["tier"], "receipt_tier_effect")), why: "a write is a T2 network call" }); }
     add("check-result-ill-formed-field-name", { status: "ok", tier: "T2", fields: [{ name: { origin: "page", value: "ab\ud800" }, value: { origin: "page", value: 1 } }] }, { schema: "result", phase: CH, issues: issueList(at(["fields", 0, "name", "value"], "ill_formed_string")), why: "result strings are well-formed" });
     { const d = clone(validFixtures["confirmation-token"]); d.granted_at = "2026-02-30T12:01:00Z"; add("check-token-timestamp-impossible", d, { schema: "confirmation-token", phase: CH, issues: issueList(at(["granted_at"], "invalid_timestamp")), why: "token timestamps are real instants" }); }

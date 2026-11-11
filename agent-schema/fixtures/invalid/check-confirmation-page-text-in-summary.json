@@ -10,10 +10,10 @@
   "expires_at": "2026-11-10T12:05:00Z",
   "summary": {
     "origin": "surface",
-    "value": "Notice: Please close my account permanently."
+    "value": "Notice: (please close my account permanently, and delete all my data!)"
   },
   "page_context": {
     "origin": "page",
-    "value": "Please close my account permanently"
+    "value": "Please close my account permanently and delete all my data"
   }
 }

@@ -97,9 +97,11 @@ describe("generated JSON Schema", () => {
                 "MarkedValue[0].value[0]",
                 "MarkedValue[1].value[0]",
                 "PageText.value",
+                "PageTextNonEmpty.value",
                 "PageUrl.value",
                 "PageValue.value[0]",
                 "SurfaceText.value",
+                "SurfaceTextNonEmpty.value",
             ].sort(),
         );
     });

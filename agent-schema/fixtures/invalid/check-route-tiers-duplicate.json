@@ -168,7 +168,7 @@
           "role": "tabpanel",
           "text": {
             "origin": "page",
-            "value": "Dishwasher safe. 350 ml."
+            "value": "Dishwasher safe. 350 ml. Hand wash recommended for the painted rim."
           },
           "visibility": "visible"
         },
@@ -811,5 +811,5 @@
       }
     }
   ],
-  "hash": "sha256:71983b318d269feefc42f9218f815fe52073e7b1b37e35408f3d308d93c7e1ca"
+  "hash": "sha256:3645941566172a89ca2bc8e121abeacc65cb6cd63a2ffd624f27589318003523"
 }

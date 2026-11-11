@@ -24,9 +24,5 @@
   "duration_ms": 412,
   "mandate": "mandate-1",
   "confirmation": "confirm-1",
-  "amount": {
-    "amount_minor": 3600,
-    "currency": "USD"
-  },
   "redactions": 3
 }

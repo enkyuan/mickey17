@@ -3,7 +3,7 @@
 // of these shapes: credentials and tokenized instruments are supplied at run time (D7).
 import { z } from "zod";
 import { registry } from "./registry";
-import { PageText, SurfaceText } from "./origin";
+import { PageText, PageTextNonEmpty, SurfaceTextNonEmpty } from "./origin";
 import {
     ActionId,
     ConfirmationId,
@@ -90,7 +90,7 @@ export const ConfirmationRequest = z
             items: z
                 .array(
                     z.strictObject({
-                        name: PageText,
+                        name: PageTextNonEmpty,
                         quantity: z.int().min(1).max(1_000_000),
                         /** Unit price. The human sees every price, so it is never optional. */
                         amount: Money,
@@ -99,7 +99,7 @@ export const ConfirmationRequest = z
                 .min(1)
                 .max(256),
             total: Money,
-            payee: PageText,
+            payee: PageTextNonEmpty,
             /** A session alone is not enough to move money (D11). */
             mandate: MandateId,
         }),
@@ -107,7 +107,7 @@ export const ConfirmationRequest = z
             ...confirmationBase,
             effect: z.enum(["write-irreversible", "account-control"]),
             /** Authored by the surface; the page's own wording, if shown, goes in `page_context`. */
-            summary: SurfaceText,
+            summary: SurfaceTextNonEmpty,
             page_context: PageText.optional(),
         }),
     ])
