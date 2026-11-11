@@ -552,3 +552,64 @@ in `hidden.ts`, all confirmed and fixed:
   U+FF9F removal mutant used to survive); the enumeration test scans to U+10FFFF.
 
 Results: `bun test` 401 pass; `tsc` clean; mutation run 225/225 non-equivalent killed.
+
+## 12. Entry 2026-11-10: review round 7 (final) and PR text
+
+Round 7 (Opus, high; scoped to regressions from 98110b5..8217f2b) found one bypass and
+three fail-closed fidelity regressions, all confirmed and fixed:
+
+- M1 bypass: a scroller that only slivers into a clip got a full reset. Now the visible
+  window (scroller rect ∩ clip) must be at least 8 px on both axes.
+- M2: the half-plane region wrongly hid reachable content in RTL, `column-reverse` and
+  already-scrolled scrollers. Decision: the reachable region is bounded only when the
+  capture supplies `NodeStyle.scrollLeftPx/scrollTopPx` (region starts at `rect - offset`);
+  otherwise it is unbounded. Known gap (stated): without offsets, content above/left of a
+  scroller (a `position:relative; top:-500` trick inside it) stays visible.
+- M3: a zero-area anchor exactly on the far edge (cookie banner anchor at y = viewport
+  height, toast at x = page width) hid its children. Zero-area boxes are now a 1 px box
+  centred on their position (both edges).
+- M4: a fixed scroller slightly larger than the viewport (100vh with a URL bar, 100vw with a
+  scrollbar) did not reset. A fixed scroller is no longer size-compared to the viewport.
+- LOW: `Infinity` `maxLifetimeMs` is ignored too (tested).
+
+Results: `bun test` 406 pass; `tsc` clean; mutation run 233/233 non-equivalent killed.
+
+**Review status, stated plainly.** Seven Opus (high) review rounds were run. Every round-1
+to round-6 finding at MEDIUM or above is fixed and pinned by tests and mutants. The round-7
+fixes (this entry) were verified by tests and mutants but were **not** re-reviewed by a
+further round. Later rounds found only issues in `src/hidden.ts` heuristics, which depend on
+capture data (rects, scroll offsets and sizes, containing-block flags, sampled backdrops,
+viewport/document size); that is a capture contract, not something this library can close.
+The security-relevant parts (authorize, mandates, confirmations, ledger, idempotency,
+egress/SSRF, robots, rate, redaction, wrapper, sanitizer, tool descriptions) have had their
+findings closed through round 6 with nothing open at MEDIUM or above.
+
+### PR text (prepared; not opened: this sandbox cannot reach github.com:22, and the parent
+asked for `feat/agent-policy` on origin with base `feat/tanstack-exporter`)
+
+Title: `feat(agent-policy): add the pure policy library for the agent surface`
+
+Body:
+
+- **What.** New Bun/TypeScript package `agent-policy/` and log
+  `docs/agent-surface/log/agent-policy.md`: mode x tier x effect enforcement (default deny,
+  refusals name the missing authorization), signed expiring mandates (Ed25519; HMAC for
+  confirmations) with an atomic cumulative spend ledger, field-bound single-use confirmation
+  tokens, idempotency store with no automatic retry of non-idempotent or money actions,
+  receipts/logs with redaction, egress/SSRF/redirect/rate/Retry-After/robots policy as pure
+  functions, prompt-injection hygiene (escaped delimited wrapper, sanitizer, hidden-text
+  rules, closed-vocabulary tool descriptions) with a 35-item adversarial corpus.
+- **Why.** `docs/AGENT_SURFACE.md` D2, D5, D7, D8, D10, D11 and section 6: the safety layer
+  that decides whether an action may run.
+- **Evidence.** `bun test` 406 pass (75-cell mode x tier x effect table, fast-check
+  properties, canary scans, corpus); strict `tsc --noEmit`; `bun run mutate` 233/233
+  non-equivalent one-edit mutants killed; seven adversarial Opus review rounds (verdicts in
+  the log, sections 7-12).
+- **Limits.** Not run: nothing touches a real network, DNS, browser or payment provider;
+  `cargo check` not run (no Rust changed). Types are local until agent-schema (#7) merges;
+  mismatches are listed in log section 10. Hidden-text rules need capture-supplied rects,
+  sizes, scroll offsets and sampled colours (log sections 9-12). In-process callers are not a
+  security boundary (key custody is). Executor must connect only to `EgressDecision.pinned`,
+  own the clock, and never expose `reconcile` to the agent.
+- **Review summary.** See log: round 7 fixes were verified by tests/mutants but not
+  re-reviewed.

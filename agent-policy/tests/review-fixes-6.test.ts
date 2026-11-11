@@ -23,6 +23,17 @@ describe("zero-area boxes are judged as 1px boxes", () => {
         const narrow: PageNode = { tag: "body", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1280, height: 800 }, children: [{ tag: "aside", rect: { x: 0, y: 0, width: 0, height: 700 }, children: [{ tag: "p", rect: { x: 0, y: 0, width: 200, height: 20 }, text: "side" }] }] };
         expect(visible(narrow)).toEqual(["side"]);
     });
+    test("a zero-area anchor exactly on the far edge keeps its positioned children (cookie banner, toast, back-to-top)", () => {
+        const o = { document: { width: 1280, height: 20000 }, viewport: vp };
+        const banner = body({ tag: "div", style: { position: "fixed", heightPx: 0 }, rect: { x: 0, y: 800, width: 1280, height: 0 }, children: [{ tag: "div", style: { position: "absolute" }, rect: { x: 0, y: 680, width: 1280, height: 120 }, text: "We use cookies" }] });
+        expect(visible(banner, o)).toEqual(["We use cookies"]);
+        const toast = body({ tag: "div", style: { position: "absolute" }, rect: { x: 1280, y: 100, width: 0, height: 0 }, children: [{ tag: "p", rect: { x: 1000, y: 100, width: 280, height: 40 }, text: "toast" }] });
+        expect(visible(toast, o)).toEqual(["toast"]);
+        const top = body({ tag: "div", style: { position: "absolute", heightPx: 0 }, rect: { x: 0, y: 20000, width: 100, height: 0 }, children: [{ tag: "button", rect: { x: 0, y: 19950, width: 100, height: 50 }, text: "back to top" }] });
+        expect(visible(top, o)).toEqual(["back to top"]);
+        // but far beyond the edge it is still outside
+        expect(visible(body({ tag: "div", rect: { x: 5000, y: 100, width: 0, height: 20 }, text: "gone" }), o)).toEqual([]);
+    });
     test("a 1x1 clipping or scrolling box with a rect but no style sizes is zero-size", () => {
         expect(ownHiddenReasons({ tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1, height: 1 } })).toContain("zero-size");
         expect(ownHiddenReasons({ tag: "div", style: { overflow: "auto" }, rect: { x: 0, y: 0, width: 300, height: 1 } })).toContain("zero-size");
@@ -66,12 +77,42 @@ describe("scroll containers", () => {
         };
         expect(visible(shell)).toEqual(["reachable"]);
     });
-    test("scrolling never reaches content above or to the left of the container", () => {
-        const above: PageNode = {
+    test("with capture-supplied scroll offsets, content above or left of the unscrolled origin is unreachable", () => {
+        const mk = (scrollLeftPx: number, scrollTopPx: number): PageNode => ({
             tag: "body", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1280, height: 4000 },
-            children: [{ tag: "div", style: { overflow: "auto" }, rect: { x: 0, y: 3000, width: 300, height: 200 }, children: [{ tag: "p", style: { position: "relative", topPx: -500 }, rect: { x: 0, y: 2500, width: 300, height: 20 }, text: "D1 above" }, { tag: "p", rect: { x: -400, y: 3050, width: 300, height: 20 }, text: "D2 left" }, { tag: "p", rect: { x: 10, y: 3100, width: 100, height: 20 }, text: "inside" }] }],
+            children: [{ tag: "div", style: { overflow: "auto", scrollLeftPx, scrollTopPx }, rect: { x: 500, y: 3000, width: 300, height: 200 }, children: [
+                { tag: "p", style: { position: "relative", topPx: -500 }, rect: { x: 500, y: 2500, width: 300, height: 20 }, text: "D1 above" },
+                { tag: "p", rect: { x: 100, y: 3050, width: 300, height: 20 }, text: "D2 left" },
+                { tag: "p", rect: { x: 510, y: 3100, width: 100, height: 20 }, text: "inside" },
+            ] }],
+        });
+        expect(visible(mk(0, 0), { document: { width: 1280, height: 4000 } })).toEqual(["inside"]);
+        // a pane captured while scrolled: its earlier content (above/left of the box) is reachable
+        expect(visible(mk(400, 500), { document: { width: 1280, height: 4000 } })).toEqual(["D1 above", "D2 left", "inside"]);
+    });
+    test("without offsets the scroller's content region is unbounded (carousels, RTL and reversed panes)", () => {
+        const carousel: PageNode = {
+            tag: "body", rect: { x: 0, y: 0, width: 1280, height: 4000 }, style: { overflow: "hidden" },
+            children: [{ tag: "ul", style: { overflow: "auto" }, rect: { x: 200, y: 100, width: 800, height: 300 }, children: [{ tag: "li", rect: { x: -600 + 700, y: 120, width: 800, height: 250 }, text: "slide 2" }, { tag: "li", rect: { x: 210, y: 60, width: 300, height: 30 }, text: "older message" }] }],
         };
-        expect(visible(above, { document: { width: 1280, height: 4000 } })).toEqual(["inside"]);
+        expect(visible(carousel, { document: { width: 1280, height: 4000 } })).toEqual(["slide 2", "older message"]);
+    });
+    test("a scroller that only slivers into the clip does not expose its content", () => {
+        const sliver: PageNode = {
+            tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 300, height: 20 }, text: "benign",
+            children: [{ tag: "div", style: { overflow: "auto" }, rect: { x: 0, y: 19.99, width: 300, height: 20 }, children: [{ tag: "p", rect: { x: 0, y: 30, width: 300, height: 20 }, text: "SECRET-sliver" }] }],
+        };
+        expect(visible(sliver)).toEqual(["benign"]);
+        const shell: PageNode = {
+            tag: "body", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1280, height: 800 },
+            children: [{ tag: "main", style: { overflow: "auto" }, rect: { x: 0, y: 799.5, width: 1280, height: 800 }, children: [{ tag: "p", rect: { x: 0, y: 1000, width: 100, height: 20 }, text: "SECRET-below-fold" }] }],
+        };
+        expect(visible(shell)).toEqual([]);
+    });
+    test("a fixed drawer taller than the viewport (100vh with a URL bar) or wider (scrollbar) still scrolls", () => {
+        const drawer = (w: number, h: number): PageNode => body({ tag: "nav", style: { position: "fixed", overflow: "auto" }, rect: { x: 0, y: 0, width: w, height: h }, children: [{ tag: "a", rect: { x: 0, y: 1000, width: 100, height: 20 }, text: "Settings" }] });
+        expect(visible(drawer(390, 844), { document: { width: 1280, height: 20000 }, viewport: { width: 390, height: 750 } })).toEqual(["Settings"]);
+        expect(visible(drawer(1280, 900), { document: { width: 1280, height: 20000 }, viewport: { width: 1265, height: 800 } })).toEqual(["Settings"]);
     });
     test("an auto-height wrapper taller than its clipper is still not a scroller", () => {
         const tree: PageNode = {
@@ -83,6 +124,12 @@ describe("scroll containers", () => {
 });
 
 describe("config hardening", () => {
+    test("an Infinity maxLifetimeMs is ignored too", async () => {
+        const w = await world();
+        const long = await mandateToken(w, { notBefore: NOW - HOUR, expiresAt: NOW + 10_000 * 24 * HOUR });
+        const r = await verifyMandate(long, w.mandateVerifier, { now: NOW, maxLifetimeMs: Number.POSITIVE_INFINITY });
+        expect(r.ok ? "ok" : r.code).toBe("mandate-lifetime-too-long");
+    });
     test("a NaN maxLifetimeMs does not disable the mandate lifetime check", async () => {
         const w = await world();
         const long = await mandateToken(w, { notBefore: NOW - HOUR, expiresAt: NOW + 10_000 * 24 * HOUR });

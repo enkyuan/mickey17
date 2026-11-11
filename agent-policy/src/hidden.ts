@@ -40,6 +40,13 @@ export interface NodeStyle {
      * Without it a fixed box is assumed to escape ancestor clipping.
      */
     readonly containsFixed?: boolean;
+    /**
+     * Scroll offsets of a scroll container at capture time. With them, the reachable region of
+     * its content starts at (rect.x - scrollLeft, rect.y - scrollTop) (also correct for scrolled
+     * carousels and reversed panes). Without them the content region is treated as unbounded.
+     */
+    readonly scrollLeftPx?: number;
+    readonly scrollTopPx?: number;
 }
 
 export interface Rect {
@@ -160,9 +167,8 @@ export function ownHiddenReasons(n: PageNode, ctx: Partial<HideContext> = {}): H
     const behind = (v: number | undefined) => v !== undefined && v <= -900;
     const r = n.rect;
     // zero-area boxes are judged as 1px boxes: text in them still paints outward from the corner
-    const rw = r ? Math.max(r.width, 1) : 0;
-    const rh = r ? Math.max(r.height, 1) : 0;
-    const outside = r !== undefined && (r.x + rw <= 0 || r.y + rh <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
+    const ar = r ? areaRect(r) : undefined;
+    const outside = ar !== undefined && (ar.x + ar.width <= 0 || ar.y + ar.height <= 0 || (doc !== undefined && (ar.x >= doc.width || ar.y >= doc.height)));
     // Positive offsets are ordinary layout, unless an overflow-clipping ancestor (or the node
     // itself) would cut the content off: then a far offset or text-indent hides it.
     // When the node has a bounding box, only the box (against the document and the
@@ -227,6 +233,17 @@ export interface Collected {
     readonly hiddenOptIn: readonly (TextSegment & { readonly reasons: readonly HiddenReason[] })[];
 }
 
+/**
+ * A box with no area (a 0-height anchor, an icon wrapper) is judged as a 1px box centred on
+ * its position, so it neither vanishes at the page's top/left edge nor falls "outside" at
+ * its bottom/right edge.
+ */
+function areaRect(r: Rect): Rect {
+    const w = r.width < 1 ? 1 : r.width;
+    const h = r.height < 1 ? 1 : r.height;
+    return { x: r.width < 1 ? r.x - (1 - r.width) / 2 : r.x, y: r.height < 1 ? r.y - (1 - r.height) / 2 : r.y, width: w, height: h };
+}
+
 /** `overflow` may be one or two values ("hidden auto"); `hidden` or `clip` on either axis clips. */
 function overflowAxes(v: string | undefined): [string, string] {
     const parts = (v ?? "").toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -256,7 +273,7 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
     const unjudged: TextSegment[] = [];
     // zero-area boxes count as 1px so a header of height 0 at the clip's edge is still "inside" it
     const intersects = (a0: Rect, b: Rect) => {
-        const a = { x: a0.x, y: a0.y, width: Math.max(a0.width, 1), height: Math.max(a0.height, 1) };
+        const a = areaRect(a0);
         return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
     };
 
@@ -288,10 +305,16 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         // (it must overlap the clip and not be larger than it beyond rounding: an auto-height wrapper
         // that grows with its content is not a scroller)
         const TOL = 2;
-        const looksLikeScroller = clip !== null && n.rect !== undefined && intersects(n.rect, clip) && n.rect.width <= clip.width + TOL && n.rect.height <= clip.height + TOL;
+        // the part of the container that is actually shown must be big enough to read (a sliver
+        // that peeks into the clip does not expose its content); a fixed box is measured against
+        // the viewport, whose definition varies (100vh, scrollbars), so its size is not compared
+        const windowRect = clip !== null && n.rect !== undefined ? intersectRect(clip, n.rect) : null;
+        const MIN_WINDOW = 8;
+        const looksLikeScroller = windowRect !== null && n.rect !== undefined && windowRect.width >= MIN_WINDOW && windowRect.height >= MIN_WINDOW && (escapes || (n.rect.width <= clip!.width + TOL && n.rect.height <= clip!.height + TOL));
         const resets = scrolls && ((clip === null && !clippedAncestor) || looksLikeScroller);
         // Scrolling reaches content below and to the right of the container's origin, not above or left.
-        const childClip = resets ? (n.rect ? { x: n.rect.x, y: n.rect.y, width: Infinity, height: Infinity } : null) : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
+        const hasOffsets = style.scrollLeftPx !== undefined || style.scrollTopPx !== undefined;
+        const childClip = resets ? (n.rect && hasOffsets ? { x: n.rect.x - (style.scrollLeftPx ?? 0), y: n.rect.y - (style.scrollTopPx ?? 0), width: Infinity, height: Infinity } : null) : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
         const childClipped = resets ? false : clippedAncestor || overflowClips;
         const childSize = resets ? undefined : overflowClips ? { ...(style.widthPx !== undefined ? { width: style.widthPx } : {}), ...(style.heightPx !== undefined ? { height: style.heightPx } : {}) } : clipperSize;
         const vis = (n.style?.visibility ?? "").toLowerCase();
