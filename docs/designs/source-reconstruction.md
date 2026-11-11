@@ -1,20 +1,20 @@
 # Source reconstruction: decision map
 
-Current source-quality decisions: [Authored source architecture](AUTHORED_SOURCE.md). Current exports are compatibility reconstructions with physical TanStack routes and Bun; semantic components, Base UI interaction conversion and token reconstruction remain pending. Earlier design choices below are historical where they conflict.
+Current source-quality decisions: [Authored source architecture](authored-source.md). Current exports are compatibility reconstructions with physical TanStack routes and Bun; semantic components, Base UI interaction conversion and token reconstruction remain pending. Earlier design choices below are historical where they conflict.
 
 Implementation progress (2026-11-08): the first bounded initial-state source-evidence
 contract is implemented in the development checkout, including viewport manifests,
 screenshots, offline validation, and an explicit projection to legacy analysis. A deterministic
-project-model stage is also implemented locally; see [its contract](../PROJECT_MODEL.md).
+project-model stage is also implemented locally; see [its contract](../project-model.md).
 The first literal-route TanStack Start emitter is also implemented locally; its bounded
-scope and deviations are documented in [the export contract](../EXPORT.md). It preserves
+scope and deviations are documented in [the export contract](../export.md). It preserves
 captured global selectors in per-document CSS Modules for cascade compatibility. Local
 component style extraction, confirmed dynamic route mappings, richer controls, additional
 theme/interaction capture remain subsequent work. Open/recorded closed shadow trees, sandboxed
 readable frames, explicit scene snapshots, lossless style compression, viewport variants and
 computed CSS animation declarations are now implemented locally; see the export contract. The bounded Jev Choice/Noul adapter,
 request planning, replay/cache, reservations and review-only export annotations are implemented
-locally; see [interpretation](../INTERPRETATION.md). Live provider access, billing and model
+locally; see [interpretation](../semantic-interpretation.md). Live provider access, billing and model
 quality remain unqualified. The proposal below is the roadmap; current scope is documented
 in README and the individual contracts.
 

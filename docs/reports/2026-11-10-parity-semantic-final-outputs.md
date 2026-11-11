@@ -177,6 +177,6 @@ The other 226 Natural, 115 Garden and 243 Microsoft AI scheduled states; Natural
 and 3 hover states: timeouts, some of them 30 s `scrollIntoViewIfNeeded` timeouts on the candidate); Garden's 1
 (`home.desktop1440.menu.cognitive-health13-brands.toggle-twice`); entrance and breakpoint
 boundary states; touch/mobile emulation, light scheme, pointer-driven effects, forms, font bytes; WebGL beyond one frame per
-state; the Rust gate (not run). See `docs/PARITY.md` for the pipeline's limits. Comparison caveats: the previous assemble numbers come from a separate 30-state run without control states, the current numbers are the
+state; the Rust gate (not run). See `docs/parity.md` for the pipeline's limits. Comparison caveats: the previous assemble numbers come from a separate 30-state run without control states, the current numbers are the
 same 30 states taken from an 82-state run, at different machine loads; and three of the four largest geometry deltas (9,575 px old Natural,
 9,975 px Garden, 24,529 px Microsoft AI) come from unsettled states.

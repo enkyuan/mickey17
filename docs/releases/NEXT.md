@@ -7,7 +7,7 @@ semantic conversion. Do not publish until the missing source structure, scroll
 choreography, and responsive variants are restored and qualified.
 
 Every crates.io publication must have a matching GitHub release at the same package
-commit; follow [RELEASING.md](../RELEASING.md).
+commit; follow [releasing.md](../releasing.md).
 
 Additional unpublished changes:
 

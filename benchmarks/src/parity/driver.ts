@@ -3,7 +3,7 @@
 // already running `mochi serve <capture>` (original) and generated app (candidate).
 // Playwright is resolved at run time (MOCHI_PLAYWRIGHT, local node_modules, gstack)
 // so this package gains no dependency. Without a Chromium binary, use the Browser
-// pane path in docs/PARITY.md instead.
+// pane path in docs/parity.md instead.
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';

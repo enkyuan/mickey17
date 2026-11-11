@@ -162,7 +162,7 @@ comparison does not read.
 
 ## Findings from the browser parity run of 7917885 (what was fixed, found, deferred)
 
-Source: `docs/parity-reports/2026-11-10-semantic-final-outputs.md`. Causes below were found by reading the captures and the
+Source: `docs/reports/2026-11-10-parity-semantic-final-outputs.md`. Causes below were found by reading the captures and the
 original bundles, not by a browser run; the effect of each fix on the parity counts is not measured here.
 
 | # | Finding | Status |

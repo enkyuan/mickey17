@@ -199,7 +199,7 @@ The Natural, Infinite Garden, and Microsoft AI source packs use owned modules fo
 their nine captured routes, including their graphics and interactions. The CLI
 exports these reviewed inputs without recovered controllers. These local source
 packs are qualification inputs, not bundled site templates or proof of automatic
-semantic interpretation. Follow the [deterministic qualification method](DETERMINISTIC_RECONSTRUCTION.md)
+semantic interpretation. Follow the [deterministic qualification method](deterministic-reconstruction.md)
 before treating an authored candidate as a faithful reconstruction.
 
 References: [Base UI setup](https://base-ui.com/react/overview/quick-start),

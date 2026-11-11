@@ -46,14 +46,14 @@ labelled area, small, low value), **propose delete** (never executed by anything
 | Item | Size | Newest mtime | What it is | Referenced by | Regenerable? | Verdict (new home) |
 | --- | --- | --- | --- | --- | --- | --- |
 | `target/` | 6.7 GiB (8.0 GB apparent): debug 5.1 GiB, release 1.6 GiB | 2026-11-11 00:03 | Cargo build cache (`CACHEDIR.TAG`) | `.cargo/config.toml`, `.github/workflows/release.yml`, `Cargo.toml` comment, launch.json, `rebuild-examples.py` | Yes: `cargo build` (clean build about 85 s + dependencies) | **move** to `cache/target`. Optional delete of `release/` (1.6 GiB) when not needed; see proposals |
-| `trials/` | 3.04 GiB; 11 384 files | 2026-11-10 17:27 (dir) / files 2026-11-08 | 12 dated trial runs of 2026-11-08: captures, generated projects, logs, screenshots. See "Inside trials" | tests/semantic.rs, benchmarks/suites/production.ts, source-packs/capture.txt, parity inventories, VALIDATION.md, REAL_WORLD_TRIALS.md, named-equivalences.md, launch.json, rebuild-examples.py | **No** for captures (live sites cannot be re-captured identically). Project variants: only by re-export | **move** whole, intact, to `evidence/trials` |
-| `mochi-exports/` | 1.00 GiB: 5 exports at 195-215 MB each (node_modules 194 MB each) + `measure` 5 MB | 2026-11-10 05:21 | Compat exports from `mochi export` (natural-compat, infinitegarden-compat, rec3-natural, rec3-infinitegarden, rr-natural2) and `measure/` (Playwright-style measurement JSON) | parity reports cite `natural-compat`, `infinitegarden-compat`; `tailwind.rs` locates Tailwind below it; docs/TOKENS.md; launch.json; run.json of 2 runs | Yes: `mochi export <capture> --out <new>` (not byte-identical across generator versions) | **move** to `generated/exports` |
-| `parity-runs/` | 839 MiB; 106 entries (about 59 run dirs + logs/scripts); 6 674 files | 2026-11-10 20:55 | Raw parity run output, gates, calibration runs, run scripts | docs/PARITY.md, scripts/parity/sink.ts, 5 committed reports (named per run) | Re-running yields new, not identical, results (needs live reference servers, Chromium). The three `*-gate` dirs (675 MiB) **are** derived from their run (`parity-cli gate`) | **move** to `generated/parity-runs`; retention via the new `--runs`; cited runs pinned. See "Parity runs" |
+| `trials/` | 3.04 GiB; 11 384 files | 2026-11-10 17:27 (dir) / files 2026-11-08 | 12 dated trial runs of 2026-11-08: captures, generated projects, logs, screenshots. See "Inside trials" | tests/semantic.rs, benchmarks/suites/production.ts, source-packs/capture.txt, parity inventories, VALIDATION.md, real-world-trials.md, parity-named-equivalences.md, launch.json, rebuild-examples.py | **No** for captures (live sites cannot be re-captured identically). Project variants: only by re-export | **move** whole, intact, to `evidence/trials` |
+| `mochi-exports/` | 1.00 GiB: 5 exports at 195-215 MB each (node_modules 194 MB each) + `measure` 5 MB | 2026-11-10 05:21 | Compat exports from `mochi export` (natural-compat, infinitegarden-compat, rec3-natural, rec3-infinitegarden, rr-natural2) and `measure/` (Playwright-style measurement JSON) | parity reports cite `natural-compat`, `infinitegarden-compat`; `tailwind.rs` locates Tailwind below it; docs/tokens.md; launch.json; run.json of 2 runs | Yes: `mochi export <capture> --out <new>` (not byte-identical across generator versions) | **move** to `generated/exports` |
+| `parity-runs/` | 839 MiB; 106 entries (about 59 run dirs + logs/scripts); 6 674 files | 2026-11-10 20:55 | Raw parity run output, gates, calibration runs, run scripts | docs/parity.md, scripts/parity/sink.ts, 5 committed reports (named per run) | Re-running yields new, not identical, results (needs live reference servers, Chromium). The three `*-gate` dirs (675 MiB) **are** derived from their run (`parity-cli gate`) | **move** to `generated/parity-runs`; retention via the new `--runs`; cited runs pinned. See "Parity runs" |
 | `semantic-conversion/` | 197 MiB; 6 651 files; 276 entries | 2026-11-09 01:09 | Benchmark results, before/after tarballs, calibration certificates, driver, authored template, logs. `BENCHMARK-RESULTS.md`, `servers.json` | handoff note ("read BENCHMARK-RESULTS.md"), `mochi clean` evidence name, 97 internal files | No (reviewed results and `*-before.tar.gz` snapshots) | **move** whole to `evidence/semantic-conversion` |
 | `previous-projects/` | 100 MiB; 1 270 files | 2026-11-08 21:06 | Frozen `20261108-qualified` (21 MB) and `20261108-semantic-baseline` (81 MB); recovered original controllers | **pinned by `source-packs` lift specs** (relative path, sha256) | No | **move** to `evidence/previous-projects`, sibling of `source-packs` |
 | `projects/` | 23 MiB: `infinitegarden` 1.4 MB, `microsoft-ai` 12 MB, `natural` 9 MB; no `node_modules`, no `.output` | 2026-11-09 20:37 | Hand-edited canonical TanStack projects (sources) | benchmarks/suites/production.ts, parity reports, docs, `rebuild-examples.py` (which would **overwrite** them), launch.json, VALIDATION.md | **No** (hand edits) | **keep** at `projects/` |
 | `cli-validation/` | 21 MiB; 399 files; 3 authored exports without `node_modules` | 2026-11-08 21:06 | Output of the release CLI's authored export for the three examples (`.mochi/authored-report.json` per project); produced 10:32 on 2026-11-08 | nothing | Yes in principle (`mochi export --authored-spec`); the spec used differs from `source-packs/*/specification.json` (sha differs), so not guaranteed identical | **archive** to `generated/authored` (renamed: it is not a validation log) |
-| `source-packs/` | 21 MiB; 327 files | 2026-11-08 16:55 | Reviewed specification, `source/`, `capture.txt`, lift specs for the three sites | docs/LIFT.md (2 lines), `mochi export --authored-spec`, benchmarks | **No** (reviewed) | **move** to `evidence/source-packs`, keep sibling of `previous-projects` |
+| `source-packs/` | 21 MiB; 327 files | 2026-11-08 16:55 | Reviewed specification, `source/`, `capture.txt`, lift specs for the three sites | docs/lift.md (2 lines), `mochi export --authored-spec`, benchmarks | **No** (reviewed) | **move** to `evidence/source-packs`, keep sibling of `previous-projects` |
 | `qualification/` | 1.9 MiB: `fixture-v1`, `fixture-v2`, `fixture-final` | 2026-11-08 21:06 | Owned fixture builds with reference/actual screenshots | README.md of `.mochi`, `mochi clean` evidence name | No | **move** to `evidence/qualification` |
 | `verification/`, `verification-gpu-disabled/` | 0.9 MiB, 0.3 MiB | 2026-11-08 07:58 / 07:56 | Viewport screenshots + `results.json` of the three examples (GPU on/off) | VALIDATION.md ("current local evidence"), `verify-examples.py` | Yes (`verify-examples.py`), but they are the cited run | **move** to `runs/verification/` (names still match `verification*`) |
 | `template-deps/` | 0.3 MiB: `default`, `graphics`, `react19.2.7` (manifests, lockfiles, `install.log`; **no node_modules**) | 2026-11-08 13:12 | Dependency-resolution experiments for the exporter template's `bun.lock` | nothing | Yes | **archive** to `runs/template/deps`. Not a cache: the brief's `cache/template-deps` would mislabel it |
@@ -62,7 +62,7 @@ labelled area, small, low value), **propose delete** (never executed by anything
 | `handoff/` | 20 KiB: `CLAUDE.md` (17 KB, 2026-11-08 handoff) | 2026-11-08 12:49 | Handoff note from Codex to Claude Code | `mochi clean` evidence name. Its "about 40 GB" figure is stale | No | **move** to `evidence/handoff` |
 | `cli-release/`, `cli-final/` | 0 | 2026-11-08 | Empty directories | nothing | n/a | **propose delete** (`rmdir`, fails if not empty) |
 | `trials-clone-dedupe-log.json` | 1.6 MiB | 2026-11-08 21:17 | Log of the APFS `clonefile` dedupe: 5 179 files, 465 887 949 bytes cloned (all status `cloned`) | nothing | No (it is the only record of which copies were cloned) | **move** to `evidence/trials-clone-dedupe-log.json` |
-| `README.md` | 1 KiB | 2026-11-08 07:52 | Describes `projects/trials/target/qualification/references` | none | n/a | **rewrite** (tracked content in `docs/WORKSPACE.md`; migration writes a new README) |
+| `README.md` | 1 KiB | 2026-11-08 07:52 | Describes `projects/trials/target/qualification/references` | none | n/a | **rewrite** (tracked content in `docs/workspace.md`; migration writes a new README) |
 | 23 loose logs, scripts, json | each < 18 KB, all 2026-11-08; 69 KB together | 2026-11-08 | See next table | VALIDATION.md cites 4 | see table | **move** to `runs/logs` / `runs/scripts` |
 
 ### The loose files (all from 2026-11-08)
@@ -70,8 +70,8 @@ labelled area, small, low value), **propose delete** (never executed by anything
 | File | Size | What | Referenced | Verdict |
 | --- | --- | --- | --- | --- |
 | `final-rust-tests.log` | 11 KB | cargo test output | VALIDATION.md | move to `runs/logs/` (cited evidence) |
-| `final-browser-tests.log`, `final-clippy.log` | 0.7 KB, 0.1 KB | cargo browser tests, clippy | VALIDATION.md, REAL_WORLD_TRIALS.md | move to `runs/logs/` (cited evidence) |
-| `examples-results.json` | 5 KB | per-example URL/build record (`cli_sha256`...) | VALIDATION.md, REAL_WORLD_TRIALS.md, `verify-examples.py` reads it | move to `runs/logs/` (cited evidence) |
+| `final-browser-tests.log`, `final-clippy.log` | 0.7 KB, 0.1 KB | cargo browser tests, clippy | VALIDATION.md, real-world-trials.md | move to `runs/logs/` (cited evidence) |
+| `examples-results.json` | 5 KB | per-example URL/build record (`cli_sha256`...) | VALIDATION.md, real-world-trials.md, `verify-examples.py` reads it | move to `runs/logs/` (cited evidence) |
 | `final-release-build.log`, `check.log`, `structure-tests.log`, `bun-browser-tests.log`, `bun144-browser-tests.log`, `bun-browser-diagnose.log` | 0.1-1.5 KB | cargo/bun run logs | none | move to `runs/logs/` |
 | `natural-export.log`, `natural-rebuild.log`, `infinitegarden-rebuild.log`, `microsoft-ai-rebuild.log` | 0.2-18 KB | export/rebuild logs of the examples | none | move to `runs/logs/` |
 | `natural-production.log`, `infinitegarden-production.log`, `microsoft-ai-production.log` | 0.1 KB each | `Listening on 127.0.0.1:4184-4186` start/stop only | none | move to `runs/logs/` (candidates for deletion later, trivial size) |
@@ -88,7 +88,7 @@ Twelve dated runs, all from 2026-11-08 (`20261108-*`). Contents: 25 capture dire
 
 | Capture | Size | Used by |
 | --- | --- | --- |
-| `20261108-normalized/natural/capture` | 212 MiB | `tests/semantic.rs` (3), `benchmarks/suites/production.ts`, `source-packs/natural/capture.txt`, `natural-inventory.json`, named-equivalences.md |
+| `20261108-normalized/natural/capture` | 212 MiB | `tests/semantic.rs` (3), `benchmarks/suites/production.ts`, `source-packs/natural/capture.txt`, `natural-inventory.json`, parity-named-equivalences.md |
 | `20261108-normalized/infinitegarden/capture` | 62 MiB | same, plus `garden-inventory.json` |
 | `20261108-microsoft-ai/capture-modules` | 185 MiB | same, plus `msai-inventory.json` |
 
@@ -126,16 +126,16 @@ Garden pair, 9 pairs), `20261108-microsoft-ai/capture-modules/site` (20 MB onto 
 (`natural-current/-final/-ready/-structure-bun1311` 21 MB each, `natural` 12 MB, `project*` 2.8 MB x3, `verification*`
 45 MB), `microsoft-ai/` (`microsoft-ai`, `project-complete/-final/-ready/-verified` 32 MB each), and the
 non-capture parts of `normalized`, `reconstruction`, `surfaces-*`, `synchronized`. They are historical outputs of earlier
-generator versions; only `REAL_WORLD_TRIALS.md` / `VALIDATION.md` describe them. Not referenced by code or tests.
+generator versions; only `real-world-trials.md` / `VALIDATION.md` describe them. Not referenced by code or tests.
 
 Verdict for all of `trials/`: **keep and move intact** as `evidence/trials/`. The captures are evidence by the repo's
-own rule (`WORKSPACE.md`, `mochi clean`), the saving from variants is small and unmeasurable until the user decides
+own rule (`workspace.md`, `mochi clean`), the saving from variants is small and unmeasurable until the user decides
 which runs matter, and splitting the three canonical captures out would change the paths that the tests, inventories
 and docs cite. Deleting variants is **proposed, not done**, below.
 
 ## Parity runs
 
-Run directories are cited by name in five committed reports (docs/parity-reports/*.md, docs/PARITY.md,
+Run directories are cited by name in five committed reports (docs/reports/2026-11-10-parity-*.md, docs/parity.md,
 VALIDATION.md). Cited runs (and the pins they need): `calibration-natural-1`, `-8`, `-9`, `garden-dr-bp-1`,
 `garden-dr-scroll-1`, `garden-dr-static-1`, `garden-hand-bp-1`, `garden-hand-core-1`, `garden-recover-core-1`,
 `garden-sem-final-core-1`, `msai-sem-final-core-1`, `natural-compat-core-1`, `natural-compat-scrollnoise-2`,
@@ -150,9 +150,9 @@ the `run-*.sh` / `.done` helper files. The `-gate` trio is the only large cheap 
 ## Tracked references to workspace paths
 
 Updated by this change (all name paths that move): `.cargo/config.toml`, `.github/workflows/release.yml`,
-`docs/WORKSPACE.md`, `src/clean.rs`, `tests/clean.rs`, `tests/semantic.rs` (3 sites),
+`docs/workspace.md`, `src/clean.rs`, `tests/clean.rs`, `tests/semantic.rs` (3 sites),
 `benchmarks/suites/production.ts` (4), `src/semantic/tokens/styles/tailwind.rs`, `scripts/parity/sink.ts` (3),
-`docs/{PARITY,SEMANTIC,LIFT,AUTHORED_EXPORT,TOKENS,REAL_WORLD_TRIALS}.md`, `docs/parity-reports/*.md`,
+`docs/{parity,semantic-conversion,lift,authored-export,tokens,real-world-trials}.md`, `docs/reports/*.md`,
 `VALIDATION.md`, `Cargo.toml` (comment). Not changed because the path does not move: all `<project>/.mochi/...`
 (`export.json`, `style-audit.json`, `authored-*.json`, `provenance`, `dist`), `src/main.rs` default `.mochi`,
 `src/parity.rs` and `benchmarks/src/fingerprint.ts` (skip lists), `.gitignore`, `Cargo.toml` exclude.
@@ -215,11 +215,11 @@ as `remove`, 8.8 GB apparent in total, 41 evidence directories protected; no bui
 
 ## Log
 
-- 2026-11-11 (step 1): audit started; read `docs/WORKSPACE.md`, `src/clean.rs`, `tests/clean.rs`; no tracked-file edits yet.
+- 2026-11-11 (step 1): audit started; read `docs/workspace.md`, `src/clean.rs`, `tests/clean.rs`; no tracked-file edits yet.
 - 2026-11-11 (step 1): sized all 40 top-level entries; inspected `cli-release`/`cli-final` (empty), `cli-validation`, `template-*`, `handoff`, `.claude` stubs.
 - 2026-11-11 (step 1): `trials` captures classified; clone log analysed; source-pack pins found (`capture.txt`, relative lift `source`); parity inventory pins found; cited parity runs listed.
 - 2026-11-11 (step 1): report written; messaged the parent. Phase 1 starts next.
-- 2026-11-11 (step 2): Phase 1 on branch `feat/workspace-layout`: `src/clean.rs` (`evidence` protected name, `Class::Runs`, `--runs`/`--keep-runs`, `KEEP` pin, `remove_run_entry` through held descriptors, ancestor check now uses every evidence name), `src/main.rs` flags, 12 new tests in `tests/clean.rs` (38 pass), `docs/WORKSPACE.md` rewritten for the layout, tracked path references updated (`.cargo/config.toml`, release workflow, `tests/semantic.rs`, `benchmarks/suites/production.ts`, `tailwind.rs`, docs). A failing new test found that `mochi clean .mochi/runs/verification/x` was accepted (only core names were checked in ancestors); fixed.
+- 2026-11-11 (step 2): Phase 1 on branch `feat/workspace-layout`: `src/clean.rs` (`evidence` protected name, `Class::Runs`, `--runs`/`--keep-runs`, `KEEP` pin, `remove_run_entry` through held descriptors, ancestor check now uses every evidence name), `src/main.rs` flags, 12 new tests in `tests/clean.rs` (38 pass), `docs/workspace.md` rewritten for the layout, tracked path references updated (`.cargo/config.toml`, release workflow, `tests/semantic.rs`, `benchmarks/suites/production.ts`, `tailwind.rs`, docs). A failing new test found that `mochi clean .mochi/runs/verification/x` was accepted (only core names were checked in ancestors); fixed.
 - 2026-11-11 (step 3): Phase 2 `scripts/workspace/migrate.sh` written and exercised on a synthetic workspace: dry run default, apply, rerun (0 to move), missing item (refused, `--allow-missing`), partial state, busy port (stubbed `lsof`; the sandbox blocks real binding), reversal map appended to `handoff/workspace-moves-2026-11-11.md`. A first draft would have pre-created `evidence/handoff` and moved `handoff` into itself; fixed by ordering and a destination guard.
 
 ## Approved prune allowlist (`scripts/workspace/prune.sh`)
@@ -231,7 +231,7 @@ variants are **not** on the list and are not touched. Paths are relative to `.mo
 | Phase (`--only` name) | Exact paths | Size | Removed by |
 | --- | --- | --- | --- |
 | `empties` | `cli-release`, `cli-final` | 0 | `rmdir` (fails if not empty) |
-| `gates` | only `reference.json` and `candidate.json` in `generated/parity-runs/natural-compat-core-1-gate` (141.9 + 143.1 MiB), `.../garden-hand-core-1-gate` (63.5 + 80.3 MiB) and `.../garden-recover-core-1-gate` (80.2 + 80.3 MiB): 6 files | 589 MiB | `rm -f`. **Narrowed from the whole gate directories**: `docs/parity-reports/2026-11-10-first-scoped-report.md:117` says `*-gate/check-parity-report.json` are retained, so each gate's `check-parity-report.json` (6.5, 54.8, 2.3 MiB), `contract.json` and log stay |
+| `gates` | only `reference.json` and `candidate.json` in `generated/parity-runs/natural-compat-core-1-gate` (141.9 + 143.1 MiB), `.../garden-hand-core-1-gate` (63.5 + 80.3 MiB) and `.../garden-recover-core-1-gate` (80.2 + 80.3 MiB): 6 files | 589 MiB | `rm -f`. **Narrowed from the whole gate directories**: `docs/reports/2026-11-10-parity-first-scoped.md:117` says `*-gate/check-parity-report.json` are retained, so each gate's `check-parity-report.json` (6.5, 54.8, 2.3 MiB), `contract.json` and log stay |
 | `dup-exports` | `generated/exports/rec3-natural` 210.2 MiB; `.../rec3-infinitegarden` 194.8 MiB; `.../rr-natural2` 210.2 MiB (each includes its `node_modules`) | 615 MiB | `rm -r` (an export, not a build output) |
 | `trial-projects` | the 29 directories below | 336.2 MiB | `rm -r` |
 | `node-modules` | `generated/exports/{infinitegarden-compat,natural-compat}/node_modules` 190.3 MiB + 189.6 MiB (the three duplicate exports' `node_modules` are already gone with `dup-exports`; they stay on the list for `--only node-modules`) | 380 MiB (777 MB apparent for all five) | `mochi clean --deps --apply` |
@@ -279,15 +279,15 @@ from a tracked file, from `parity-runs`, `source-packs`, `previous-projects` or 
 
 **Dropped from list (4):** `20261108-microsoft-ai/microsoft-ai` (31 936 KiB), and, after the second review,
 `20261108-client-recovery/natural-final` (21 464 KiB) and `.../infinitegarden-final` (4 568 KiB). `VALIDATION.md:23` and
-`docs/REAL_WORLD_TRIALS.md:22` name the first as the served project of the first Microsoft AI export; `VALIDATION.md:384-385` and
-`docs/REAL_WORLD_TRIALS.md:91` name the other two as the trial's "final projects" (ports 4184/4185). They stay until those
+`docs/real-world-trials.md:22` name the first as the served project of the first Microsoft AI export; `VALIDATION.md:384-385` and
+`docs/real-world-trials.md:91` name the other two as the trial's "final projects" (ports 4184/4185). They stay until those
 statements are rewritten. The 29 that remain total **336.2 MiB** (the earlier "about 365 MB" estimate included the three cited ones).
 For information: the untracked `trials/20261108-client-recovery/results.json` and `20261108-normalized/results.json` record
 `normalized/*/project` paths as `model_project`; those directories are on the list, they are historical generated output and no
 tracked file cites them.
 The other sibling names the tests mention (`.../project-final` in `tests/clean.rs`) are synthetic fixtures built in a temp
 directory, not references to the real directory. Directory-level citations of whole trial runs
-(`REAL_WORLD_TRIALS.md` "Artifacts are under .../20261108-client-recovery") name the run, not these project variants; the
+(`real-world-trials.md` "Artifacts are under .../20261108-client-recovery") name the run, not these project variants; the
 run's `results.json`, logs, `verification*` and captures stay.
 
 What the script refuses on top of the allowlist: a symlink (the path or anything inside it outside `node_modules`), another
@@ -314,6 +314,6 @@ descriptors (documented limit in the script header); `mochi clean` phases use de
   (3) symlinked parent directories were followed: every path component is now checked, again at removal; (4) a group with an
   evidence-named or capture-layout top-level member was not kept whole: now it is; (5) `KEEP` entries written as `x/` or with a path
   pinned nothing: normalized; (6) the cross-check refuses while any other build output exists (fails safe): documented in the script
-  header; (7) WORKSPACE.md contradictions: corrected, `prune.sh` mentioned; (8) pin added between plan and apply is not re-read for
+  header; (7) workspace.md contradictions: corrected, `prune.sh` mentioned; (8) pin added between plan and apply is not re-read for
   file members (race only, documented as the known limit). No finding about the retention count, `derived_base`, bash 3.2 or the
   evidence checks.

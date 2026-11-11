@@ -26,7 +26,7 @@ mochi clone https://example.com -o example-source --source-evidence --max-pages 
 mochi check-evidence example-source
 mochi model-project example-source
 mochi plan-source example-source -o example-plan.json
-# Review the evidence and author a specification (see docs/AUTHORED_EXPORT.md).
+# Review the evidence and author a specification (see docs/authored-export.md).
 mochi export example-source --authored-spec example-authored.json -o example-app
 ```
 
@@ -68,8 +68,8 @@ Ordinary clone output stays a deployed-file mirror. The separate `export` comman
 an editable TanStack Start project from a saved source model. CSS and same-site fonts are
 copied as mirror assets; unavailable or ambiguous export assets remain explicit in the report.
 
-[Editable source projects](docs/SOURCE_PROJECTS.md) describes the reconstruction pipeline
-and remaining framework/styling adapters. See [the implemented exporter](docs/EXPORT.md)
+[Editable source projects](docs/source-projects.md) describes the reconstruction pipeline
+and remaining framework/styling adapters. See [the implemented exporter](docs/export.md)
 for its current boundaries and toolchain.
 
 ## Structural analysis
@@ -151,7 +151,7 @@ resources, and original runtime observations. Query-bearing asset URLs remain am
 because mirror paths omit queries. Candidate hashes verify the local bytes, not their origin.
 The model has a 64 MiB aggregate source JSON budget, 128 MiB output budget, 256 MiB aggregate
 local asset budget, and at most 256 selected component candidates. Failed validation or an
-input changing during a rebuild preserves the previous model. See [the model contract](docs/PROJECT_MODEL.md).
+input changing during a rebuild preserves the previous model. See [the model contract](docs/project-model.md).
 
 Authored export accepts reviewed semantic components, tokens, fonts, local artwork,
 and graphics modules. TanStack Start and Tailwind v4 are the implemented output
@@ -163,7 +163,7 @@ and a locally configured TypeSafe key. All semantic results require review and c
 remains unqualified. `export --compatibility --interpretation` attaches validated saved proposals as comments
 and metadata without changing mechanical names or behavior. The adapter, replay and budgets
 have controlled local tests; live access, billing and model quality have not been qualified.
-See [semantic interpretation](docs/INTERPRETATION.md).
+See [semantic interpretation](docs/semantic-interpretation.md).
 
 ## Authored source export
 
@@ -177,8 +177,8 @@ This path requires an evidence-bound reviewed specification. `plan-source` prepa
 evidence, and Jev can classify proposals, but neither automatically authors a complete
 application. No recovered controller is emitted by authored export. An export without
 an authored specification or an explicit `--compatibility` flag fails with guidance.
-See [authored export](docs/AUTHORED_EXPORT.md) and
-[deterministic qualification](docs/DETERMINISTIC_RECONSTRUCTION.md).
+See [authored export](docs/authored-export.md) and
+[deterministic qualification](docs/deterministic-reconstruction.md).
 
 ## Compatibility source export
 
@@ -197,7 +197,7 @@ A route whose modules are unsupported or refused falls back to the static initia
 that route only; `route_modes` in `.mochi/export.json` (and the generated README/EDITING.md) list each route,
 whether it runs recovered code or is a static replica, and the refusal reason. `--no-recover-client` exports
 static replicas everywhere. `--recover-client-route /` is the strict form: selected paths must recover or the
-export fails (repeat it for more paths). See [the export contract](docs/EXPORT.md) for the narrow adapter boundaries.
+export fails (repeat it for more paths). See [the export contract](docs/export.md) for the narrow adapter boundaries.
 
 The source clone and its reports are not modified. Generation runs offline and does not
 install dependencies or execute the original site's scripts.
@@ -218,14 +218,14 @@ The adapter preserves captured CSS selectors and cascade in per-document global 
 under `src/styles/compat`. It retains CSS variables, media conditions, font-face rules
 and pseudo-elements; it does not infer breakpoints or recover original StyleX/Tailwind code.
 Semantic reconstruction, component-local selector extraction and Base UI interaction conversion
-remain subsequent work. See [the authored-source architecture](docs/designs/AUTHORED_SOURCE.md).
+remain subsequent work. See [the authored-source architecture](docs/designs/authored-source.md).
 Generated `EDITING.md` identifies edit locations and compatibility debt; `tokens.css` is an
 owner-authored override surface, not an inferred design system.
 Local captures/trials/builds live in ignored `.mochi/`; required app source and assets stay versioned. Literal query strings remain opaque,
 including repeated keys and `%20` versus `+`; uncaptured states return 404. Multi-origin
 mapping, dynamic route parameters, DOM/CSSOM that changes between sampled viewports,
 CSS imports, unsupported CSS URL grammar, and several control/tag mappings are refused.
-See [the export contract](docs/EXPORT.md) before claiming support for a particular site.
+See [the export contract](docs/export.md) before claiming support for a particular site.
 
 ## Capabilities
 
@@ -266,7 +266,7 @@ isolate concurrent local filesystem changes. Edits are atomic per file, not acro
 
 [MIT](LICENSE).
 
-New exports use Bun, Base UI, Tailwind v4 and Motion. `components/ui` is reserved for Base UI primitives; styled compositions live in `components/compositions`. For editable typed components and scoped tokens, see the [authored source export](docs/AUTHORED_EXPORT.md). It consumes a reviewed semantic specification; automated semantic inference remains unfinished.
+New exports use Bun, Base UI, Tailwind v4 and Motion. `components/ui` is reserved for Base UI primitives; styled compositions live in `components/compositions`. For editable typed components and scoped tokens, see the [authored source export](docs/authored-export.md). It consumes a reviewed semantic specification; automated semantic inference remains unfinished.
 
 ### Reconstruction benchmarks
 
@@ -277,4 +277,4 @@ checks repeatability and source/build hashes, and retains React Doctor diagnosti
 Calibration tests must detect deliberately injected regressions before site ratings
 are trusted. Existing-project, reviewed-specification and CLI reconstruction runs
 are separate tracks; fixture results do not establish arbitrary-site accuracy.
-See [parity contracts](docs/PARITY.md) for the offline comparison gate.
+See [parity contracts](docs/parity.md) for the offline comparison gate.

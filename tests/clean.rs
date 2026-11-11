@@ -1217,7 +1217,7 @@ fn workspace_containing_repositories_warns() {
     assert!(String::from_utf8(out).unwrap().contains("WARNING"));
 }
 
-// ---- the `.mochi` layout of docs/WORKSPACE.md -----------------------------------------------
+// ---- the `.mochi` layout of docs/workspace.md -----------------------------------------------
 
 /// Every evidence directory of the layout; each holds a built project so that a missed
 /// name would show up as a `remove` row.
@@ -1498,7 +1498,7 @@ fn runs_can_be_pinned_by_a_keep_file_or_by_keep() {
         write(runs.join(name).join("run.json"), "{}");
         set_age_all(&runs.join(name), age);
     }
-    write(runs.join("cited/KEEP"), "cited by docs/parity-reports");
+    write(runs.join("cited/KEEP"), "cited by docs/reports");
     set_age_all(&runs.join("cited"), 900);
     let (_, report) = apply(
         r,

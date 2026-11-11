@@ -2,7 +2,7 @@
 //!
 //! Entry points: [`pipeline::run`] (capture directory in, files and report out), [`cli`]
 //! (`mochi tokens`), [`plan::TokenSet::token_for`] (property/value lookup for emitters).
-//! Documented in `docs/TOKENS.md`.
+//! Documented in `docs/tokens.md`.
 pub mod bridge;
 pub mod capture;
 pub mod cascade;

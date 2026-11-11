@@ -26,6 +26,8 @@ jobs:
           bun install --cwd benchmarks --frozen-lockfile
           bun run --cwd benchmarks check
           bun test --cwd benchmarks
+      - name: Check documentation references
+        run: bun scripts/docs/check-links.ts
       - uses: browser-actions/setup-chrome@v2
         if: runner.os == 'macOS'
         id: chrome

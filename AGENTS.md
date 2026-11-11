@@ -10,5 +10,5 @@
 - Every new `mochi-web` publication on crates.io must have a matching GitHub
   release, tagged `mochi-web-v<version>` at the published package commit.
   Compose reviewed feature, migration, limitation, and validation notes for the
-  changes since the previous release. Follow [docs/RELEASING.md](docs/RELEASING.md);
+  changes since the previous release. Follow [docs/releasing.md](docs/releasing.md);
   do not mark a release complete while either publication remains unverified.

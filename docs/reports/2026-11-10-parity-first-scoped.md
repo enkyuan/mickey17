@@ -164,4 +164,4 @@ states dropped from the gate/rediff; identically failing interaction steps repor
 container / touch queries); weak settle rule; calibration detection by item count / vacuous breakpoint shifts / unsound no-op proof /
 undisturbed-run proof; over-broad `container-retag`; collector coverage holes (+ truncation recorded); stale docs; an unpaused
 virtual clock; sink writes from any origin; gate/TS invariant gaps; html/body pseudo-elements; error-origin matching;
-rediff robustness. Deferred on purpose and documented in `docs/PARITY.md` ("Known limitations of the pipeline itself").
+rediff robustness. Deferred on purpose and documented in `docs/parity.md` ("Known limitations of the pipeline itself").

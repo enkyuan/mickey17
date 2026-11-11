@@ -1,4 +1,4 @@
-/* Page-side helper for the Browser pane path (see docs/PARITY.md, "Browser pane driver").
+/* Page-side helper for the Browser pane path (see docs/parity.md, "Browser pane driver").
  * Load from the sink, then call from javascript_tool:
  *   (0, eval)(await (await fetch('http://127.0.0.1:8765/pane.js')).text())
  *   await __mochiPane.capture('home.desktop1440.initial.ref')
