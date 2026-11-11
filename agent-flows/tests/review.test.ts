@@ -680,3 +680,84 @@ describe("round 3: scanners and cost", () => {
         expect(performance.now() - started).toBeLessThan(10_000);
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 4
+
+describe("round 4", () => {
+    const constants = (body: Record<string, unknown>, headers: [string, string][] = []) => {
+        const mk = (run: string) => doc(run, [req(0, "POST", `${B}/x`, { headers, body: jsonBody(body) })]);
+        return graphOf([mk("a"), mk("b")]);
+    };
+
+    test("slug- and word-shaped secrets under ordinary names stay redacted; slugs under product names stay", () => {
+        const g = constants({
+            recoveryPhrase: "correct-horse-battery-staple",
+            mnemonic: "abandon_ability_able_about_above_absent",
+            licence: "ABCDE-FGHIJ-KLMNO-PQRST",
+            token2: "sk\x5flive_abcdefghijkl_123456",
+            sk: "sk\x5flive_abcdefghijklmnopqrstuvwx",
+            sku: "WIDGET-2024-BLUE-XL",
+            product_handle: "blue-widget-deluxe-edition",
+        });
+        const text = toJson(g);
+        for (const s of ["correct-horse", "abandon_ability", "ABCDE-FGHIJ", "sk\x5flive_abcdefghijkl", "abcdefghijklmnopqrstuvwx"]) expect(text, s).not.toContain(s);
+        expect(valueOf(g, 0, "json:$.sku")!.value).toBe("WIDGET-2024-BLUE-XL");
+        expect(valueOf(g, 0, "json:$.product_handle")!.value).toBe("blue-widget-deluxe-edition");
+    });
+
+    test("a credential in a descriptive header is not exempt, a real user agent is", () => {
+        const g = constants({}, [["x-requested-with", "sk\x5flive_ABCdef1234567890xyz"], ["origin", "sk\x5flive_ABCdef1234567890xyz"], ["user-agent", "sk\x5flive_ABCdef1234567890xyz"]]);
+        expect(toJson(g)).not.toContain("sk\x5flive_ABCdef1234567890xyz");
+    });
+
+    test("non-English password names, numeric and single-quoted JSON text, odd card separators, automation selectors", () => {
+        const g = constants({ passwort: "hunter2024", mot_de_passe: "Tr0ub4dor-3", senha: "abc12345", text: "{'pin': 482913}", text2: '{"password": "a\\"b"}', card: "4242.4242.4242.4242", card2: "4242_4242_4242_4242" });
+        const text = toJson(g);
+        for (const s of ["hunter2024", "Tr0ub4dor-3", "abc12345", "482913", "4242.4242", "4242_4242"]) expect(text, s).not.toContain(s);
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mk = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = '#password >> fill("hunter2024") >> text=hunter2024';
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        expect(toJson(graphOf([mk("a"), mk("b")]))).not.toContain("hunter2024");
+    });
+
+    test("nested method/op fields and free text starting with 'query' do not block alignment", () => {
+        const mk = (run: string, pm: string, method: string, message: string) =>
+            doc(run, [req(0, "POST", `${B}/pay`, { body: jsonBody({ payment: { method: pm }, shipping: { method }, message }) })], [["message", message]]);
+        const g = graphOf([mk("a", "pm_8f2Kq9ZxLm41", "express", "query about my order"), mk("b", "pm_Zq81mXk9L2f8", "standard", "query regarding sizes")]);
+        expect(g.status).toBe("resolved");
+        // A top-level server-issued action value is derived, not an operation name.
+        const act = (run: string, n: string) => doc(run, [req(0, "POST", `${B}/a`, { respBody: jsonBody({ n }) }), req(1, "POST", `${B}/b?action=${n}`)]);
+        expect(graphOf([act("a", "nonce_8f2Kq9ZxLm41"), act("b", "nonce_Zq81mXk9L2f8")]).status).toBe("resolved");
+    });
+
+    test("a truncated variant index is reported and keeps the longest sources", () => {
+        const mk = (run: string, seed: number) => {
+            const g = new Rng(seed);
+            const token = `eyJhbGci${g.hex(300)}`;
+            const images = Object.fromEntries(Array.from({ length: 80 }, (_, k) => [`i${k}`, `eyJhbGci${g.hex(60 + k)}`]));
+            return doc(run, [req(0, "POST", `${B}/a`, { respBody: jsonBody({ accessToken: token, images }) }), req(1, "POST", `${B}/b`, { headers: [["authorization", `Bearer ${token}`]] })]);
+        };
+        const g = graphOf([mk("a", 1), mk("b", 2)]);
+        expect(valueOf(g, 1, "header:authorization")!.class).toBe("derived");
+        expect(g.warnings.some((w) => w.kind === "variant-index-truncated")).toBe(true);
+    });
+
+    test("HTML: inert containers, bogus comments and --!> comment ends", () => {
+        const mk = (run: string, t: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", `<textarea><input type=hidden name=csrf value=DECOYDECOY123></textarea><![CDATA[<input type=hidden name=csrf value=DECOYDECOY456>]]><template><input type=hidden name=csrf value=DECOYDECOY789></template><!-- x --!><input type=hidden name=csrf value=${t}>`] }), req(1, "POST", `${B}/x`, { headers: [["x-csrf", t]] })]);
+        const g = graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]);
+        expect(valueOf(g, 1, "header:x-csrf")!.source!.location).toBe("html:input[name=csrf]");
+    });
+
+    test("digit floods and huge numeric ids stay fast", () => {
+        const started = performance.now();
+        const mk = (run: string) => doc(run, [req(0, "POST", `${B}/x`, { body: jsonBody({ blob: "1".repeat(1_000_000) }) })]);
+        graphOf([mk("a"), mk("b")]);
+        const tied = (run: string, a: string, b: string) => doc(run, [req(0, "GET", `${B}/p`, { id: a, tMs: 1000 }), req(1, "GET", `${B}/q`, { id: b, tMs: 1000 })]);
+        graphOf([tied("a", "9".repeat(200_000), "9".repeat(200_001)), tied("b", "8".repeat(200_000), "8".repeat(200_001))]);
+        expect(performance.now() - started).toBeLessThan(10_000);
+    });
+});

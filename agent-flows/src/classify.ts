@@ -135,7 +135,9 @@ export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
         for (const loc of locs) targets.push({ step, loc, values: runs.map((r) => r.reqMap[step]!.get(loc) ?? null) });
     }
 
-    const hits = runs.map((r) => discover(r, targets));
+    const notes = new Set<string>();
+    const hits = runs.map((r) => discover(r, targets, notes));
+    for (const n of [...notes].sort(cmp)) warnings.push({ step: null, location: null, kind: "variant-index-truncated", detail: n });
 
     const classes: ValueClass[][] = Array.from({ length: nSteps }, () => []);
     const edges: Edge[] = [];
@@ -265,14 +267,24 @@ function jarSlots(rec: Recording): Slot[] {
     return rec.initialCookies.filter((c) => counts.get(c.name) === 1).map((c) => ({ loc: `cookie:${c.name.replace(/#/g, "%23")}`, value: c.value }));
 }
 
-/** Last path component of a location, for matching fields that name an operation at any depth (batched GraphQL: `json:$[0].operationName`). */
-const OPERATION_FIELDS = new Set(["operationname", "operation", "op", "action", "method", "mutation", "cmd"]);
-const lastComponent = (loc: string): string => (loc.split(/[.:]/).pop() ?? "").replace(/\[\d+\]$/, "").toLowerCase();
-/** The operation a request value names: an operation field's value, or the name in a GraphQL document. */
+/**
+ * Fields that name the operation of an RPC-style request: a top-level body field or query parameter
+ * (`operationName`, JSON-RPC `method`, `action`, `op`, ...) or the `operationName` of a batched body
+ * element. Nested fields called `method` (a payment or shipping method) are ordinary values.
+ */
+const TOP_OPERATION = /^(?:json:\$|json:\$\[\d+\])\.(?:operationName|operation|op|action|method|mutation|cmd)$|^(?:url\.query|form):(?:operationName|operation|op|action|method|mutation|cmd)$|^json:\$\[\d+\]\.operationName$/;
+const GRAPHQL_DOCUMENT = /^(?:json:\$|json:\$\[\d+\])\.query$|^(?:url\.query|form):query$/;
+/**
+ * The operation a request value names, or null when it is not an operation name. A value that looks
+ * like an id (server-issued) is not an operation name either: it is a derived value, not an endpoint.
+ */
 function operationOf(loc: string, value: string): string | null {
-    if (OPERATION_FIELDS.has(lastComponent(loc)) && (loc.startsWith("json:") || loc.startsWith("url.query:") || loc.startsWith("form:"))) return value;
-    const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
-    return m ? `gql:${m[1]}` : null;
+    if (TOP_OPERATION.test(loc)) return isWeakEvidence(value) && /\d/.test(value) ? null : value;
+    if (GRAPHQL_DOCUMENT.test(loc)) {
+        const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
+        return m ? `gql:${m[1]}` : null;
+    }
+    return null;
 }
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
@@ -362,7 +374,7 @@ interface SrcEntry {
     concrete?: string;
 }
 
-function discover(run: RunData, targets: Aligned[]): RunHits {
+function discover(run: RunData, targets: Aligned[], notes: Set<string>): RunHits {
     const structured = new Map<string, SrcEntry>();
     const wild: SrcEntry[] = [];
     const put = (sid: Sid, val: string) => structured.set(sidKey(sid), { sid, val });
@@ -407,8 +419,10 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
         if (list.length <= 16) continue;
         const byLen = new Map<number, Set<string>>();
         for (const v of list) byLen.set(v.length, (byLen.get(v.length) ?? new Set<string>()).add(v));
-        // Bound the work per offset: at most the 64 most common lengths of a crowded window are probed.
-        const keep = [...byLen.entries()].sort((a, b) => b[1].size - a[1].size || a[0] - b[0]).slice(0, 64);
+        // Bound the work per offset: the 64 longest lengths of a crowded window are probed (longer values are
+        // the more distinctive); anything dropped is reported.
+        const keep = [...byLen.entries()].sort((a, b) => b[0] - a[0]).slice(0, 64);
+        if (byLen.size > keep.length) notes.add(`${byLen.size - keep.length} shorter source lengths sharing the prefix \`${safeText(w)}\` were not searched for substring matches`);
         crowded.set(w, new Map(keep));
     }
     const variantsAt = (value: string, i: number): string[] => {

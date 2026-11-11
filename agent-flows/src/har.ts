@@ -66,8 +66,12 @@ export function natCmp(a: string, b: string): number {
         const y = tb[i]!;
         if (x === y) continue;
         if (/^\d/.test(x) && /^\d/.test(y)) {
-            const d = BigInt(x) - BigInt(y);
-            if (d !== 0n) return d < 0n ? -1 : 1;
+            // Numeric order without parsing: drop leading zeros, then shorter is smaller, then lexical.
+            const nx = x.replace(/^0+(?=\d)/, "");
+            const ny = y.replace(/^0+(?=\d)/, "");
+            if (nx.length !== ny.length) return nx.length < ny.length ? -1 : 1;
+            const lex = cmp(nx, ny);
+            if (lex !== 0) return lex;
             continue;
         }
         return cmp(x, y);

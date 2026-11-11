@@ -199,6 +199,9 @@ const safeCp = (n: number, fallback: string): string => {
  * scanner (linear time, whatever the input), not a full HTML parser. Every tag is parsed through its
  * quoted attributes, so markup inside an attribute value is never mistaken for a tag.
  */
+/** Elements whose content is text (or an inert fragment), never form controls of the live DOM. */
+const RAW_TEXT = new Set(["script", "style", "textarea", "title", "xmp", "noscript", "template", "plaintext"]);
+
 function scanTags(html: string, tag: string): Map<string, string>[] {
     const out: Map<string, string>[] = [];
     let i = 0;
@@ -214,9 +217,18 @@ function scanTags(html: string, tag: string): Map<string, string>[] {
             continue;
         }
         if (html.startsWith("<!--", lt)) {
-            const end = html.indexOf("-->", lt + 4);
+            const a = html.indexOf("-->", lt + 4);
+            const b = html.indexOf("--!>", lt + 4);
+            const end = a < 0 ? b : b < 0 ? a : Math.min(a, b);
             if (end < 0) break;
-            i = end + 3;
+            i = end + (html.startsWith("--!>", end) ? 4 : 3);
+            continue;
+        }
+        if (html[lt + 1] === "!" || html[lt + 1] === "?") {
+            // `<!DOCTYPE`, `<![CDATA[` and `<?php` are bogus comments: they end at the next `>`.
+            const end = html.indexOf(">", lt + 2);
+            if (end < 0) break;
+            i = end + 1;
             continue;
         }
         const first = html[lt + 1] ?? "";
@@ -268,7 +280,7 @@ function scanTags(html: string, tag: string): Map<string, string>[] {
         }
         if (!closed) break;
         i = p;
-        if (name === "script" || name === "style") {
+        if (RAW_TEXT.has(name)) {
             // Raw text up to the matching end tag; nothing inside is markup.
             const re = new RegExp(`</${name}[\\s/>]`, "gi");
             re.lastIndex = i;

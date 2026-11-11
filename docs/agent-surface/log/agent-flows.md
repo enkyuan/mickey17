@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (91 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (98 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -238,12 +238,23 @@ markup inside attribute values: every tag is now parsed through its quoted attri
 Known and kept: a persisted-query `sha256Hash` or any other 14+ character digit-bearing token constant is redacted (it cannot
 be told from a secret); Chrome/Playwright HARs without `_requestId` and with same-millisecond requests will block on `ambiguous` order.
 
-**Round 4:** re-review of the round-3 fixes — see below once it has run.
+**Round 4 (Opus, high) re-review of db88b4e.** Confirmed holding: card windows, kept constants, duplicate jar names, GET/batched/query-only
+GraphQL blocks, a linear HTML scanner on hostile input, linear `piiish`, selector cleaning, encoded names. New findings, fixed with tests:
+slug/word-shaped secrets under ordinary names were emitted by the round-3 exemptions (the slug exemption now applies only under
+product/path/label location names; a digitless token needs 20+ characters again); the 64-length cap silently dropped source
+lengths (the longest are kept and the rest reported as `variant-index-truncated`); `operationOf` falsely blocked nested `method` fields,
+server-issued `action` values and free text starting with "query" (now only top-level/batched operation fields, `query` fields for the GraphQL document, and id-like
+values are ignored); the benign-header exemption covered credentials (limited to descriptive headers; `user-agent` only when it is a product token);
+non-English password names, numeric and single-quoted JSON text, `.`/`_`/`/` card separators, automation-style selectors (`fill("…")`, `text=…`);
+the HTML scanner now treats `textarea`, `title`, `xmp`, `noscript`, `template` as inert, `<![CDATA[`/`<?` as bogus comments and accepts `--!>`;
+`cardIn` and `natCmp` bounded (no BigInt). Known and kept: a duplicate jar cookie name in only one run blocks (the name is then not a source in that run).
+
+**Round 5:** re-review of the round-4 fixes — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 91 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 98 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -261,5 +272,5 @@ be told from a secret); Chrome/Playwright HARs without `_requestId` and with sam
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (91 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (98 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).
