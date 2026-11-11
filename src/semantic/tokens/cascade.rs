@@ -88,6 +88,17 @@ fn layer_cmp(a: &LayerRank, b: &LayerRank) -> Ordering {
     }
 }
 
+/// See [`Cascade::opacity_toggles`].
+#[derive(Debug, Default, Clone)]
+pub struct Toggles {
+    /// Some rule that would make the element visible is a hover/focus/open/active style toggle.
+    pub other: bool,
+    /// Some such rule is a once-only reveal (`.is-revealed`, `[data-revealed]`, `.in-view`).
+    pub reveal: bool,
+    /// The `opacity`/`translate`/`transform`/`scale`/`rotate` values the reveal rules declare.
+    pub end: BTreeMap<String, String>,
+}
+
 #[derive(Debug)]
 pub struct FlatRule {
     pub complex: Complex,
@@ -582,6 +593,132 @@ impl Cascade {
         }
         out.sort_unstable();
         out.dedup();
+        out
+    }
+
+    /// Rules that could make this element visible later than the capture shows it: they declare a
+    /// non-zero `opacity`, their last compound can match the element, and they are not already
+    /// part of its cascade. Classified by the words in their selector: a hover/focus/open/active
+    /// style toggle (`other`), or a once-only reveal class/attribute (`revealed`, `in-view`,
+    /// `is-visible`), whose declared end values (`opacity`, `translate` ...) are collected.
+    pub fn opacity_toggles<D: Dom + ?Sized>(&self, dom: &D, node: usize) -> Toggles {
+        const OTHER: &[&str] = &[
+            "hover",
+            "focus",
+            "active",
+            "open",
+            "opened",
+            "closed",
+            "expanded",
+            "collapsed",
+            "selected",
+            "checked",
+            "current",
+            "show",
+            "shown",
+            "pressed",
+            "disabled",
+            "state",
+            "on",
+            "visited",
+            "target",
+            "hidden",
+        ];
+        const REVEAL: &[&str] = &["revealed", "inview", "appeared", "entered"];
+        const END_PROPS: &[&str] = &["opacity", "translate", "transform", "scale", "rotate"];
+        let words = |t: &str| -> Vec<String> {
+            t.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let is_other = |w: &[String]| w.iter().any(|t| OTHER.contains(&t.as_str()));
+        let is_reveal = |w: &[String]| {
+            w.iter().any(|t| REVEAL.contains(&t.as_str()))
+                || w.windows(2).any(|p| p[0] == "in" && p[1] == "view")
+        };
+        let toggling = |text: &str| {
+            let w = words(text);
+            is_other(&w) || is_reveal(&w)
+        };
+        // A compound without its toggling parts (`.is-revealed`, `[data-state=open]`, `:hover`,
+        // `:not(.is-hidden)`): what the rule is about when the toggle is off.
+        let strip = |c: &Compound| Compound {
+            simples: c
+                .simples
+                .iter()
+                .filter(|s| match s {
+                    Simple::Class(n) => !toggling(n),
+                    Simple::Attr { name, value, .. } => !toggling(name) && !toggling(value),
+                    Simple::Pseudo(_) => false,
+                    Simple::Is(l) | Simple::Where(l) | Simple::Not(l) | Simple::Has(l) => {
+                        !toggling(&l.to_css())
+                    }
+                    _ => true,
+                })
+                .cloned()
+                .collect(),
+        };
+        let mut out = Toggles::default();
+        for rule in &self.rules {
+            if rule.active == Tri::No {
+                continue;
+            }
+            let Some(last) = rule.complex.compounds.last() else {
+                continue;
+            };
+            if last.pseudo_element().is_some() {
+                continue;
+            }
+            let shows = rule.decls.iter().any(|d| {
+                d.name == "opacity" && {
+                    let v = css::to_css(&css::trim(&d.value));
+                    !v.is_empty() && v != "0" && v != "0%"
+                }
+            });
+            if !shows {
+                continue;
+            }
+            let stripped = Complex {
+                leading: rule.complex.leading,
+                compounds: rule.complex.compounds.iter().map(strip).collect(),
+                combinators: rule.complex.combinators.clone(),
+            };
+            let last_left = stripped.compounds.last().map_or(0, |c| c.simples.len());
+            // A rule about nothing but its toggle (`[data-state=open]`, `:disabled`) says nothing
+            // about this element unless the element carries the toggling attribute itself.
+            if last_left == 0 {
+                let attrs: Vec<&String> = last
+                    .simples
+                    .iter()
+                    .filter_map(|s| match s {
+                        Simple::Attr { name, .. } => Some(name),
+                        _ => None,
+                    })
+                    .collect();
+                if attrs.is_empty() || !attrs.iter().all(|n| dom.attr(node, n).is_some()) {
+                    continue;
+                }
+            } else if selector::complex_match(&stripped, dom, node) == Tri::No {
+                continue;
+            }
+            if selector::complex_match(&rule.complex, dom, node) == Tri::Yes {
+                continue;
+            }
+            let w = words(&rule.complex.to_css());
+            if is_other(&w) {
+                out.other = true;
+            } else if is_reveal(&w) {
+                out.reveal = true;
+                for d in rule.decls.iter() {
+                    if END_PROPS.contains(&d.name.as_str()) {
+                        out.end
+                            .insert(d.name.clone(), css::to_css(&css::trim(&d.value)));
+                    }
+                }
+            }
+        }
         out
     }
 

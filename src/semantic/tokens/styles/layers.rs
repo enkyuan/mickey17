@@ -6,7 +6,7 @@
 //! conditions evaluated at a representative width of every interval between the media
 //! thresholds found in the stylesheets); nothing is read back from computed style.
 
-use super::super::cascade::{Cascade, Winner, winner_cmp};
+use super::super::cascade::{Cascade, Toggles, Winner, winner_cmp};
 use super::super::css::{self, Component, Item, Node, Sheet, Tok};
 use super::super::eval;
 use super::super::selector::{Dom, Tri};
@@ -246,7 +246,11 @@ fn identity(prop: &str, computed: &str) -> bool {
 
 /// What the element's captured end state says about its resting-width author declarations:
 /// opacity and visibility that differ, and transform-like properties that settled to identity.
-pub fn settle_plan(rest: &Layer, computed: &BTreeMap<String, String>) -> Vec<Settle> {
+pub fn settle_plan(
+    rest: &Layer,
+    computed: &BTreeMap<String, String>,
+    animated: bool,
+) -> Vec<Settle> {
     let mut out = Vec::new();
     for prop in [
         "opacity",
@@ -262,7 +266,9 @@ pub fn settle_plan(rest: &Layer, computed: &BTreeMap<String, String>) -> Vec<Set
         let (a, c) = (author.trim(), value.trim());
         let differs = match prop {
             "opacity" => match (a.parse::<f64>(), c.parse::<f64>()) {
-                (Ok(x), Ok(y)) => (x - y).abs() > 1e-3,
+                // An element captured with an animation listed (`animation_states`) may be
+                // mid-flight: only a clean end value (fully shown) is taken.
+                (Ok(x), Ok(y)) => (x - y).abs() > 1e-3 && (!animated || (y - 1.0).abs() < 1e-9),
                 _ => false,
             },
             "visibility" => {
@@ -337,6 +343,108 @@ pub struct Overlay {
     /// The same elements in each forced state and under reduced motion, resolved on the other
     /// capture's own DOM.
     pub states: HashMap<usize, BTreeMap<State, Layer>>,
+}
+
+/// Does the element look like one a script reveals once (fade/slide in on load or scroll) rather
+/// than one hidden until something happens to it (a popover, a hover arrow, an inactive slide)?
+/// It is at opacity 0, visible and displayed, does not swallow pointer events, and no rule in
+/// the sheets shows it by a hover/focus/open/active/selected toggle (`toggles.other`, which also
+/// sees ancestor and sibling states). Evidence that it is a reveal: a once-only reveal rule
+/// exists (`.is-revealed`, `[data-revealed]`, `.in-view`), or its own `opacity` is 1 under
+/// `prefers-reduced-motion`, or it carries a `reveal` / `in-view` attribute or class token.
+/// The end state comes from the reveal rule's declared values, else from the reduced-motion
+/// layer; offsets are only cleared when one of them says so.
+pub fn reveal_plan(
+    attributes: &[(String, String)],
+    rest: &Layer,
+    states: &BTreeMap<State, &Layer>,
+    computed: &BTreeMap<String, String>,
+    toggles: &Toggles,
+) -> Vec<Settle> {
+    let get = |p: &str| computed.get(p).map(|v| v.trim());
+    if get("opacity") != Some("0") || rest.decls.get("opacity").map(|v| v.trim()) != Some("0") {
+        return Vec::new();
+    }
+    let declared = |p: &str, v: &str| rest.decls.get(p).is_some_and(|x| x.trim() == v);
+    if get("visibility") == Some("hidden")
+        || get("display") == Some("none")
+        || declared("visibility", "hidden")
+        || declared("display", "none")
+        || declared("pointer-events", "none")
+        || get("pointer-events") == Some("none")
+    {
+        return Vec::new();
+    }
+    // A toggle (hover/focus/open/active, on the element or on an ancestor or sibling) is not a reveal.
+    if toggles.other {
+        return Vec::new();
+    }
+    for (state, layer) in states {
+        if *state != State::ReducedMotion && layer.decls.get("opacity") != rest.decls.get("opacity")
+        {
+            return Vec::new();
+        }
+    }
+    const OTHER: &[&str] = &["hover", "focus", "active", "open", "toggle", "select"];
+    let named = attributes.iter().any(|(k, v)| {
+        let tokens = |t: &str| -> Vec<String> {
+            t.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let mut all = tokens(k);
+        let kt = tokens(k);
+        let animation_attr = kt
+            .iter()
+            .any(|t| matches!(t.as_str(), "aos" | "animate" | "reveal"));
+        if k == "class" || k == "data-state" || animation_attr {
+            all.extend(tokens(v));
+        }
+        if animation_attr && all.iter().any(|t| t == "fade") {
+            all.push("reveal".into());
+        }
+        let hit = all
+            .iter()
+            .any(|t| matches!(t.as_str(), "reveal" | "inview" | "appear" | "fadein"))
+            || all
+                .windows(2)
+                .any(|w| (w[0] == "in" && w[1] == "view") || (w[0] == "fade" && w[1] == "in"));
+        hit && !all.iter().any(|t| OTHER.contains(&t.as_str()))
+    });
+    let reduced = states.get(&State::ReducedMotion).copied();
+    let shown_when_reduced =
+        reduced.is_some_and(|l| l.decls.get("opacity").map(|v| v.trim()) == Some("1"));
+    if !(toggles.reveal || named || shown_when_reduced) {
+        return Vec::new();
+    }
+    let end_of = |prop: &str| -> Option<String> {
+        toggles
+            .end
+            .get(prop)
+            .cloned()
+            .or_else(|| reduced.and_then(|l| l.decls.get(prop).cloned()))
+    };
+    let mut out = vec![Settle {
+        prop: "opacity".into(),
+        author: "0".into(),
+        value: end_of("opacity")
+            .filter(|v| v != "0")
+            .unwrap_or_else(|| "1".into()),
+    }];
+    for prop in ["translate", "transform", "scale", "rotate"] {
+        if let (Some(author), Some(end)) = (rest.decls.get(prop), end_of(prop))
+            && author.trim() != end.trim()
+        {
+            out.push(Settle {
+                prop: prop.into(),
+                author: author.clone(),
+                value: end,
+            });
+        }
+    }
+    out
 }
 
 impl Layer {

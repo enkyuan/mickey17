@@ -821,3 +821,304 @@ fn reduced_motion_combined_with_a_state_is_reported_as_a_gap() {
     assert_eq!(p.report.untranslated.reduced_motion_with_state, 1);
     assert!(p.files["styles.report.md"].contains("combine a state"));
 }
+
+// ----- reveal end states (Garden: hero nav, story copy, footer items hidden until a script ran) -----
+
+/// One page with nodes `(parent, tag, [(attr, value)])`, a shared computed style and extra page keys.
+type RawNode<'a> = (Option<usize>, &'a str, Vec<(&'a str, &'a str)>);
+
+fn translate_raw(
+    nodes: &[RawNode],
+    computed: &[(&str, &str)],
+    rules: &[&str],
+    extra: serde_json::Value,
+) -> StylePlan {
+    let dir = tempfile::tempdir().unwrap();
+    let pages = dir.path().join("reconstruction").join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    let mut strings: Vec<String> = Vec::new();
+    let mut map: Vec<[usize; 2]> = Vec::new();
+    for (k, v) in computed {
+        strings.push((*k).to_string());
+        strings.push((*v).to_string());
+        map.push([strings.len() - 2, strings.len() - 1]);
+    }
+    // An attribute `#text` gives the element a text child (added after all elements).
+    let mut texts: Vec<serde_json::Value> = Vec::new();
+    let mut nodes: Vec<serde_json::Value> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, (parent, tag, attrs))| {
+            if let Some((_, t)) = attrs.iter().find(|(k, _)| *k == "#text") {
+                texts.push(json!({"parent": i, "kind": "text", "value": t}));
+            }
+            let attrs: Vec<serde_json::Value> = attrs
+                .iter()
+                .filter(|(k, _)| *k != "#text")
+                .map(|(k, v)| json!({"name": k, "value": v}))
+                .collect();
+            json!({"parent": parent, "kind": "element", "tag": tag, "attributes": attrs, "style": 0, "pseudo": {}})
+        })
+        .collect();
+    nodes.extend(texts);
+    let mut page = json!({
+        "url": "https://t.test/", "viewport": {"width": 1000, "height": 800}, "color_scheme": "dark",
+        "nodes": nodes,
+        "styles": {"strings": strings, "maps": [map]},
+        "stylesheets": [{"href": null, "rules": rules}],
+    });
+    if let (Some(p), Some(e)) = (page.as_object_mut(), extra.as_object()) {
+        for (k, v) in e {
+            p.insert(k.clone(), v.clone());
+        }
+    }
+    std::fs::write(pages.join("page-00000-1000x800.json"), page.to_string()).unwrap();
+    translate(
+        dir.path(),
+        Path::new("reconstruction/pages/page-00000-1000x800.json"),
+        &StyleOptions::standard(),
+    )
+    .unwrap()
+}
+
+fn emitted(p: &StylePlan, node: usize) -> String {
+    format!("{} {}", p.classes[&node], p.files["src/styles/recipes.css"])
+}
+
+#[test]
+fn elements_the_capture_lists_with_an_animation_keep_their_end_state() {
+    // Computed opacity 1 is the end value of the hero's entrance animation (`animation_states`).
+    let p = translate_raw(
+        &[
+            (None, "html", vec![("class", "")]),
+            (Some(0), "body", vec![("class", "")]),
+            (Some(1), "nav", vec![("class", "hero-nav")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "1")],
+        &[".hero-nav { opacity: 0; will-change: opacity }"],
+        json!({"animation_states": {"2": {"opacity": "1"}}}),
+    );
+    verified(&p);
+    let all = emitted(&p, 2);
+    assert!(
+        !all.contains("opacity-0") && !all.contains("opacity:0"),
+        "{all}"
+    );
+}
+
+#[test]
+fn once_only_reveals_are_shown_but_toggles_panels_and_click_targets_are_not() {
+    let a = |k: &'static str, v: &'static str| (k, v);
+    let p = translate_raw(
+        &[
+            (None, "html", vec![a("class", "")]),
+            (Some(0), "body", vec![a("class", "")]),
+            // 2: named reveal; 3: has a `.is-revealed` rule that clears the offset.
+            (
+                Some(1),
+                "p",
+                vec![a("class", "story"), a("data-story-reveal", "")],
+            ),
+            (Some(1), "li", vec![a("class", "item")]),
+            // 4/5: shown by the hover of an ANCESTOR; 6: visibility panel; 7: pointer-less popup.
+            (Some(1), "div", vec![a("class", "cta")]),
+            (Some(4), "span", vec![a("class", "arrow")]),
+            (Some(1), "div", vec![a("class", "panel")]),
+            (Some(1), "div", vec![a("class", "popup")]),
+            // 8: class-toggled slide; 9: click-target select; 10: named, centered with a translate.
+            (Some(1), "div", vec![a("class", "slide")]),
+            (
+                Some(1),
+                "select",
+                vec![a("class", "appearance-none overlay")],
+            ),
+            (Some(1), "div", vec![a("class", "fade-in centered")]),
+        ],
+        &[
+            ("font-size", "16px"),
+            ("opacity", "0"),
+            ("translate", "-50% -50%"),
+            ("transition-property", "all"),
+        ],
+        &[
+            "[data-story-reveal] { opacity: 0; transition: opacity .2s }",
+            ".item { opacity: 0; translate: 0 12px } .item.is-revealed { opacity: 1; translate: none }",
+            ".arrow { opacity: 0; translate: .5px .5px; transition: opacity .2s }",
+            "@media (hover: hover) { .cta:hover .arrow { opacity: 1 } }",
+            ".panel { opacity: 0; visibility: hidden; transition: opacity .2s }",
+            ".popup { opacity: 0; pointer-events: none; translate: 0 8px }",
+            ".slide { opacity: 0; translate: 30px 0 } .slide.is-active { opacity: 1; translate: none }",
+            ".overlay { opacity: 0; appearance: none }",
+            ".centered { opacity: 0; translate: -50% -50% }",
+        ],
+        json!({}),
+    );
+    let s = &p.report.untranslated;
+    assert_eq!(s.reveal_pre_state_elements, 3, "{s:?}");
+    let shown = |node: usize| {
+        let all = p.classes[&node].clone();
+        all.contains("opacity-100") || all.contains("opacity:1")
+    };
+    for node in [2, 3, 10] {
+        assert!(shown(node), "{node}: {}", p.classes[&node]);
+    }
+    for node in [5, 6, 7, 8, 9] {
+        assert!(
+            !shown(node),
+            "{node} must stay hidden: {}",
+            p.classes[&node]
+        );
+    }
+    // The reveal rule's own end value clears the offset; a named fade-in with no end value keeps its centering.
+    assert!(
+        p.classes[&3].contains("translate:none") || p.classes[&3].contains("translate-none"),
+        "{}",
+        p.classes[&3]
+    );
+    assert!(p.classes[&10].contains("-50%"), "{}", p.classes[&10]);
+}
+
+#[test]
+fn text_visibility_is_counted_with_inherited_visibility_and_opacity() {
+    let a = |k: &'static str, v: &'static str| (k, v);
+    let p = translate_raw(
+        &[
+            (None, "html", vec![a("class", "")]),
+            (Some(0), "body", vec![a("class", "")]),
+            (Some(1), "p", vec![a("class", "shown"), a("#text", "shown")]),
+            (Some(1), "p", vec![a("class", "faded"), a("#text", "faded")]),
+            (Some(1), "div", vec![a("class", "panel")]),
+            (
+                Some(4),
+                "p",
+                vec![a("class", "inside"), a("#text", "inside")],
+            ),
+            (Some(4), "p", vec![a("class", "back"), a("#text", "back")]),
+            (Some(1), "p", vec![a("class", "gone"), a("#text", "gone")]),
+            (Some(1), "p", vec![a("class", "blank"), a("#text", "  ")]),
+        ],
+        &[("font-size", "16px")],
+        &[
+            ".faded { opacity: 0 } .panel { visibility: hidden } .gone { display: none }",
+            ".back { visibility: visible }",
+        ],
+        json!({}),
+    );
+    let t = &p.report.untranslated.text_visibility;
+    // shown + back (explicit `visibility: visible` inside a hidden panel) are visible; whitespace-only text is not text.
+    assert_eq!(
+        (
+            t.text_elements,
+            t.visible,
+            t.hidden_by_opacity,
+            t.hidden_by_visibility,
+            t.hidden_by_display
+        ),
+        (5, 2, 1, 1, 1),
+        "{t:?}"
+    );
+}
+
+/// The Garden capture of the main checkout (`.mochi/try/garden`; set `MOCHI_GARDEN_CAPTURE` to
+/// point elsewhere, and `MOCHI_REQUIRE_GARDEN=1` to fail instead of skip when it is missing): the
+/// home page's fade-in copy is shown, while hover toggles and visibility panels stay hidden.
+#[test]
+fn garden_home_reveals_its_fades_when_the_capture_is_available() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let capture = std::env::var_os("MOCHI_GARDEN_CAPTURE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join(".mochi/try/garden"));
+    let page = Path::new("reconstruction/pages/page-00000-1440x900.json");
+    if !capture.join(page).is_file() {
+        assert!(
+            std::env::var_os("MOCHI_REQUIRE_GARDEN").is_none(),
+            "no Garden capture at {}",
+            capture.display()
+        );
+        eprintln!("skipped: no Garden capture at {}", capture.display());
+        return;
+    }
+    let p = translate(&capture, page, &StyleOptions::standard()).unwrap();
+    let t = &p.report.untranslated.text_visibility;
+    eprintln!("{t:?}");
+    assert!(t.text_elements > 100, "{t:?}");
+    assert!(t.visible >= 25, "{t:?}");
+    assert!(t.hidden_by_opacity <= 3, "{t:?}");
+    let u = &p.report.untranslated;
+    assert!((20..=40).contains(&u.reveal_pre_state_elements), "{u:?}");
+    assert_eq!(p.report.check.different, 0, "{:?}", p.report.check.samples);
+    // Known toggles stay hidden: the CTA arrows shown by an ancestor's hover.
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(capture.join(page)).unwrap()).unwrap();
+    let mut checked = 0;
+    for (i, n) in raw["nodes"].as_array().unwrap().iter().enumerate() {
+        let class = n["attributes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|a| a["name"] == "class")
+            .and_then(|a| a["value"].as_str())
+            .unwrap_or("");
+        if class
+            .split_whitespace()
+            .any(|c| c == "ig-interaction-cta__arrow--on")
+            && let Some(classes) = p.classes.get(&i)
+        {
+            checked += 1;
+            let all = emitted(&p, i);
+            assert!(!classes.contains("opacity-100"), "{i}: {all}");
+        }
+    }
+    eprintln!("{checked} hover-arrow elements checked");
+}
+
+#[test]
+fn reveal_rules_apply_only_where_their_whole_selector_could_match() {
+    let a = |k: &'static str, v: &'static str| (k, v);
+    let p = translate_raw(
+        &[
+            (None, "html", vec![a("class", "")]),
+            (Some(0), "body", vec![a("class", "")]),
+            (Some(1), "ul", vec![a("class", "logos")]),
+            (Some(2), "li", vec![a("class", "logo")]),
+            (Some(1), "ul", vec![a("class", "carousel")]),
+            (Some(4), "li", vec![a("class", "logo")]),
+            (Some(1), "div", vec![a("class", "share-menu")]),
+            (Some(1), "button", vec![a("class", "btn")]),
+        ],
+        &[
+            ("font-size", "16px"),
+            ("opacity", "0"),
+            ("translate", "0px 12px"),
+        ],
+        &[
+            ".logo { opacity: 0; translate: 0 12px }",
+            ".logos.is-revealed .logo { opacity: 1; translate: 0px }",
+            ".carousel .logo:not(.is-hidden) { opacity: 1 }",
+            ".share-menu { opacity: 0 } .share-menu.is-visible { opacity: 1 }",
+            "button:disabled { opacity: .5 } [data-state=open] { opacity: 1 }",
+            ".btn { opacity: 0 }",
+        ],
+        json!({}),
+    );
+    let shown =
+        |n: usize| p.classes[&n].contains("opacity-100") || p.classes[&n].contains("opacity:1");
+    // Only the logo under `.logos` is a once-only reveal, with the rule's own end value.
+    assert!(shown(3), "{}", p.classes[&3]);
+    assert!(
+        p.classes[&3].contains("translate:0px") || p.classes[&3].contains("translate-0"),
+        "{}",
+        p.classes[&3]
+    );
+    assert!(
+        !shown(5),
+        "carousel logo must stay hidden: {}",
+        p.classes[&5]
+    );
+    assert!(
+        !shown(6),
+        "an `.is-visible` popover has no reveal evidence: {}",
+        p.classes[&6]
+    );
+    assert!(!shown(7), "{}", p.classes[&7]);
+}

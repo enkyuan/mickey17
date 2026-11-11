@@ -335,14 +335,40 @@ The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 *
   `animation`/`transition` declarations and `@keyframes` (central `at-rules.css`) are carried as
   written; scroll-driven `animation-timeline`, view transitions and script-started animations are
   not reproduced. Reduced motion combined with hover/focus is not translated.
-- **Script-driven end states.** When the captured computed `opacity`, `visibility` or a
-  `transform`/`translate`/`scale`/`rotate` offset says an element ended somewhere other than the
-  stylesheet's declaration (a GSAP/WAAPI/observer reveal: `opacity: 0` in CSS, 1 captured), the
-  captured end state is written instead (`settled_from_computed`) wherever the declaration still has
-  the author value; the reveal itself is not reproduced and the check does not count these. A
-  transform-like value that is identity only because a custom property is 0 at rest
-  (`translateY(var(--y, 0px))`) is not a reveal and is kept, as are elements captured with an
-  animation in flight (their computed values are transient).
+- **Script-driven end states.** Two sources say an element ended somewhere other than the
+  stylesheet's pre-reveal declaration, and the end state is written wherever the declaration
+  still has the author value (`settled_from_computed`; the check does not count these):
+  1. The captured computed `opacity`/`visibility`/`transform`/`translate`/`scale`/`rotate` differs
+     (a GSAP/WAAPI reveal that ran before capture). Elements listed in the capture's
+     `animation_states` may be mid-flight (infinite or unfinished animations are sampled too), so
+     for them only a clean end value is taken (opacity exactly 1, identity transform). A transform
+     that is identity only because a custom property is 0 at rest (`translateY(var(--y, 0px))`)
+     is not a reveal.
+  2. The element is still at `opacity: 0` and the sheets say it is a once-only reveal
+     (`reveal_pre_state_elements`): it is visible and displayed, does not swallow pointer events,
+     **no rule shows it through a hover/focus/active/open/selected toggle** (also on an ancestor or
+     sibling: `.cta:hover .arrow`, `.slide.is-active`), and either a reveal rule exists
+     (`.x.is-revealed`, `[data-revealed]`, `.in-view`), or its opacity is 1 under
+     `prefers-reduced-motion`, or it carries a `reveal`/`in-view`/`fade-in` attribute or class
+     token. The end values come from the reveal rule (`opacity: 1; translate: none`) or the
+     reduced-motion layer; an offset that neither clears is kept. Reduced motion alone counts as
+     evidence only when it also switches the motion off (`transition: none`). Rules are matched
+     with their toggling words removed in every compound, so `.logos.is-revealed .logo` is about
+     the logos under `.logos` only. Measured on the original Infinite Garden page (scrolling it in
+     a browser): the story kickers and copy, index rows, logos and footer items reach opacity 1
+     and stay there; the hover arrows, panels with `visibility: hidden` and pointer-less popovers
+     are left hidden. Reveals driven only by a script (no reveal rule, no motion-skipping
+     reduced-motion rule, no reveal-ish name), `.is-visible`-style popovers and class-toggled
+     slides stay hidden. Toggles are read at the captured width and applied to every width layer
+     that still carries the author value; the overlay layers of other captured viewports follow
+     the same rule but are not counted separately. On the Garden home page the footer items
+     and index rows inside `visibility: hidden` roots (`.home-footer.is-finale`, pinned cards) are
+     still hidden: only their opacity is fixed.
+  The reveal itself is not reproduced. Elements hidden by `visibility: hidden` or `display: none`
+  (pinned story steps, carousels, responsive duplicates) stay as captured, because showing them
+  all at once would stack them; the report counts text elements visible / hidden by opacity /
+  visibility / display (`text_visibility`, author declarations only: browser defaults such as the
+  `hidden` attribute are not read).
 - **Other captured viewports.** Snapshots of the same page at narrower widths
   (`page-00000-375x812.json` next to `…-1440x900.json`) are used as overlays: elements are paired
   across the two DOMs (tag, identity attributes and classes without `--modifier`/`is-`/`has-`/`js-`
