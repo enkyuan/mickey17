@@ -297,7 +297,8 @@ describe("property: codecs", () => {
             fc.property(fc.stringMatching(/^\/[a-z0-9/_.-]{0,20}$/), fc.stringMatching(/^[a-z0-9/_.-]{0,10}$/), (p, suffix) => {
                 expect(patternMatches(p, p)).toBe(true);
                 expect(patternMatches(p, p + suffix)).toBe(true);
-                expect(patternMatches(`${p}$`, `${p}${suffix}`)).toBe(suffix === "");
+                const merge = (x: string) => x.replace(/\/{2,}/g, "/"); // slash runs are merged on both sides
+                expect(patternMatches(`${p}$`, `${p}${suffix}`)).toBe(merge(p + suffix) === merge(p));
             }),
             cfg(500),
         );

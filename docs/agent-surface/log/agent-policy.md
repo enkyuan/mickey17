@@ -446,3 +446,25 @@ bun scripts/mutate.ts --jobs 6            # 191/191 killed (2 equivalent mutants
 ```
 
 Round 4: a final Opus review of the round-3 fix diff is recorded in the next entry.
+
+## 9. Entry 2026-11-10: review round 4
+
+Round 4 (Opus, high; diff bc2434e..5caa46c) found 1 HIGH, 2 MEDIUM and several LOW.
+All fixed in the round-4 commit:
+
+| Finding | Verdict | Fix and decision |
+| --- | --- | --- |
+| HIGH: sanitizer cost still unbounded: NFKC canonical reordering is quadratic in a run of combining marks (84 KB page = 17 s) | confirmed | Stream-Safe Text Format (UAX #15): a run of more than 30 `\p{M}` is cut before normalization, flagged `combining-flood`. Test with two mixed-class floods (< 1.5 s). |
+| MEDIUM: clipping fixes evadable with `overflow: clip`, `hidden auto`, two-value forms | confirmed | One parser for `overflow` (either axis, `hidden` or `clip`) used for the node itself, children and `zero-size`. |
+| MEDIUM: new false positives hid visible content (masonry grids, app-shell scroll containers, fixed nav) | confirmed | With a bounding box only the box decides (document and accumulated clip); `overflow:auto|scroll` makes its content a fresh reachable region; `position:fixed` escapes ancestor clips; without a box, an offset is judged only against a clipper of *known size*; the text-indent image-replacement trick still fires on a box that clips itself. Decision: the capture must supply rects, document size and clipper sizes for T0 to be both safe and complete; otherwise text is kept and reported rather than guessed hidden. |
+| LOW: `authorize` threw on `null` members | confirmed | Snapshot passes non-objects through; `checkStatic` refuses; `null` request refused. |
+| LOW: `deps` read several times | confirmed | `deps` destructured once. |
+| LOW: confirmation TTL above the 7-day retention window could be replayed | confirmed | Maximum accepted confirmation lifetime is clamped to retention minus 24 h (6 days). |
+| LOW: robots rules containing `//` unmatchable after the merge | confirmed | Rule patterns are merged the same way as paths. |
+| LOW: CJK look-alike set had dead Hangul entries and flagged ordinary Japanese | confirmed | Set reduced to look-alikes of Latin letters (`〇 口 丨 ㄒ ㄥ ㄚ ล`) plus the NFKC-normalized Hangul jamo; common katakana/kanji (`ー 一 中 人 カ タ エ ロ ニ ハ ト`) removed (documented residual: katakana look-alikes such as エ/ロ are no longer flagged). |
+| LOW: `unjudged` unused; tests soft | confirmed | Still reported only (the T0 emitter, not this library, decides what to do with `Collected.unjudged`). Getter tests now assert unconditionally and also cover `credential.scopes`, `thirdParty`, null members. |
+
+Equivalent mutant added: `r4-scroll-clipped-flag`.
+
+Results: `bun test` 372 pass; `tsc` clean; mutation run 206/206 non-equivalent killed
+(16 new `r4-*` mutants).

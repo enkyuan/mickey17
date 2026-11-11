@@ -14,6 +14,7 @@ export type FlagKind =
     | "compat-normalized"
     | "mixed-script"
     | "confusable-word"
+    | "combining-flood"
     | "long-token"
     | "truncated";
 
@@ -68,7 +69,7 @@ function scriptOf(ch: string): string | null {
 }
 const LATIN = /\p{Script=Latin}/u;
 /** CJK/Thai/Hangul characters that read as Latin letters; Latin mixed with these is never "ordinary" CJK text. */
-const CJK_LOOKALIKES = new Set(Array.from("\u3007\u53e3\u5de5\u4e01\u4e00\u30fc\u30a8\u30ed\u30cb\u30cf\u30c8\u3112\u311a\u3125\u3147\u3163\u0e25\u0e1a\u0e1e\u30ab\u30bf\u4e2d\u4eba\u516b\u4e8c"));
+const CJK_LOOKALIKES = new Set(Array.from("\u3007\u53e3\u4e28\u3112\u3125\u311a\u0e25\u110b\u1175"));
 const MAX_RAW_CHARS = 1_000_000;
 const TOKEN = /[\p{L}\p{M}\p{N}_'-]+/gu;
 
@@ -147,9 +148,15 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
     };
     let text = stripInvisible(capped(input), flags, tagRuns);
 
-    const folded = capped(text.normalize("NFKC"));
+    // Stream-Safe Text Format (UAX #15): canonical reordering is quadratic in the length of a
+    // run of combining marks, so a run longer than 30 is cut before normalization.
+    const streamSafe = text.replace(/(\p{M}{30})\p{M}+/gu, (_m, keep: string) => {
+        bump(flags, "combining-flood");
+        return keep;
+    });
+    const folded = capped(streamSafe.normalize("NFKC"));
     if (folded !== text) {
-        bump(flags, "compat-normalized");
+        if (folded !== streamSafe) bump(flags, "compat-normalized");
         text = stripInvisible(folded, flags, tagRuns);
     }
 
@@ -199,7 +206,7 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
         .map((run) => run.map((cp) => (cp >= 0xe0020 && cp <= 0xe007e ? String.fromCharCode(cp - 0xe0000) : "")).join("").slice(0, 200))
         .filter((s) => s.length > 0);
 
-    const order: FlagKind[] = ["zero-width", "bidi-control", "unicode-tag", "variation-selector", "format-char", "control-char", "line-separator", "compat-normalized", "mixed-script", "confusable-word", "long-token", "truncated"];
+    const order: FlagKind[] = ["zero-width", "bidi-control", "unicode-tag", "variation-selector", "format-char", "control-char", "line-separator", "compat-normalized", "mixed-script", "confusable-word", "combining-flood", "long-token", "truncated"];
     return {
         text,
         flags: order.filter((k) => flags.has(k)).map((kind) => ({ kind, count: flags.get(kind)! })),

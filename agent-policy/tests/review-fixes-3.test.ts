@@ -48,13 +48,53 @@ describe("hidden-text rules: attacker CSS cannot switch the checks off", () => {
         expect(collectText(mk({ r: 10, g: 10, b: 10, a: 1 })).visible).toHaveLength(1);
         expect(collectText(mk({ r: 10, g: 10, b: 10, a: 1 })).unjudged).toEqual([]);
     });
-    test("text-indent and far offsets hide content when the box clips its overflow", () => {
-        expect(ownHiddenReasons({ tag: "a", style: { textIndentPx: 9999, overflow: "hidden" } })).toContain("offscreen");
+    test("text-indent hides content in a box that clips its overflow, in every spelling of overflow", () => {
+        for (const overflow of ["hidden", "clip", "hidden auto", "auto hidden", "clip visible", "hidden hidden"]) {
+            expect(ownHiddenReasons({ tag: "a", style: { textIndentPx: 9999, overflow } }), overflow).toContain("offscreen");
+        }
+        for (const overflow of ["visible", "auto", "scroll", "visible auto"]) expect(ownHiddenReasons({ tag: "a", style: { textIndentPx: 9999, overflow } }), overflow).toEqual([]);
         expect(ownHiddenReasons({ tag: "a", style: { textIndentPx: 9999 } })).toEqual([]);
-        expect(ownHiddenReasons({ tag: "p", style: { position: "absolute", leftPx: 99999 } }, { clippedAncestor: true })).toContain("offscreen");
-        expect(ownHiddenReasons({ tag: "p", style: { position: "absolute", leftPx: 99999 } })).toEqual([]);
-        const tree: PageNode = { tag: "div", style: { overflow: "hidden" }, children: [{ tag: "p", style: { position: "absolute", leftPx: 99999 }, text: "hidden by clip" }] };
-        expect(collectText(tree).visible).toEqual([]);
+        expect(ownHiddenReasons({ tag: "div", style: { overflow: "clip", heightPx: 0 } })).toContain("zero-size");
+        expect(ownHiddenReasons({ tag: "div", style: { overflow: "hidden auto", widthPx: 1 } })).toContain("zero-size");
+    });
+    test("without a bounding box, an offset beyond a clipper of known size hides; an unknown size or an in-range offset does not", () => {
+        const pos = { position: "absolute" as const, leftPx: 99999 };
+        expect(ownHiddenReasons({ tag: "p", style: pos }, { clippedAncestor: true, clipperSize: { width: 800 } })).toContain("offscreen");
+        expect(ownHiddenReasons({ tag: "p", style: { position: "absolute", leftPx: 700 } }, { clippedAncestor: true, clipperSize: { width: 800 } })).toEqual([]);
+        expect(ownHiddenReasons({ tag: "p", style: pos }, { clippedAncestor: true })).toEqual([]);
+        const tree: PageNode = { tag: "div", style: { overflow: "hidden", widthPx: 800, heightPx: 600 }, children: [{ tag: "p", style: pos, text: "hidden by clip" }, { tag: "p", style: { position: "absolute", topPx: 100 }, text: "inside" }] };
+        expect(collectText(tree).visible.map((v) => v.text)).toEqual(["inside"]);
+    });
+    test("with rects the box decides: a masonry grid inside an overflow:hidden container stays visible", () => {
+        const doc = { width: 1280, height: 6000 };
+        const grid: PageNode = {
+            tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1200, height: 5000 },
+            children: [
+                { tag: "p", style: { position: "absolute", topPx: 1200, leftPx: 900 }, rect: { x: 900, y: 1200, width: 200, height: 100 }, text: "card at 1200" },
+                { tag: "p", style: { position: "absolute", topPx: 3000 }, rect: { x: 10, y: 3000, width: 200, height: 100 }, text: "card at 3000" },
+            ],
+        };
+        expect(collectText(grid, { document: doc }).visible.map((v) => v.text)).toEqual(["card at 1200", "card at 3000"]);
+    });
+    test("the bounding box is authoritative over offset heuristics when both exist", () => {
+        const tree: PageNode = {
+            tag: "div", style: { overflow: "hidden", widthPx: 800, heightPx: 600 }, rect: { x: 0, y: 0, width: 3000, height: 3000 },
+            children: [{ tag: "p", style: { position: "absolute", leftPx: 2000 }, rect: { x: 2000, y: 10, width: 100, height: 20 }, text: "inside the measured box" }],
+        };
+        expect(collectText(tree, { document: { width: 3000, height: 3000 } }).visible).toHaveLength(1);
+    });
+    test("scroll containers make their content reachable; position:fixed escapes ancestor clipping", () => {
+        const doc = { width: 1280, height: 6000 };
+        const shell: PageNode = {
+            tag: "body", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 1280, height: 800 },
+            children: [{ tag: "main", style: { overflow: "auto" }, rect: { x: 0, y: 0, width: 1280, height: 800 }, children: [{ tag: "p", rect: { x: 0, y: 1500, width: 600, height: 20 }, text: "reachable by scrolling" }] }],
+        };
+        expect(collectText(shell, { document: doc }).visible.map((v) => v.text)).toEqual(["reachable by scrolling"]);
+        const fixed: PageNode = { tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 100, height: 100 }, children: [{ tag: "nav", style: { position: "fixed" }, rect: { x: 0, y: 500, width: 100, height: 20 }, text: "fixed nav" }] };
+        expect(collectText(fixed, { document: doc }).visible.map((v) => v.text)).toEqual(["fixed nav"]);
+        // a nested clip box still hides a node that lies wholly outside it
+        const nested: PageNode = { tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 300, height: 300 }, children: [{ tag: "div", style: { overflow: "hidden" }, rect: { x: 0, y: 0, width: 100, height: 100 }, children: [{ tag: "p", rect: { x: 200, y: 200, width: 20, height: 20 }, text: "outside inner clip" }] }] };
+        expect(collectText(nested, { document: doc }).visible).toEqual([]);
     });
     test("a node wholly outside an ancestor's clip box is not shown, even inside the document", () => {
         const tree: PageNode = {
@@ -107,9 +147,9 @@ describe("authorize works from a snapshot of the request", () => {
         const money = { ...honest.money!, get totalMinor() { return reads++ < 1 ? 4999 : 1; } };
         const hostile = { ...honest, money } as ActionRequest;
         const r = await authorize(hostile, { mandate: await mandateToken(w), confirmation: await confirmToken(w, honest) }, w.deps);
-        // either refused, or recorded at the amount that was confirmed and checked
-        if (r.ok) expect(await w.ledger.spent("mandate-1")).toBe(4999);
-        expect(await w.ledger.spent("mandate-1")).not.toBe(1);
+        expect(r.ok).toBe(true); // the snapshot read 4999 once and every check and the ledger used that value
+        expect(await w.ledger.spent("mandate-1")).toBe(4999);
+        expect(reads).toBe(1);
     });
     test("the authorization carries the frozen request that was checked", async () => {
         const w = await world();
@@ -119,6 +159,26 @@ describe("authorize works from a snapshot of the request", () => {
         expect(Object.isFrozen(r.request)).toBe(true);
         expect(r.request.money?.totalMinor).toBe(4999);
         expect(() => { (r.request.money as { totalMinor: number }).totalMinor = 1; }).toThrow();
+    });
+    test("credential scopes and thirdParty are read once too; null members are refused, never thrown", async () => {
+        const w = await world();
+        let scopeReads = 0;
+        const base = moneyReq();
+        const cred = { kind: "oauth" as const, get scopes() { return scopeReads++ < 1 ? (["financial"] as const) : ([] as const); } };
+        const req = { ...base, credential: cred } as unknown as ActionRequest;
+        const r = await authorize(req, { mandate: await mandateToken(w), confirmation: await confirmToken(w, base) }, w.deps);
+        expect(r.ok).toBe(true);
+        expect(scopeReads).toBe(1);
+        for (const bad of [{ money: null }, { credential: null }, { thirdParty: null }, { credential: { kind: "oauth", scopes: null } }]) {
+            const out = await authorize({ ...base, ...bad } as never, {}, w.deps);
+            expect(out.ok).toBe(false);
+        }
+        expect((await authorize(null as never, {}, w.deps)).ok).toBe(false);
+        let tpReads = 0;
+        const ro = { actionId: "act_read", mode: "read-only", tier: "T1", effect: "read", evidence: "observed", idempotent: true, requiresAuth: false, now: NOW, thirdParty: { get robots() { return tpReads++ < 1 ? "allowed" : "disallowed"; }, tos: "ok" } };
+        const rr = await authorize(ro as never, {}, w.deps);
+        expect(rr.ok).toBe(true);
+        expect(tpReads).toBe(1);
     });
     test("snapshotRequest drops unknown fields", () => {
         const s = snapshotRequest({ ...moneyReq(), evil: "x" } as never) as unknown as Record<string, unknown>;
@@ -170,6 +230,42 @@ describe("reconcile only touches entries that really are unknown", () => {
     });
 });
 
+describe("sanitizer: combining-mark floods cannot make normalization quadratic", () => {
+    test("long runs of mixed combining classes are cut before NFKC", () => {
+        for (const text of ["a" + "\u0301".repeat(42_000) + "\u0316".repeat(42_000), "a" + "\u0316\u0301".repeat(42_000)]) {
+            const t0 = performance.now();
+            const r = sanitizePageText(text);
+            expect(performance.now() - t0).toBeLessThan(1500);
+            expect(r.flags.map((f) => f.kind)).toContain("combining-flood");
+            expect(Array.from(r.text).length).toBeLessThanOrEqual(32);
+        }
+    });
+    test("ordinary combining sequences are untouched", () => {
+        const r = sanitizePageText("e\u0301 a\u0300\u0323 \u0928\u093f");
+        expect(r.flags.map((f) => f.kind)).not.toContain("combining-flood");
+    });
+});
+
+describe("a confirmation lifetime longer than the retention window is refused", () => {
+    test("maxTtlMs above 6 days is clamped, so a 30-day token never verifies", async () => {
+        const w = await world();
+        const { issueConfirmation, verifyConfirmation } = await import("../src/confirm.ts");
+        const b = { actionId: "act_pay", item: null, totalMinor: null, currency: null, payee: null };
+        const tok = await issueConfirmation(w.confirmSigner, b, { jti: "c1", now: NOW, ttlMs: 30 * day });
+        const r = await verifyConfirmation(tok, w.deps.confirmationVerifier, b, { now: NOW, maxTtlMs: 365 * day });
+        expect(r.ok ? "ok" : r.code).toBe("confirmation-ttl-too-long");
+    });
+});
+
+describe("robots: rules containing a double slash still match", () => {
+    test("rule and path are merged the same way", () => {
+        const rb = (t: string, target: string) => evaluateRobots(parseRobots(t), "MochiAgent", target).allowed;
+        expect(rb("User-agent: *\nDisallow: /cgi//x\n", "/cgi//x")).toBe(false);
+        expect(rb("User-agent: *\nDisallow: /cgi//x\n", "/cgi/x")).toBe(false);
+        expect(rb("User-agent: *\nDisallow: /*//\n", "/a//b")).toBe(false);
+    });
+});
+
 describe("consumed-token retention follows the token's validity", () => {
     test("a token valid for 72 h is still remembered after 25 h and after its expiry", async () => {
         let mono = 0;
@@ -192,12 +288,12 @@ describe("consumed-token retention follows the token's validity", () => {
 
 describe("mixed-script: CJK/Thai look-alikes of Latin letters are flagged", () => {
     test("look-alike characters inside Latin words", () => {
-        for (const w of ["G〇〇gle", "AMAZ〇N", "ㄒesla", "PAYPAㄥ", "エBAY", "appลe", "G口口GLE"]) {
+        for (const w of ["G〇〇gle", "AMAZ〇N", "ㄒesla", "PAYPAㄥ", "appลe", "G口口GLE", "paypa丨", "micrㅇsoft", "paypaㅣ"]) {
             expect(sanitizePageText(w).flags.map((f) => f.kind), w).toContain("mixed-script");
         }
     });
     test("ordinary Latin-in-CJK text is still not flagged", () => {
-        for (const w of ["iPhoneを買う", "使用Python编程"]) expect(sanitizePageText(w).flags).toEqual([]);
+        for (const w of ["iPhoneを買う", "使用Python编程", "Wi-Fiルーター", "USBメモリー", "Amazonカード", "iPhone中国"]) expect(sanitizePageText(w).flags, w).toEqual([]);
     });
 });
 

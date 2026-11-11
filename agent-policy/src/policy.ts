@@ -239,13 +239,17 @@ export function snapshotRequest(req: ActionRequest): ActionRequest {
     };
     const optional = { idempotencyKey: req.idempotencyKey, requiresAuth: req.requiresAuth, item: req.item };
     for (const [k, v] of Object.entries(optional)) if (v !== undefined) snap[k] = v;
+    // null or non-object values are passed through unchanged so checkStatic refuses them (never throw)
+    const isObj = (x: unknown): x is object => typeof x === "object" && x !== null;
     if (cred !== undefined) {
-        const scopes = cred.scopes;
-        snap.credential = Object.freeze({ kind: cred.kind, scopes: Object.freeze(Array.isArray(scopes) ? [...scopes] : scopes) });
+        if (isObj(cred)) {
+            const scopes = cred.scopes;
+            snap.credential = Object.freeze({ kind: cred.kind, scopes: Array.isArray(scopes) ? Object.freeze([...scopes]) : scopes });
+        } else snap.credential = cred;
     }
-    if (tp !== undefined) snap.thirdParty = Object.freeze({ robots: tp.robots, tos: tp.tos });
+    if (tp !== undefined) snap.thirdParty = isObj(tp) ? Object.freeze({ robots: tp.robots, tos: tp.tos }) : tp;
     if (m !== undefined) {
-        snap.money = Object.freeze({ egress: m.egress, merchant: m.merchant, item: m.item, totalMinor: m.totalMinor, currency: m.currency, payee: m.payee });
+        snap.money = isObj(m) ? Object.freeze({ egress: m.egress, merchant: m.merchant, item: m.item, totalMinor: m.totalMinor, currency: m.currency, payee: m.payee }) : m;
     }
     return Object.freeze(snap) as unknown as ActionRequest;
 }
@@ -285,7 +289,11 @@ export interface Authorization {
  * reservation is released, so a replayed confirmation neither executes nor spends.
  */
 export async function authorize(input: ActionRequest, tokens: Tokens, deps: AuthorizeDeps): Promise<Authorization | Refusal> {
+    if (typeof input !== "object" || input === null) return refuse("blocked", "invalid-request", "a well-formed request object", "The request is not an object.");
     const req = snapshotRequest(input);
+    // deps are read once as well: a swapped ledger or store between steps must not split one authorization
+    const { mandateVerifier, confirmationVerifier, ledger, consumed, revokedMandates, maxMandateLifetimeMs, maxConfirmationTtlMs } = deps;
+    const reservationRef = deps.reservationRef;
     const s = checkStatic(req);
     if (s) return s;
 
@@ -293,18 +301,18 @@ export async function authorize(input: ActionRequest, tokens: Tokens, deps: Auth
     const confirmationToken = tokens.confirmation;
     const proofs: { mandate?: VerifiedMandate; confirmation?: VerifiedConfirmation } = {};
     if (req.effect === "financial" && mandateToken !== undefined) {
-        const v = await verifyMandate(mandateToken, deps.mandateVerifier, {
+        const v = await verifyMandate(mandateToken, mandateVerifier, {
             now: req.now,
-            ...(deps.maxMandateLifetimeMs !== undefined ? { maxLifetimeMs: deps.maxMandateLifetimeMs } : {}),
-            ...(deps.revokedMandates ? { revoked: deps.revokedMandates } : {}),
+            ...(maxMandateLifetimeMs !== undefined ? { maxLifetimeMs: maxMandateLifetimeMs } : {}),
+            ...(revokedMandates ? { revoked: revokedMandates } : {}),
         });
         if (!v.ok) return v;
         proofs.mandate = v.mandate;
     }
     if (NEVER_RETRY_EFFECTS.includes(req.effect) && confirmationToken !== undefined) {
-        const v = await verifyConfirmation(confirmationToken, deps.confirmationVerifier, bindingFor(req), {
+        const v = await verifyConfirmation(confirmationToken, confirmationVerifier, bindingFor(req), {
             now: req.now,
-            ...(deps.maxConfirmationTtlMs !== undefined ? { maxTtlMs: deps.maxConfirmationTtlMs } : {}),
+            ...(maxConfirmationTtlMs !== undefined ? { maxTtlMs: maxConfirmationTtlMs } : {}),
         });
         if (!v.ok) return v;
         proofs.confirmation = v.confirmation;
@@ -314,17 +322,17 @@ export async function authorize(input: ActionRequest, tokens: Tokens, deps: Auth
 
     let reserved: { id: string; ref: string } | null = null;
     if (req.effect === "financial" && proofs.mandate && req.money) {
-        const ref = deps.reservationRef ?? req.idempotencyKey ?? "";
-        const r = await deps.ledger.reserve(proofs.mandate.id, ref, req.money.totalMinor, proofs.mandate.capMinor);
+        const ref = reservationRef ?? req.idempotencyKey ?? "";
+        const r = await ledger.reserve(proofs.mandate.id, ref, req.money.totalMinor, proofs.mandate.capMinor);
         if (!r.ok) {
             return refuse("requires_auth", "mandate-cap-exceeded", "remaining mandate budget covering this amount", "Cumulative spend would exceed the mandate cap, or this reservation already exists.");
         }
         reserved = { id: proofs.mandate.id, ref };
     }
     if (proofs.confirmation) {
-        const fresh = await deps.consumed.consume(proofs.confirmation.jti, proofs.confirmation.exp, req.now);
+        const fresh = await consumed.consume(proofs.confirmation.jti, proofs.confirmation.exp, req.now);
         if (!fresh) {
-            if (reserved) await deps.ledger.settle(reserved.id, reserved.ref, "released");
+            if (reserved) await ledger.settle(reserved.id, reserved.ref, "released");
             return refuse("requires_confirmation", "confirmation-reused", "a fresh single-use confirmation", "This confirmation was already used.");
         }
     }
@@ -339,7 +347,7 @@ export async function authorize(input: ActionRequest, tokens: Tokens, deps: Auth
         async settle(outcome) {
             if (settled) return; // one-shot: a second settle can never undo the first
             settled = true;
-            if (res) await deps.ledger.settle(res.id, res.ref, outcome);
+            if (res) await ledger.settle(res.id, res.ref, outcome);
         },
     };
 }

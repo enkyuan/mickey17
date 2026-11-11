@@ -82,7 +82,8 @@ function normalizePct(input: string): string {
     // non-ASCII is compared in its UTF-8 percent-encoded form (RFC 9309 2.2.2)
     const wellFormed = input.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
     const s = wellFormed.replace(/[^\x00-\x7f]/gu, (c) => encodeURIComponent(c));
-    return s.replace(/%([0-9a-fA-F]{2})/g, (_m, h: string) => {
+    // slash runs are merged (as lenient servers do) on both the rule and the path
+    return s.replace(/\/{2,}/g, "/").replace(/%([0-9a-fA-F]{2})/g, (_m, h: string) => {
         const c = String.fromCharCode(parseInt(h, 16));
         return /[A-Za-z0-9\-._~]/.test(c) ? c : `%${h.toUpperCase()}`;
     });
