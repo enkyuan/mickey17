@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (129 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (133 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -311,12 +311,21 @@ a span of 2 to 7 whole digit groups, optionally with the first group cut to its 
 M2 `CALLS` length cap (a look-behind keeps it linear instead). Low: event tie-break order is hash without inputs, then input names, then values (value-independent unless events are otherwise identical);
 `p.slice(2)` on scheme URLs fixed. Known and kept: with same-id events only the winning event's inputs apply.
 
-**Round 10:** re-review of the round-9 delta only — see below once it has run.
+**Round 10 (Opus, high; round-9 delta only): 2 HIGH, 2 MEDIUM regressions of the round-9 delta.** Fixed and pinned ("round 10"):
+H1 ordinary operation names counted as ids (`checkoutStep1`, `eth_getTransactionCount`, `getShoppingCartContents`) so swaps next to a parameter or nonce step resolved, and shifted names
+resolved: the reordering check is now per value ("an operation one run issues at a step appears at another step in the other run, where the runs disagree": swaps, rotations, shifts),
+and an id is judged piece by piece (a value, or a `/` segment of 8+ characters, with a digit or 16+ characters and fewer than two real words);
+H2 a single digit group was never tested on its own and spans were limited to 7 groups (each group alone, spans up to 19 groups); M1 versioned URL prefixes (`/api/2024-01/`, `st_12345`, IP hosts,
+`localhost`) were blocked by the every-segment rule (readable segments now include dates, versions, short prefixed ids; 4-digit numbers at most); M2 price lists and coordinates were
+over-redacted after the comma change (commas count only in card layouts 4-4-4-4, 4-6-5 and 4-6-6, with 2 to 6 further groups, scanned for any 13 to 19 digit span). Known and kept: a value judged
+an id that is really a short abbreviation name with a digit (`getTxn2`) escapes the per-step check (a swap of it is still caught by the reordering check); 6-digit codes in paths are not redacted.
+
+**Round 11:** re-review of the round-10 delta only — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 129 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 133 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -334,5 +343,5 @@ M2 `CALLS` length cap (a look-behind keeps it linear instead). Low: event tie-br
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (129 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (133 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

@@ -1156,3 +1156,58 @@ describe("round 9", () => {
         expect(toJson(graphOf([mkT("a"), mkT("b")]))).not.toContain("hunter2");
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 10
+
+describe("round 10", () => {
+    const note = (n: string, loc = "note") => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })])]);
+    const ops = (field: string, steps: string[][]) =>
+        steps.map((run, r) => doc(r === 0 ? "a" : "b", run.map((v, i) => req(i, "POST", `${B}/rpc`, { body: jsonBody({ [field]: v }) }))));
+
+    test("swaps, shifts and rotations of ordinary names block, with other steps varying", () => {
+        for (const [a, b] of [
+            [["getCartItemsV2", "getUserOrdersV2"], ["getUserOrdersV2", "getCartItemsV2"]],
+            [["checkoutStep1", "checkoutStep2"], ["checkoutStep2", "checkoutStep3"]],
+            [["eth_getTransactionCount", "eth_sendRawTransaction"], ["eth_sendRawTransaction", "eth_getTransactionReceipt"]],
+            [["cart.v1.getItems", "user.v1.getOrders"], ["user.v1.getOrders", "cart.v1.getItems"]],
+            [["getShoppingCartContents", "updateShippingAddressMutation", "z"], ["updateShippingAddressMutation", "z", "getShoppingCartContents"]],
+        ]) {
+            expect(graphOf(ops("method", [a!, b!])).status, `${a} / ${b}`).toBe("blocked");
+        }
+        // A swap next to a parameter-driven step.
+        const mk = (run: string, first: string, second: string, act: string) => {
+            const d = doc(run, [req(0, "POST", `${B}/rpc`, { body: jsonBody({ operationName: first }) }), req(1, "POST", `${B}/rpc`, { body: jsonBody({ operationName: second }) }), req(2, "POST", `${B}/rpc`, { body: jsonBody({ action: act }) })], [["action", act]]);
+            return d;
+        };
+        expect(graphOf([mk("a", "getCartItemsV2", "getUserOrdersV2", "GetCart"), mk("b", "getUserOrdersV2", "getCartItemsV2", "getPDP")]).status).toBe("blocked");
+    });
+
+    test("ids and server URLs that differ per run still align; repeated operations align", () => {
+        expect(graphOf(ops("action", [["act_8f2Kq9ZxLm41", "poll", "poll"], ["act_Zq81mXk9L2f8", "poll", "poll"]])).status).toBe("resolved");
+        const mk = (run: string, id: string) => doc(run, [req(0, "GET", `${B}/c`, { respBody: jsonBody({ next: `/cart/update/${id}` }) }), req(1, "POST", `${B}/x`, { body: ["application/x-www-form-urlencoded", `action=${encodeURIComponent(`/cart/update/${id}`)}`] })]);
+        expect(graphOf([mk("a", "c_8f2Kq9ZxLm41"), mk("b", "c_Zq81mXk9L2f8")]).status).toBe("resolved");
+    });
+
+    test("cards that share a value with an expiry or other groups, one group alone, and many 2-digit groups are withheld", () => {
+        for (const n of ["4000056655665556 12/27", "4000056655665556 12/27 123", "4012888888881881 1227", "2223003122003222 0328", "4012888888881881 7", "4012888888881881, 4000056655665556", "card 40 12 88 88 88 88 18 81 thanks", "card 4 0 1 2 8 8 8 8 8 8 8 8 1 8 8 1 thanks", "4539,1488,0343,6467,1227"]) {
+            expect(toJson(note(n)), n).not.toMatch(/4000056655665556|4012888888881881|2223003122003222|40 12 88|4 0 1 2 8|4539/);
+        }
+    });
+
+    test("price lists, coordinates and versioned URLs with ids are kept or derived", () => {
+        const r = new Rng(9);
+        let kept = 0;
+        for (let i = 0; i < 100; i++) {
+            const list = Array.from({ length: 6 }, () => `${r.below(300)}.${String(r.below(100)).padStart(2, "0")}`).join(", ");
+            if (toJson(note(list)).includes(list)) kept++;
+        }
+        expect(kept).toBe(100);
+        expect(toJson(note("40.7128,-74.0060,34.0522,-118.2437"))).toContain("40.7128,-74.0060");
+        const mk = (run: string, id: string, prefix: string) => doc(run, [req(0, "POST", `${B}/o`, { respBody: jsonBody({ orderId: id }) }), req(1, "POST", `${B}/x`, { body: jsonBody({ returnUrl: `${prefix}${id}` }) })]);
+        for (const prefix of ["https://s.test/api/2024-01/orders/", "https://s.test/api/v2/stores/st_12345/orders/", "https://10.0.0.5/api/orders/"]) {
+            const g = graphOf([mk("a", "ord_8f2Kq9ZxLm41", prefix), mk("b", "ord_Zq81mXk9L2f8", prefix)]);
+            expect(valueOf(g, 1, "json:$.returnUrl")!.class, prefix).toBe("derived");
+        }
+    });
+});
