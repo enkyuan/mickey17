@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readOnly as readOnlyDoc } from "../scripts/fixtures";
 import { AgentSurface, checkReceipt, deriveCoverage, fromZodIssues, isCardConstant, isCardName, isSecretName, isSecretValue, nameTokens, validateSurface, withHash } from "../src/index";
 import { shop } from "../scripts/fixtures";
 
@@ -340,4 +341,49 @@ describe("round-4 regressions", () => {
     });
 });
 
-import { readOnly as readOnlyDoc } from "../scripts/fixtures";
+
+
+describe("round-5 regressions", () => {
+    test("whole-sentence rule is linear on the adversarial shape (many openings x long surface x many surfaces)", () => {
+        const d = clone();
+        const words = Array.from({ length: 2000 }, (_, i) => `w${i}`);
+        const nodes: any[] = [];
+        for (let i = 0; i + 2 < words.length; i++) for (let j = 0; j < 12; j++) nodes.push({ id: `n_${nodes.length.toString(16).padStart(16, "0")}`, role: "generic", visibility: "visible", text: { origin: "page", value: `${words[i]} ${words[i + 1]} ${words[i + 2]} zzzzzzzzzzzz${j}` } });
+        d.routes[3].nodes.push(...nodes);
+        const long = words.join(" ");
+        for (let i = 0; i < 100; i++) d.actions.push({ ...d.actions[0], id: `nav-${i}`, description: { origin: "surface", value: long } });
+        const t0 = performance.now();
+        verdict(d);
+        expect(performance.now() - t0).toBeLessThan(3000);
+    });
+    test("plain credential inputs need a label", () => {
+        for (const name of ["session_token", "sessionToken", "oauth_token", "authorization", "auth", "otp_code", "otpCode", "auth_code", "payment_method_nonce", "paymentMethodNonce", "csrf_token", "user_token", "login_token", "verification_token", "client_token", "card_pin", "new_pin"]) {
+            const d = clone();
+            d.flows[0].inputs.push({ name, type: "string", required: false, sensitivity: "none" });
+            expect(verdict(d), name).toContain("password_not_credential");
+        }
+    });
+    test("ordinary inputs still need none", () => {
+        const d = clone();
+        for (const name of ["payment_method", "session", "session_id", "sid", "signature", "pin_code", "auth_method", "otp_enabled", "next_page_token", "cart_token"]) d.flows[0].inputs.push({ name, type: "string", required: false, sensitivity: "none" });
+        expect(verdict(d)).toEqual([]);
+    });
+    test("tokens from response bodies: credentials may not go in a URL; checkout and pagination handles may", () => {
+        const place = (pointer: string) => {
+            const d = clone();
+            d.flows[0].steps[1].requests[0].values.push({ at: { in: "query", name: "q" }, value: { class: "derived", edge: { source: { kind: "response", step: "add-item", request: "add-item-req", at: { in: "body-json", name: pointer } }, match: "json-path" } } });
+            return verdict(d);
+        };
+        for (const p of ["/access_token", "/refresh_token", "/id_token", "/session_token", "/auth/token"]) expect(place(p), p).toContain("sensitive_in_url");
+        for (const p of ["/checkout/token", "/next_page_token", "/cart/token", "/cursor"]) expect(place(p), p).toEqual([]);
+    });
+    test("namespace words do not clear real credential names", () => {
+        for (const n of ["next-auth.session-token", "__Secure-next-auth.session-token", "checkout_session_token", "cart_sig", "_checkout_session", "session_cart_id", "otp_code"]) expect(isSecretName(n), n).toBe(true);
+        for (const n of ["next_page_token", "page_token", "cart_token", "/checkout/token", "continuation_token"]) expect(isSecretName(n), n).toBe(false);
+        expect(withUrl("/x?otp_code=123456")).toContain("secret_in_url");
+        expect(withValue({ in: "cookie", name: "__Secure-next-auth.session-token" }, "x")).toContain("secret_constant");
+    });
+    test("run-together card words in URLs", () => {
+        for (const u of ["/pay?cardnumber=4111111111111111", "/pay?ccnum=4111111111111111", "/pay?creditcard=4111111111111111", "/creditcards/4111111111111111", "/pay?card_number2=4111111111111111"]) expect(withUrl(u), u).toContain("card_number_constant");
+    });
+});

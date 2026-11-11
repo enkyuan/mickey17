@@ -54,8 +54,10 @@ bun run generate   # rewrite schema/agent-surface.schema.json
   from a longer paragraph, quoting or punctuation changes), not paraphrase. It is a tripwire, not a proof.
 - Secret and card detection are heuristics, listed so they can be reviewed and tested (`isSecretName`,
   `isSecretValue`, `isCardName`, `isCardConstant` in `check.ts`, table-driven tests in `test/checks.test.ts`):
-  names are matched on token boundaries after camelCase/punctuation splitting (so `x-author` and `token_type` are
-  fine, `api_key` and `sessionId` are not); a 15-19 digit Luhn-valid run counts as a card only when grouped like one
+  names are matched on token boundaries after camelCase/punctuation splitting, with strong words (`password`, `secret`,
+  `nonce`, `otp`...), weak words (`token`, `auth`, `session`, `signature`) that property qualifiers clear (`token_type`,
+  `session_length`, `password_hint`), and an exact allow list for pagination/cart handles (so `x-author` and
+  `next_page_token` are fine, `api_key`, `next-auth.session-token` and `otp_code` are not); a 15-19 digit Luhn-valid run counts as a card only when grouped like one
   or in a field or URL that contains a card word (`card`, `credit`, `cc`, `pan`; whole words, so `company_id` is fine). They will have false negatives (an unknown credential shape, a card number with an
   unusual separator) and rare false positives; the run-time layer (redaction, canary-secret scans) is the real defence,
   these checks stop the obvious cases from being committed to a surface.

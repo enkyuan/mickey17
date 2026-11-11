@@ -118,8 +118,7 @@ const CHAR_RUN = 16;
 /** A whole page string shorter than a run still counts when it is a real sentence: 3 to 7 words and 20+ characters. */
 const WHOLE_MIN_WORDS = 3;
 const WHOLE_MIN_CHARS = 20;
-/** Candidates kept per 3-word key, so a flood of identical openings cannot make matching expensive. */
-const WHOLE_PER_KEY = 64;
+
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 /** Case-fold, NFKC, drop format/default-ignorable characters, and turn everything that is not a letter or digit into a space. */
@@ -138,16 +137,14 @@ function hash52(text: string): number {
 }
 
 /** Hashes of every run of WORD_RUN words (spaced scripts) and CHAR_RUN characters (unspaced scripts) in `text`. */
-function shingles(text: string, out: Set<number>, whole?: Map<string, string[]>) {
+function shingles(text: string, out: Set<number>, whole?: { hashes: Set<number>; lengths: Set<number> }) {
     const folded = fold(text);
     if (folded === "") return;
     if (whole) {
         const w = folded.split(" ");
         if (w.length >= WHOLE_MIN_WORDS && w.length < WORD_RUN && folded.length >= WHOLE_MIN_CHARS) {
-            const key = w.slice(0, 3).join(" ");
-            const list = whole.get(key);
-            if (!list) whole.set(key, [folded]);
-            else if (list.length < WHOLE_PER_KEY && !list.includes(folded)) list.push(folded);
+            whole.hashes.add(hash52(`s${folded}`));
+            whole.lengths.add(w.length);
         }
     }
     const unspaced: string[] = [];
@@ -173,7 +170,7 @@ function shingles(text: string, out: Set<number>, whole?: Map<string, string[]>)
  */
 function scan(doc: unknown, add: Add) {
     const page = new Set<number>();
-    const pageWhole = new Map<string, string[]>();
+    const pageWhole = { hashes: new Set<number>(), lengths: new Set<number>() };
     const surface: { path: IssuePath; value: string }[] = [];
     const walk = (n: unknown, path: IssuePath) => {
         if (typeof n === "string") {
@@ -198,20 +195,22 @@ function scan(doc: unknown, add: Add) {
         }
     };
     walk(doc, []);
-    if (page.size === 0 && pageWhole.size === 0) return;
+    if (page.size === 0 && pageWhole.hashes.size === 0) return;
     for (const s of surface) {
         const mine = new Set<number>();
         shingles(s.value, mine);
         let hit = [...mine].some((h) => page.has(h));
-        if (!hit && pageWhole.size > 0) {
-            const folded = ` ${fold(s.value)} `;
-            const words = folded.trim().split(" ");
-            const seen = new Set<string>();
-            for (let i = 0; i + 3 <= words.length && !hit; i++) {
-                const key = words.slice(i, i + 3).join(" ");
-                if (seen.has(key)) continue;
-                seen.add(key);
-                hit = pageWhole.get(key)?.some((c) => folded.includes(` ${c} `)) ?? false;
+        if (!hit && pageWhole.hashes.size > 0) {
+            // Every whole short page sentence is one hash; look up each window of a length that occurs. Linear in the text.
+            const words = fold(s.value).split(" ").filter(Boolean);
+            for (let i = 0; i < words.length && !hit; i++) {
+                for (const len of pageWhole.lengths) {
+                    if (i + len > words.length) continue;
+                    if (pageWhole.hashes.has(hash52(`s${words.slice(i, i + len).join(" ")}`))) {
+                        hit = true;
+                        break;
+                    }
+                }
             }
         }
         if (hit) add(s.path, "page_text_in_surface", "surface-authored text repeats page text");
@@ -232,21 +231,38 @@ export const nameTokens = (name: string): string[] =>
         .split(/[^a-z0-9]+/)
         .filter(Boolean);
 
-const SECRET_WORDS = new Set(["password", "passwd", "pwd", "passcode", "secret", "jwt", "bearer", "credential", "credentials", "sid", "sess", "cvv", "cvc", "ccv"]);
-/** A token word counts as a credential unless the name says it is about the token, not the secret (token_type, max_tokens...). */
-const NOT_A_SECRET = new Set(["type", "max", "min", "count", "limit", "length", "ttl", "hint", "provider", "policy", "timeout", "duration", "expires", "lifetime", "method", "terms", "reference", "date", "enabled", "required", "page", "next", "cursor", "continuation", "sync", "cart", "checkout"]);
+/** Words that denote a secret by themselves. */
+const STRONG_WORDS = new Set(["password", "passwd", "pwd", "passcode", "secret", "jwt", "bearer", "credential", "credentials", "sid", "sess", "cvv", "cvc", "ccv", "nonce", "otp", "apikey"]);
+/** Words that denote a secret only when nothing qualifies them (token, auth, session, signature). */
+const WEAK_WORDS = new Set(["token", "auth", "authorization", "session", "signature", "sig"]);
+/** Property words: the name is about a property of the thing, not the secret (password_hint, token_type, secret_length). */
+const QUALIFIERS = new Set(["type", "max", "min", "count", "limit", "length", "ttl", "hint", "provider", "policy", "timeout", "duration", "expires", "lifetime", "terms", "enabled", "required", "date"]);
+/** Weak words are also cleared by these, which describe a method or a reference, not a credential (auth_method, payment_reference). */
+const WEAK_QUALIFIERS = new Set(["method", "reference"]);
+/** Whole names that carry a token which is not a credential: pagination, cart and checkout handles. */
+const BENIGN_NAMES = new Set(["next_page_token", "page_token", "next_token", "continuation_token", "sync_token", "cart_token", "checkout_token", "pagination_token", "cursor"]);
+
+/** The tokens that decide a name: the last non-numeric path segment, with its parent segment when it is a bare `token`/`key`. */
+function decisiveTokens(name: string): string[] {
+    const segments = name.split("/").filter(Boolean).filter((x) => !/^[0-9]+$/.test(x));
+    const last = segments.pop() ?? name;
+    const t = nameTokens(last);
+    if (t.length === 1 && (t[0] === "token" || t[0] === "key") && segments.length > 0) return [...nameTokens(segments[segments.length - 1] ?? ""), ...t];
+    return t;
+}
 
 /** True when a header, query, form, cookie or JSON-pointer name denotes a credential. */
 export function isSecretName(name: string): boolean {
-    const segments = name.split("/").filter(Boolean);
-    const last = [...segments].reverse().find((x) => !/^[0-9]+$/.test(x)) ?? name;
-    const t = nameTokens(last);
-    if (t.some((w) => NOT_A_SECRET.has(w))) return false; // password_hint, token_type, max_tokens, session_length...
-    if (t.some((w) => SECRET_WORDS.has(w))) return true;
-    if (t.length === 1 && (t[0] === "pin" || t[0] === "otp")) return true;
+    const t = decisiveTokens(name);
+    if (BENIGN_NAMES.has(t.join("_"))) return false;
+    if (t.some((w) => QUALIFIERS.has(w))) return false; // password_hint, token_type, max_tokens, session_length, otp_enabled
+    if (t.some((w) => STRONG_WORDS.has(w))) return true;
     const pair = (a: string, b: string) => t.some((w, i) => w === a && t[i + 1] === b);
-    if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key") || t.includes("apikey")) return true;
-    return t.some((w) => w === "token" || w === "auth" || w === "authorization" || w === "session" || w === "signature" || w === "sig");
+    if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key")) return true;
+    if (t.length === 1 && t[0] === "pin") return true;
+    if (["card", "new", "old", "login", "atm", "user"].some((w) => pair(w, "pin")) || pair("auth", "code")) return true;
+    if (t.some((w) => WEAK_QUALIFIERS.has(w))) return false;
+    return t.some((w) => WEAK_WORDS.has(w));
 }
 
 /** Constant values that are credentials whatever the field is called. */
@@ -272,9 +288,9 @@ function looksLikeCard(digits: string): boolean {
     return /^(4|5[0-8]|2[2-7]|3[047-9]|6)/.test(digits);
 }
 
-const CARD_WORDS = new Set(["card", "cards", "credit", "cc", "pan"]);
-/** True when a name or URL contains a whole word that denotes a payment card (not a substring: `company`, `span`). */
-const hasCardWord = (text: string): boolean => nameTokens(text).some((w) => CARD_WORDS.has(w));
+/** Whole words (optionally with trailing digits) that denote a payment card; not substrings, so `company` and `span` are fine. */
+const CARD_WORD = /^(card|cards|credit|creditcards?|cc|ccnum|cardnumber|cardnum|cardno|pan)[0-9]*$/;
+const hasCardWord = (text: string): boolean => nameTokens(text).some((w) => CARD_WORD.test(w));
 
 /** Card number in a constant: grouped like a card, or in a field that is named like one. */
 export function isCardConstant(value: string, fieldName: string): boolean {
@@ -298,18 +314,23 @@ function luhn(digits: string): boolean {
     return sum % 10 === 0;
 }
 
-/** Credential or payment inputs must say so: by name (password, secret, api key, bearer/access tokens, PAN-like), not only by label. */
+/**
+ * Credential or payment inputs must say so: by name, not only by label. Stricter about words, looser about bare
+ * `session`, `sid`, `signature`: an event session or a profile signature is an ordinary input, a session token is not.
+ */
 function sensitiveNameNeedsLabel(inp: Input): boolean {
     if (inp.sensitivity === "credential" || inp.sensitivity === "payment-token") return false;
     if (inp.type === "password") return true;
     const t = nameTokens(inp.name);
-    if (t.some((w) => NOT_A_SECRET.has(w))) return false; // payment_method, payment_terms, session_date, auth_method, otp_enabled
-    if (t.some((w) => ["password", "passwd", "pwd", "passcode", "secret", "jwt", "credential", "credentials", "bearer"].includes(w))) return true;
+    if (BENIGN_NAMES.has(t.join("_"))) return false;
+    if (t.some((w) => QUALIFIERS.has(w))) return false;
+    const strong = ["password", "passwd", "pwd", "passcode", "secret", "jwt", "credential", "credentials", "bearer", "nonce", "otp", "apikey"];
+    if (t.some((w) => strong.includes(w))) return true;
     const pair = (a: string, b: string) => t.some((w, i) => w === a && t[i + 1] === b);
-    if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key") || t.includes("apikey")) return true;
-    if (t.includes("token") && t.some((w) => ["auth", "access", "id", "refresh", "bearer", "payment", "pay", "card", "api"].includes(w))) return true;
-    if (t.length === 1 && (t[0] === "token" || t[0] === "pin" || t[0] === "otp")) return true;
-    // payment together with token / intent / nonce is a payment credential; payment_method, payment_terms are not.
+    if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key") || pair("auth", "code")) return true;
+    if (t.length === 1 && (t[0] === "token" || t[0] === "pin" || t[0] === "auth" || t[0] === "authorization")) return true;
+    if (["card", "new", "old", "login", "atm", "user"].some((w) => pair(w, "pin"))) return true;
+    if (t.includes("token") && t.some((w) => ["auth", "access", "id", "refresh", "bearer", "session", "oauth", "csrf", "xsrf", "user", "login", "verification", "client", "payment", "pay", "card", "api"].includes(w))) return true;
     return t.includes("payment") && t.some((w) => w === "token" || w === "intent" || w === "nonce" || w === "credential");
 }
 
@@ -397,7 +418,7 @@ function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly In
             const secretSource =
                 (src.kind === "cookie" && isSecretName(src.name)) ||
                 (src.kind === "storage" && isSecretName(src.key)) ||
-                (src.kind === "response" && (src.at.in === "set-cookie" || (src.at.in === "header" && isSecretName(src.at.name))));
+                (src.kind === "response" && src.at.in !== "redirect-location" && (src.at.in === "set-cookie" || isSecretName(src.at.name)));
             if (secretSource) add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential taken from a cookie, storage or response must not be placed in the URL");
         }
         if (v.class === "client-computed" && v.resolution.kind === "requires_browser" && v.resolution.reason === "tokenization" && effect !== "financial") {
