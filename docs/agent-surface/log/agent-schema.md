@@ -94,3 +94,14 @@ Fixed:
 - **Tests**: table-driven positive/negative cases for every detector alternative; 14 mutations of detector branches are all killed; adversarial and 40k x 100 performance tests; 496 tests total.
 
 Not fixed (accepted): `ok`-receipt T3 with an HTTP request is not checked; the idempotency-key input is not required to be `required: true`; secret detection remains heuristic (see README).
+
+## 2026-11-10 Review round 4 and fixes
+
+Round 4 (Opus 5.5 high, scoped to blockers and majors) found 6, all reproduced, all fixed with regression tests:
+1. **Blocker**: `decodeURIComponent` in `checkUrl` threw on page-controlled invalid escapes (`/sale?50%off=1`), crashing `validateSurface`. Now a non-throwing decode.
+2. Quadratic userinfo regex on a colon flood (108 s on a 10 MB document). The user part now excludes `:`; 100 x 16 KB colon hrefs scan in well under the test budget.
+3. `blocked` and `requires_auth` receipts are treated as sent when a response class is recorded (challenge, 429, off-host 3xx, 401), so financial ones must be reconcilable; `requires_confirmation`, `unsupported`, `stale` never carry a response class.
+4. False positives from name rules: input rule narrowed to password/secret/api-key/bearer-style and payment+token/intent/nonce names (`payment_method`, `session_id`, `pin_code`, `signature` are ordinary inputs); allow-words extended (method, terms, reference, date, enabled, page, next, cursor, continuation, sync, cart, checkout); only cookie/storage/set-cookie/secret-header sources are barred from URLs (a checkout or pagination token from a response body is fine).
+5. Tripwire noise: shared run raised to 8 words (16 characters unspaced), plus a whole-sentence rule for short page strings (3-7 words, 20+ characters), capped at 64 candidates per opening, so a short copied sentence is still caught and a template sharing "add the product to the cart" with a longer page text is not.
+6. README claim corrected and code fixed: card detection uses whole words (`card`, `credit`, `cc`, `pan`) in names and URLs, not substrings (`company_id`, `span_id`, `expand`).
+Also added tests for rules the reviewer found unguarded: tokenisation to financial, self prior_action, read-only cookie/storage token preconditions, canonical URL scan, issue dedupe, run-length boundaries, format-character folding. 511 tests; 13 further mutants killed.

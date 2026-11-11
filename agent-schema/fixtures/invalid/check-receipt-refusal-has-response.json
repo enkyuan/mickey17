@@ -19,7 +19,7 @@
       "value": "/api/payment-intents/{intent_id}/confirm"
     }
   },
-  "result": "blocked",
+  "result": "requires_confirmation",
   "response_class": "2xx",
   "duration_ms": 412,
   "mandate": "mandate-1",

@@ -112,9 +112,14 @@ export function checkSchemaVersion(version: string): VersionCheck {
 // Generic scan: ill-formed strings, timestamps, page text copied into surface text
 // ---------------------------------------------------------------------------
 
-/** Shared-run lengths: 5 consecutive words, or 12 consecutive characters of unspaced script (CJK, Thai). */
-const WORD_RUN = 5;
-const CHAR_RUN = 12;
+/** Shared-run lengths: 8 consecutive words, or 16 consecutive characters of unspaced script (CJK, Thai). */
+const WORD_RUN = 8;
+const CHAR_RUN = 16;
+/** A whole page string shorter than a run still counts when it is a real sentence: 3 to 7 words and 20+ characters. */
+const WHOLE_MIN_WORDS = 3;
+const WHOLE_MIN_CHARS = 20;
+/** Candidates kept per 3-word key, so a flood of identical openings cannot make matching expensive. */
+const WHOLE_PER_KEY = 64;
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 /** Case-fold, NFKC, drop format/default-ignorable characters, and turn everything that is not a letter or digit into a space. */
@@ -133,9 +138,18 @@ function hash52(text: string): number {
 }
 
 /** Hashes of every run of WORD_RUN words (spaced scripts) and CHAR_RUN characters (unspaced scripts) in `text`. */
-function shingles(text: string, out: Set<number>) {
+function shingles(text: string, out: Set<number>, whole?: Map<string, string[]>) {
     const folded = fold(text);
     if (folded === "") return;
+    if (whole) {
+        const w = folded.split(" ");
+        if (w.length >= WHOLE_MIN_WORDS && w.length < WORD_RUN && folded.length >= WHOLE_MIN_CHARS) {
+            const key = w.slice(0, 3).join(" ");
+            const list = whole.get(key);
+            if (!list) whole.set(key, [folded]);
+            else if (list.length < WHOLE_PER_KEY && !list.includes(folded)) list.push(folded);
+        }
+    }
     const unspaced: string[] = [];
     const wordsOnly = folded.replace(new RegExp(UNSPACED.source, "gu"), (m) => {
         unspaced.push(m);
@@ -150,8 +164,8 @@ function shingles(text: string, out: Set<number>) {
 /**
  * Scans any document. Flags (1) ill-formed UTF-16 (a lone surrogate cannot round-trip through
  * UTF-8 JSON), (2) timestamps that are not real instants (keys ending `_at`, and a top-level `at`),
- * and (3) surface-authored text that shares a run of 5 words (12 characters of unspaced script) with
- * page text, after case-folding and with punctuation, whitespace and format characters ignored
+ * and (3) surface-authored text that shares a run of 8 words (16 characters of unspaced script) with
+ * page text, or contains a whole short page sentence (3-7 words, 20+ characters), after case-folding and with punctuation, whitespace and format characters ignored
  * (D8 property: page text never appears in a surface-origin field). Page strings shorter than a run
  * never count, so ordinary headings do not trip it. Cost is linear in the text: every window is hashed once.
  * It catches copying, including a sentence lifted out of a longer paragraph and quoting or punctuation
@@ -159,6 +173,7 @@ function shingles(text: string, out: Set<number>) {
  */
 function scan(doc: unknown, add: Add) {
     const page = new Set<number>();
+    const pageWhole = new Map<string, string[]>();
     const surface: { path: IssuePath; value: string }[] = [];
     const walk = (n: unknown, path: IssuePath) => {
         if (typeof n === "string") {
@@ -169,7 +184,7 @@ function scan(doc: unknown, add: Add) {
         if (!n || typeof n !== "object") return;
         const o = n as Record<string, unknown>;
         if (typeof o.value === "string" && (o.origin === "page" || o.origin === "surface")) {
-            if (o.origin === "page") shingles(o.value, page);
+            if (o.origin === "page") shingles(o.value, page, pageWhole);
             else surface.push({ path: [...path, "value"], value: o.value });
         }
         for (const [k, v] of Object.entries(o)) {
@@ -183,16 +198,23 @@ function scan(doc: unknown, add: Add) {
         }
     };
     walk(doc, []);
-    if (page.size === 0) return;
+    if (page.size === 0 && pageWhole.size === 0) return;
     for (const s of surface) {
         const mine = new Set<number>();
         shingles(s.value, mine);
-        for (const h of mine) {
-            if (page.has(h)) {
-                add(s.path, "page_text_in_surface", "surface-authored text repeats page text");
-                break;
+        let hit = [...mine].some((h) => page.has(h));
+        if (!hit && pageWhole.size > 0) {
+            const folded = ` ${fold(s.value)} `;
+            const words = folded.trim().split(" ");
+            const seen = new Set<string>();
+            for (let i = 0; i + 3 <= words.length && !hit; i++) {
+                const key = words.slice(i, i + 3).join(" ");
+                if (seen.has(key)) continue;
+                seen.add(key);
+                hit = pageWhole.get(key)?.some((c) => folded.includes(` ${c} `)) ?? false;
             }
         }
+        if (hit) add(s.path, "page_text_in_surface", "surface-authored text repeats page text");
     }
 }
 
@@ -210,9 +232,9 @@ export const nameTokens = (name: string): string[] =>
         .split(/[^a-z0-9]+/)
         .filter(Boolean);
 
-const SECRET_WORDS = new Set(["password", "passwd", "pwd", "passcode", "pin", "otp", "secret", "jwt", "bearer", "credential", "credentials", "sid", "sess", "cvv", "cvc", "ccv"]);
+const SECRET_WORDS = new Set(["password", "passwd", "pwd", "passcode", "secret", "jwt", "bearer", "credential", "credentials", "sid", "sess", "cvv", "cvc", "ccv"]);
 /** A token word counts as a credential unless the name says it is about the token, not the secret (token_type, max_tokens...). */
-const NOT_A_SECRET = new Set(["type", "max", "min", "count", "limit", "length", "ttl", "hint", "provider", "policy", "timeout", "duration", "expires", "lifetime"]);
+const NOT_A_SECRET = new Set(["type", "max", "min", "count", "limit", "length", "ttl", "hint", "provider", "policy", "timeout", "duration", "expires", "lifetime", "method", "terms", "reference", "date", "enabled", "required", "page", "next", "cursor", "continuation", "sync", "cart", "checkout"]);
 
 /** True when a header, query, form, cookie or JSON-pointer name denotes a credential. */
 export function isSecretName(name: string): boolean {
@@ -221,6 +243,7 @@ export function isSecretName(name: string): boolean {
     const t = nameTokens(last);
     if (t.some((w) => NOT_A_SECRET.has(w))) return false; // password_hint, token_type, max_tokens, session_length...
     if (t.some((w) => SECRET_WORDS.has(w))) return true;
+    if (t.length === 1 && (t[0] === "pin" || t[0] === "otp")) return true;
     const pair = (a: string, b: string) => t.some((w, i) => w === a && t[i + 1] === b);
     if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key") || t.includes("apikey")) return true;
     return t.some((w) => w === "token" || w === "auth" || w === "authorization" || w === "session" || w === "signature" || w === "sig");
@@ -249,11 +272,15 @@ function looksLikeCard(digits: string): boolean {
     return /^(4|5[0-8]|2[2-7]|3[047-9]|6)/.test(digits);
 }
 
+const CARD_WORDS = new Set(["card", "cards", "credit", "cc", "pan"]);
+/** True when a name or URL contains a whole word that denotes a payment card (not a substring: `company`, `span`). */
+const hasCardWord = (text: string): boolean => nameTokens(text).some((w) => CARD_WORDS.has(w));
+
 /** Card number in a constant: grouped like a card, or in a field that is named like one. */
 export function isCardConstant(value: string, fieldName: string): boolean {
     const grouped = /^[0-9]{4}([ .-])[0-9]{4}\1[0-9]{4}\1[0-9]{3,4}(\1[0-9]{1,3})?$/.test(value.trim());
     const digits = value.replace(/[ .-]/g, "");
-    return looksLikeCard(digits) && (grouped || isCardName(fieldName) || /card|credit|pan/i.test(fieldName));
+    return looksLikeCard(digits) && (grouped || isCardName(fieldName) || hasCardWord(fieldName));
 }
 
 function luhn(digits: string): boolean {
@@ -271,32 +298,47 @@ function luhn(digits: string): boolean {
     return sum % 10 === 0;
 }
 
-/** Credential or payment inputs must say so: by name (password, token, api key, pin...), not only by label. */
+/** Credential or payment inputs must say so: by name (password, secret, api key, bearer/access tokens, PAN-like), not only by label. */
 function sensitiveNameNeedsLabel(inp: Input): boolean {
     if (inp.sensitivity === "credential" || inp.sensitivity === "payment-token") return false;
     if (inp.type === "password") return true;
-    if (isSecretName(inp.name)) return true;
     const t = nameTokens(inp.name);
-    return t.includes("payment") || (t.includes("pay") && (t.includes("token") || t.includes("method") || t.includes("intent")));
+    if (t.some((w) => NOT_A_SECRET.has(w))) return false; // payment_method, payment_terms, session_date, auth_method, otp_enabled
+    if (t.some((w) => ["password", "passwd", "pwd", "passcode", "secret", "jwt", "credential", "credentials", "bearer"].includes(w))) return true;
+    const pair = (a: string, b: string) => t.some((w, i) => w === a && t[i + 1] === b);
+    if (pair("api", "key") || pair("access", "key") || pair("private", "key") || pair("secret", "key") || t.includes("apikey")) return true;
+    if (t.includes("token") && t.some((w) => ["auth", "access", "id", "refresh", "bearer", "payment", "pay", "card", "api"].includes(w))) return true;
+    if (t.length === 1 && (t[0] === "token" || t[0] === "pin" || t[0] === "otp")) return true;
+    // payment together with token / intent / nonce is a payment credential; payment_method, payment_terms are not.
+    return t.includes("payment") && t.some((w) => w === "token" || w === "intent" || w === "nonce" || w === "credential");
+}
+
+/** decodeURIComponent that never throws: page-controlled strings may hold invalid escapes. */
+function safeDecode(text: string): string {
+    try {
+        return decodeURIComponent(text);
+    } catch {
+        return text;
+    }
 }
 
 /** Rules for a URL or URL template found anywhere (requests, routes, hrefs, navigation targets). */
 function checkUrl(path: IssuePath, url: string, add: Add) {
     let bad = false;
-    if (/\/\/[^/\s@]+:[^/\s@]*@/.test(url)) bad = true; // userinfo
+    if (/\/\/[^/\s@:]+:[^/\s@]*@/.test(url)) bad = true; // userinfo (user part excludes ":" so the match cannot backtrack quadratically)
     const qi = url.indexOf("?");
     if (qi >= 0) {
         for (const pair of url.slice(qi + 1).split(/[&;]/)) {
             const [name = "", value = ""] = pair.split("=");
             if (/^\{[^}]*\}$/.test(value)) continue; // a template placeholder, not a value
-            if (name && isSecretName(decodeURIComponent(name))) bad = true;
+            if (name && isSecretName(safeDecode(name))) bad = true;
         }
     }
     if (isSecretValue(url) || url.split(/[/?&=;#]/).some((seg) => isSecretValue(seg))) bad = true;
     if (bad) add(path, "secret_in_url", "a credential must not appear in a URL");
     const stripped = url.replace(/%20|[ .-]/g, "");
     for (const run of stripped.match(/[0-9]{15,19}/g) ?? []) {
-        if (looksLikeCard(run) && (/card|credit|cc[_-]?num|pan/i.test(url) || /[0-9]{4}[ .-][0-9]{4}[ .-][0-9]{4}/.test(url))) {
+        if (looksLikeCard(run) && (hasCardWord(url) || /[0-9]{4}[ .-][0-9]{4}[ .-][0-9]{4}/.test(url))) {
             add(path, "card_number_constant", "URL contains what looks like a payment card number");
             break;
         }
@@ -352,8 +394,11 @@ function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly In
         }
         if (v.class === "derived" && inUrl) {
             const src = v.edge.source;
-            const sourceName = src.kind === "cookie" ? src.name : src.kind === "storage" ? src.key : src.kind === "response" ? src.at.name : "";
-            if (sourceName !== "" && isSecretName(sourceName)) add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential taken from a cookie, storage or response must not be placed in the URL");
+            const secretSource =
+                (src.kind === "cookie" && isSecretName(src.name)) ||
+                (src.kind === "storage" && isSecretName(src.key)) ||
+                (src.kind === "response" && (src.at.in === "set-cookie" || (src.at.in === "header" && isSecretName(src.at.name))));
+            if (secretSource) add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential taken from a cookie, storage or response must not be placed in the URL");
         }
         if (v.class === "client-computed" && v.resolution.kind === "requires_browser" && v.resolution.reason === "tokenization" && effect !== "financial") {
             add([...vp, "resolution", "reason"], "payment_token_not_financial", "payment tokenisation belongs to a financial request");
@@ -723,12 +768,16 @@ export function checkOperationResult(r: OperationResult): CheckIssue[] {
 
 /** Results that mean the request was sent to the site (it may have failed, or the site raised a challenge). */
 const REACHED_SITE: ReadonlySet<string> = new Set(["ok", "error", "requires_human"]);
+/** Results that are refused before anything is sent: they can never have a response. */
+const NEVER_SENT: ReadonlySet<string> = new Set(["requires_confirmation", "unsupported", "stale"]);
 
 /** Cross-field rules for a receipt. */
 export function checkReceipt(r: Receipt): CheckIssue[] {
     const { list, add } = issues();
     scan(r, add);
-    const reached = REACHED_SITE.has(r.result);
+    // `blocked` (a challenge, a rate limit, an off-host redirect) and `requires_auth` (a 401) can follow a sent request:
+    // they count as reached exactly when a response class is recorded.
+    const reached = REACHED_SITE.has(r.result) || (!NEVER_SENT.has(r.result) && r.response_class !== undefined);
     // A refusal (blocked, requires_confirmation...) records the attempt, so the mode rule applies to calls that ran.
     if (r.mode === "read-only" && reached) {
         if (r.effect !== "read") add(["effect"], "mode_forbids_effect", "read-only mode records reads only");
@@ -736,7 +785,7 @@ export function checkReceipt(r: Receipt): CheckIssue[] {
     }
     if (r.effect !== "read" && r.tier !== "T2") add(["tier"], "receipt_tier_effect", "a write is a T2 network call");
     if (r.amount !== undefined && (r.effect !== "financial" || r.result !== "ok")) add(["amount"], "amount_not_financial", "only a completed financial call records an amount");
-    if (r.response_class !== undefined && !reached) add(["response_class"], "receipt_result_mismatch", "a refusal never reached the site, so it has no response class");
+    if (r.response_class !== undefined && NEVER_SENT.has(r.result)) add(["response_class"], "receipt_result_mismatch", `a ${r.result} result is refused before sending, so it has no response class`);
     if (r.result === "ok" && (r.response_class === "4xx" || r.response_class === "5xx")) add(["response_class"], "receipt_result_mismatch", "an ok result cannot have an error response class");
     // A call that was sent must be reconcilable: a timed-out payment is exactly the case that needs its key, mandate and confirmation.
     if (reached) {

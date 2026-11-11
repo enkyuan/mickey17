@@ -46,16 +46,17 @@ bun run generate   # rewrite schema/agent-surface.schema.json
   `MarkedText`, `MarkedValue`, `SurfaceText`). Everything else is a grammar: ids are slugs, names and pointers
   (`Name`) are token characters with no whitespace, roles are the ARIA enum. A test walks the generated JSON Schema
   (properties, array items, record keys) and fails if a new bare string appears without review.
-- `check.ts` also scans for surface-authored text that shares a run of 5 words (12 characters of unspaced script
-  such as CJK or Thai) with page text, after case-folding, with punctuation, whitespace and format characters
-  ignored. Short page strings (under one run) never count, so a heading like "Checkout" does not trip it. Every
-  window is hashed once, so cost is linear in the text. It catches copying (including a sentence lifted from a longer
-  paragraph, quoting or punctuation changes), not paraphrase. It is a tripwire, not a proof.
+- `check.ts` also scans for surface-authored text that shares a run of 8 words (16 characters of unspaced script
+  such as CJK or Thai) with page text, or contains a whole short page sentence (3-7 words, 20+ characters), after
+  case-folding, with punctuation, whitespace and format characters ignored. Page strings shorter than a sentence never
+  count, so a heading like "Checkout" does not trip it, and a template sharing a short phrase with a longer page text
+  is fine. Every window is hashed once, so cost is linear in the text. It catches copying (including a sentence lifted
+  from a longer paragraph, quoting or punctuation changes), not paraphrase. It is a tripwire, not a proof.
 - Secret and card detection are heuristics, listed so they can be reviewed and tested (`isSecretName`,
   `isSecretValue`, `isCardName`, `isCardConstant` in `check.ts`, table-driven tests in `test/checks.test.ts`):
   names are matched on token boundaries after camelCase/punctuation splitting (so `x-author` and `token_type` are
   fine, `api_key` and `sessionId` are not); a 15-19 digit Luhn-valid run counts as a card only when grouped like one
-  or in a card-named field or URL. They will have false negatives (an unknown credential shape, a card number with an
+  or in a field or URL that contains a card word (`card`, `credit`, `cc`, `pan`; whole words, so `company_id` is fine). They will have false negatives (an unknown credential shape, a card number with an
   unusual separator) and rare false positives; the run-time layer (redaction, canary-secret scans) is the real defence,
   these checks stop the obvious cases from being committed to a surface.
 - Money rules are keyed on what a request carries, not only on its label: a request with a `payment-token`

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkReceipt, deriveCoverage, isCardConstant, isCardName, isSecretName, isSecretValue, nameTokens, validateSurface, withHash } from "../src/index";
+import { AgentSurface, checkReceipt, deriveCoverage, fromZodIssues, isCardConstant, isCardName, isSecretName, isSecretValue, nameTokens, validateSurface, withHash } from "../src/index";
 import { shop } from "../scripts/fixtures";
 
 const clone = (): any => JSON.parse(JSON.stringify(shop));
@@ -157,7 +157,7 @@ describe("page-text tripwire", () => {
             `Details:${PAGE}`,
             PAGE.toUpperCase(),
             "Dishwasher   safe,\n350 ml, hand wash recommended for the painted rim",
-            "Dishwasher safe. 350 ml. Hand wash recommended for", // a 5-word run is enough
+            "Dishwasher safe. 350 ml. Hand wash recommended for", // an 8-word run is enough
             `Dish­washer safe. 350 ml. Hand wash‎ recommended for the painted rim.`,
             `Intro text before. ${PAGE} Outro text after.`,
         ]) expect(flagged(t)).toBe(true);
@@ -177,6 +177,29 @@ describe("page-text tripwire", () => {
     test("does not flag short or unrelated text", () => {
         expect(flagged("Add this product to the cart.")).toBe(false);
         expect(flagged("Dishwasher safe.")).toBe(false);
+        expect(flagged("Dishwasher safe. 350 ml. Hand wash")).toBe(false); // 6 words of a longer sentence
+    });
+    test("a short page sentence copied whole is caught; a template sharing a phrase with a longer page text is not", () => {
+        const d = clone();
+        d.routes[3].nodes.push({ id: "n_00000000000000fd", role: "paragraph", visibility: "visible", text: { origin: "page", value: "Dishwasher cycle takes forty minutes." } });
+        d.routes[3].nodes.push({ id: "n_00000000000000fc", role: "paragraph", visibility: "visible", text: { origin: "page", value: "Choose a colour, then add the product to the cart. Free shipping over $50." } });
+        d.actions[1].description.value = "Please note: dishwasher cycle takes forty minutes";
+        expect(verdict(d)).toContain("page_text_in_surface");
+        d.actions[1].description.value = "Add the product to the cart.";
+        expect(verdict(d)).toEqual([]);
+    });
+    test("run boundaries: 7 shared words pass, 8 are flagged; 15 shared CJK characters pass, 16 are flagged", () => {
+        const d = clone();
+        d.routes[3].nodes.push({ id: "n_00000000000000fb", role: "paragraph", visibility: "visible", text: { origin: "page", value: "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo" } });
+        d.routes[3].nodes.push({ id: "n_00000000000000fa", role: "paragraph", visibility: "visible", text: { origin: "page", value: "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸" } });
+        d.actions[1].description.value = "x alpha bravo charlie delta echo foxtrot golf y";
+        expect(verdict(d)).toEqual([]);
+        d.actions[1].description.value = "x alpha bravo charlie delta echo foxtrot golf hotel y";
+        expect(verdict(d)).toContain("page_text_in_surface");
+        d.actions[1].description.value = "一二三四五六七八九十甲乙丙丁戊";
+        expect(verdict(d)).toEqual([]);
+        d.actions[1].description.value = "一二三四五六七八九十甲乙丙丁戊己";
+        expect(verdict(d)).toContain("page_text_in_surface");
     });
     test("cost is linear even when every window is shared (adversarial)", () => {
         const d = clone();
@@ -221,3 +244,100 @@ describe("receipt rules", () => {
         expect(codes({ ...ok, response_class: "5xx" })).toEqual(["receipt_result_mismatch"]);
     });
 });
+
+describe("round-4 regressions", () => {
+    test("invalid percent escapes in page-controlled URLs never throw", () => {
+        for (const url of ["/sale?50%off=1", "/?utm%zz=1", "/?%E0%A4%A=1"]) {
+            let d = clone();
+            d.routes[0].nodes[2].href.value = url;
+            expect(() => verdict(d)).not.toThrow();
+            d = clone();
+            d.routes[0].url.value = url;
+            expect(() => verdict(d)).not.toThrow();
+        }
+    });
+    test("userinfo detection is not quadratic on a colon flood", () => {
+        const d = clone();
+        for (let i = 0; i < 100; i++) d.routes[0].nodes.push({ id: `n_${(i + 1000).toString(16).padStart(16, "0")}`, role: "link", visibility: "visible", href: { origin: "page", value: `//a${":".repeat(16000)}` } });
+        const t0 = performance.now();
+        verdict(d);
+        expect(performance.now() - t0).toBeLessThan(2000);
+    });
+    test("userinfo is still caught", () => {
+        const d = clone();
+        d.routes[0].nodes[2].href.value = "https://admin:hunter2@host/x";
+        expect(verdict(d)).toContain("secret_in_url");
+    });
+    test("a blocked or requires_auth receipt with a response class was sent: financial ones must be reconcilable", () => {
+        const base: any = { id: "r1", at: "2026-11-10T12:00:00Z", mode: "delegated", tier: "T2", effect: "financial", subject: { flow: "checkout", step: "pay" }, evidence: [], request: { method: "POST", host: "shop.example.test", path: { origin: "page", value: "/pay" } }, duration_ms: 1, redactions: 0 };
+        const codes = (r: any) => checkReceipt(r).map((i) => i.code);
+        expect(codes({ ...base, result: "blocked", response_class: "4xx" }).sort()).toEqual(["receipt_incomplete", "receipt_incomplete", "receipt_incomplete"]);
+        expect(codes({ ...base, result: "blocked" })).toEqual([]);
+        expect(codes({ ...base, effect: "read", tier: "T1", result: "requires_auth", response_class: "4xx" })).toEqual([]);
+        expect(codes({ ...base, result: "stale", response_class: "4xx" })).toEqual(["receipt_result_mismatch"]);
+    });
+    test("ordinary checkout and event inputs need no credential label", () => {
+        const d = clone();
+        for (const name of ["payment_method", "payment_reference", "payment_terms", "payment_due_date", "session", "session_id", "sessionDate", "pin_code", "signature", "auth_method", "otp_enabled", "sid"]) {
+            d.flows[0].inputs.push({ name, type: "string", required: false, sensitivity: "none" });
+        }
+        expect(verdict(d)).toEqual([]);
+    });
+    test("real credentials as inputs still need a label", () => {
+        for (const name of ["password", "api_key", "access_token", "id_token", "refresh_token", "payment_token", "payment_intent", "client_secret", "token", "pin"]) {
+            const d = clone();
+            d.flows[0].inputs.push({ name, type: "string", required: false, sensitivity: "none" });
+            expect(verdict(d)).toContain("password_not_credential");
+        }
+    });
+    test("a response token (checkout, cart, pagination) may be placed in a URL; a set-cookie value may not", () => {
+        const d = clone();
+        const v = d.flows[0].steps[1].requests[0].values;
+        v.push({ at: { in: "path", name: "tok" }, value: { class: "derived", edge: { source: { kind: "response", step: "add-item", request: "add-item-req", at: { in: "body-json", name: "/checkout/token" } }, match: "json-path" } } });
+        v.push({ at: { in: "query", name: "cursor" }, value: { class: "derived", edge: { source: { kind: "response", step: "add-item", request: "add-item-req", at: { in: "body-json", name: "/next_page_token" } }, match: "json-path" } } });
+        expect(verdict(d)).toEqual([]);
+        v.push({ at: { in: "query", name: "s" }, value: { class: "derived", edge: { source: { kind: "response", step: "add-item", request: "add-item-req", at: { in: "set-cookie", name: "sid" } }, match: "header" } } });
+        expect(verdict(d)).toContain("sensitive_in_url");
+    });
+    test("card detection uses words, not substrings", () => {
+        expect(withValue({ in: "body-json", name: "/company_id" }, "4532015112830366")).toEqual([]);
+        expect(withValue({ in: "body-json", name: "/span_id" }, "4532015112830366")).toEqual([]);
+        expect(withValue({ in: "query", name: "expand" }, "4532015112830366")).toEqual([]);
+        expect(withUrl("/api/companies/4532015112830366")).toEqual([]);
+        expect(withValue({ in: "body-json", name: "/card_id" }, "4532015112830366")).toContain("card_number_constant");
+    });
+    test("tokenisation by a client-computed value belongs to a financial request", () => {
+        const d = clone();
+        d.flows[0].steps[2].requests[0].values.push({ at: { in: "body-json", name: "/pt" }, value: { class: "client-computed", resolution: { kind: "requires_browser", reason: "tokenization" } } });
+        expect(verdict(d)).toContain("payment_token_not_financial");
+    });
+    test("an action cannot be its own prerequisite", () => {
+        const d = clone();
+        d.actions[1].preconditions.push({ type: "prior_action", action: "add-to-cart" });
+        expect(verdict(d)).toContain("dependency_not_earlier");
+    });
+    test("read-only: a cookie or storage token precondition is authentication", () => {
+        for (const kind of ["cookie", "storage"]) {
+            const d: any = JSON.parse(JSON.stringify(readOnlyDoc));
+            d.actions[0].preconditions = [{ type: "token", into: { in: "header", name: "x-t" }, source: { source: kind === "cookie" ? { kind: "cookie", name: "locale" } : { kind: "storage", area: "local", key: "k" }, match: "exact" } }];
+            expect(verdict(d)).toContain("read_only_requires_auth");
+        }
+    });
+    test("a canonical URL is scanned", () => {
+        const d = clone();
+        d.routes[1].canonical.value = "https://shop.example.test/products/mug?api_key=sk_live_abc123456";
+        expect(verdict(d)).toContain("secret_in_url");
+    });
+    test("Zod issues are deduplicated across intersection branches", () => {
+        const d = clone();
+        d.actions[1].evidence[1].extra = true;
+        const r = AgentSurface.safeParse(d);
+        expect(r.success).toBe(false);
+        if (!r.success) {
+            const issues = fromZodIssues(r.error);
+            expect(new Set(issues.map((i) => JSON.stringify([i.path, i.code]))).size).toBe(issues.length);
+        }
+    });
+});
+
+import { readOnly as readOnlyDoc } from "../scripts/fixtures";

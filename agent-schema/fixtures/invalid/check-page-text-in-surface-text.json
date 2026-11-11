@@ -298,7 +298,7 @@
       },
       "description": {
         "origin": "surface",
-        "value": "Note: \"DISHWASHER   safe. 350 ml.  Hand wash recommended\" applies"
+        "value": "Note: \"DISHWASHER   safe. 350 ml.  Hand wash recommended for the painted\" applies"
       },
       "inputs": [
         {
@@ -810,5 +810,5 @@
       }
     }
   ],
-  "hash": "sha256:4e257c54596ea25b52e5cda1234ee09bfec024deab5f1fbb9a9ce27a1e089118"
+  "hash": "sha256:c595362dc2a607e51f8f4f4a219760609f1ef8a939e154555a72f6427f7d2eb5"
 }
