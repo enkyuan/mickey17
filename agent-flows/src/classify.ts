@@ -1,6 +1,6 @@
 // Alignment, cross-request matching and value classing.
 
-import { hasTokenPiece, isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
+import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
@@ -279,7 +279,7 @@ const GRAPHQL_DOCUMENT = /^(?:json:\$|json:\$\[\d+\])\.query$|^(?:url\.query|for
  * like an id (server-issued) is not an operation name either: it is a derived value, not an endpoint.
  */
 function operationOf(loc: string, value: string): string | null {
-    if (TOP_OPERATION.test(loc)) return value;
+    if (TOP_OPERATION.test(loc)) return nameLike(value) ? value : null;
     if (GRAPHQL_DOCUMENT.test(loc)) {
         const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
         return m ? `gql:${m[1]}` : null;
@@ -288,20 +288,19 @@ function operationOf(loc: string, value: string): string | null {
 }
 
 /**
- * Whether this value was issued to the client before the step: it contains a token-grade piece (an id or
- * nonce, so the classifier can explain it from its source, even inside a URL) and an earlier response, the
- * starting cookie jar or an earlier HTML page carries exactly it. Names (`update`, `GetCartV2`) are never
- * "issued": a response or a script bundle that merely lists them does not make swapped requests alignable.
+ * Whether a value reads as the name of an operation (`GetCart`, `cart.v1.get`, `update`, `GetCartV2Checkout`) rather than an
+ * id or nonce: words (camelCase, `.`, `_`, `-` separated) of real letters, with at most short version numbers. Only names
+ * are compared across runs; an id-like value is a data value and is classified like any other. This does not depend on where
+ * the value came from, so a listing of names in a page, bundle or response cannot make swapped requests look alignable.
  */
-function issuedBefore(run: RunData, step: number, value: string): boolean {
-    if (!hasTokenPiece(value)) return false;
-    if (run.jar.some((s) => s.value === value)) return true;
-    for (let j = 0; j < step; j++) {
-        if (run.resp[j]!.some((s) => s.value === value)) return true;
-        const mime = run.entries[j]!.respBody?.mime.split(";")[0]?.trim().toLowerCase();
-        if ((mime === "text/html" || mime === "application/xhtml+xml") && run.free[j]?.has(value)) return true;
-    }
-    return false;
+function nameLike(value: string): boolean {
+    if (value.length === 0 || value.length > 96 || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(value)) return false;
+    const parts = value.split(/[._-]|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=\D)(?=\d)|(?<=\d)(?=\D)/).filter(Boolean);
+    const word = (w: string) => /^(?:[a-z]{1,15}|[A-Z][a-z]{1,14}|[A-Z]{1,6})$/.test(w) && (w.length <= 2 || /[aeiouAEIOU]/.test(w));
+    const alpha = parts.filter((w) => !/^\d+$/.test(w));
+    const short = alpha.filter((w) => w.length <= 2).length;
+    // Mostly real words: junk fragments (`8f2Kq9ZxLm41` splits into `f`, `Kq`, `Zx`, `Lm`) mean an id, not a name.
+    return parts.every((w) => /^\d{1,2}$/.test(w) || word(w)) && parts.length <= 12 && short <= 2 && short * 2 <= alpha.length;
 }
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
@@ -333,8 +332,8 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
             });
             if (vals.every((v) => v === null || v === undefined)) continue;
             if (vals.every((v) => v === vals[0])) continue;
-            // Explained by a run parameter, or issued by an earlier response of the same run (a server nonce).
-            if (vals.every((v, r) => v !== null && v !== undefined && (params[r]!.has(v) || issuedBefore(runs[r]!, i, v)))) continue;
+            // Explained by a run parameter.
+            if (vals.every((v, r) => v !== null && v !== undefined && params[r]!.has(v))) continue;
             return `runs are not alignable at step ${i}: the operation (${safeLocation(key)}) differs between runs (the requests may have been reordered)`;
         }
         // A path segment that differs between runs must be an id (token-grade in every run) or

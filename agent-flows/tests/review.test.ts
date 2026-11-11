@@ -1003,3 +1003,85 @@ describe("round 7", () => {
         expect(g.steps[0]!.values.filter((v) => v.location.startsWith("json:$.series")).length).toBe(3);
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 8
+
+describe("round 8", () => {
+    const note = (n: string, loc = "note") => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })])]);
+
+    test("slash floods, hyphen chains and 5000-digit runs are cheap; long digit runs are withheld", () => {
+        const started = performance.now();
+        note("/".repeat(200_000));
+        note("a-".repeat(4000));
+        expect(toJson(note("1".repeat(5000) + "4539148803436467"))).not.toContain("4539148803436467");
+        expect(performance.now() - started).toBeLessThan(5_000);
+    });
+
+    test("long operation names listed in inline HTML do not make swapped requests alignable", () => {
+        const html = req(0, "GET", `${B}/`, { respBody: ["text/html", '<script>window.ops={cart:{operationName:"GetShoppingCartContents"},addr:{operationName:"UpdateShippingAddressMutation"}}</script>'] });
+        const op = (n: string) => req(5, "POST", `${B}/graphql`, { body: jsonBody({ operationName: n, variables: { id: "1" } }) });
+        const g = graphOf([
+            doc("a", [html, op("GetShoppingCartContents"), { ...op("UpdateShippingAddressMutation"), id: "q9", tMs: 5100 }]),
+            doc("b", [html, op("UpdateShippingAddressMutation"), { ...op("GetShoppingCartContents"), id: "q9", tMs: 5100 }]),
+        ]);
+        expect(g.status).toBe("blocked");
+    });
+
+    test("short and XML/turbo-stream server nonces in operation fields align", () => {
+        for (const [mime, nonces] of [["application/json", ["a1b2c3d4e5f6", "k9QmZ2xLp8Rt"]], ["application/xml", ["a1b2c3d4e5f6", "k9QmZ2xLp8Rt"]], ["text/vnd.turbo-stream.html", ["a1b2c3d4e5f6", "k9QmZ2xLp8Rt"]]] as const) {
+            const mk = (run: string, n: string) => doc(run, [req(0, "GET", `${B}/c`, { respBody: [mime, mime.includes("json") ? JSON.stringify({ n }) : `<n>${n}</n>`] }), req(1, "POST", `${B}/x`, { body: jsonBody({ action: n }) })]);
+            expect(graphOf([mk("a", nonces[0]), mk("b", nonces[1])]).status, mime).toBe("resolved");
+        }
+    });
+
+    test("epoch-like keys are not read as cards (checked in the serialised graph)", () => {
+        const series = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`${1700000000000 + i * 1000}`, i]));
+        const text = toJson(note(JSON.stringify(series), "dummy"));
+        expect(text).not.toContain("<redacted-location>");
+        const g = graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ series }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ series }) })])]);
+        expect(toJson(g)).not.toContain("<redacted-location>");
+        expect(toJson(note("x", "4539 1488 0343 6467"))).toContain("<redacted-location>");
+    });
+
+    test("number lists, prices and URLs are kept; real cards still go", () => {
+        let kept = 0;
+        const r = new Rng(5);
+        for (let i = 0; i < 100; i++) {
+            const ids = [r.hex(4).replace(/[a-f]/g, "3"), r.hex(4).replace(/[a-f]/g, "7"), r.hex(4).replace(/[a-f]/g, "1"), r.hex(4).replace(/[a-f]/g, "9")].join(",");
+            if (toJson(note(ids)).includes(ids)) kept++;
+        }
+        expect(kept).toBeGreaterThan(70);
+        expect(toJson(note("1,299.00, 2,499.00, 3,199.00"))).toContain("1,299.00");
+        for (const [loc, v] of [["returnUrl", "https://s.test/api/v2/cart"], ["cancel_url", "https://s.test/orders/2024/summary"]] as const) expect(toJson(note(v, loc)), v).toContain(v);
+        expect(toJson(note("4242,4242,4242,4242"))).not.toContain("4242,4242");
+    });
+
+    test("same-id events that differ only in inputs give one output for either file order", () => {
+        const mk = (run: string, swap: boolean) => {
+            const reqs = [req(0, "POST", `${B}/x`, { body: jsonBody({ query: "red", zip: "94110" }) })];
+            const t = traceOf(run, [], reqs);
+            const evs = [{ id: "e0", t: iso0, type: "fill", target: "#a", inputs: { query: "red" }, requests: ["q0"] }, { id: "e0", t: iso0, type: "fill", target: "#a", inputs: { zip: "94110" }, requests: ["q0"] }];
+            t.events = swap ? evs.reverse() : evs;
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        const iso0 = "2026-11-09T10:00:01.000Z";
+        const a = toJson(graphOf([mk("a", true), mk("b", false)]));
+        expect(toJson(graphOf([mk("a", false), mk("b", true)]))).toBe(a);
+        expect(toJson(graphOf([mk("a", false), mk("b", false)]))).toBe(a);
+    });
+
+    test("text pseudo-classes and typed arguments are scrubbed; structural ones are kept", () => {
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const t = (target: string) => {
+            const mk = (run: string) => {
+                const tr = traceOf(run, [], reqs);
+                tr.events[0].target = target;
+                return { har: harOf(reqs), trace: tr, cookies: [] } as RunDoc;
+            };
+            return toJson(graphOf([mk("a"), mk("b")]));
+        };
+        for (const s of ["input:has-text(hunter2)", "el:type(s3cr3tpass)", "li:nth-child(fill(pw1))"]) expect(t(s), s).not.toMatch(/hunter2|s3cr3tpass|pw1/);
+        expect(t("li:nth-child(2n+1) > a")).toContain("nth-child(2n+1)");
+    });
+});
