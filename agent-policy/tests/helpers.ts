@@ -61,7 +61,7 @@ export const moneyReq = (over: Partial<ActionRequest> = {}): ActionRequest => ({
     idempotent: true,
     idempotencyKey: "idem-key-0001",
     credential: { kind: "oauth", scopes: ["financial"] },
-    money: { merchant: "shop.example.com", item: "sku-42", totalMinor: 4_999, currency: "USD", payee: "shop.example.com" },
+    money: { egressHost: "shop.example.com", merchant: "shop.example.com", item: "sku-42", totalMinor: 4_999, currency: "USD", payee: "shop.example.com" },
     now: NOW,
     ...over,
 });

@@ -41,6 +41,8 @@ export interface ThirdPartyChecks {
 }
 
 export interface MoneyDetails {
+    /** The host the request will actually be sent to (the egress decision's host). Must equal `merchant`. */
+    readonly egressHost: string;
     readonly merchant: string;
     readonly item: string;
     readonly totalMinor: number;
@@ -112,6 +114,7 @@ function validate(req: ActionRequest): Refusal | null {
     if (typeof req.actionId !== "string" || !ID.test(req.actionId)) return bad("actionId");
     if (typeof req.idempotent !== "boolean") return bad("idempotent");
     if (typeof req.now !== "number" || !Number.isFinite(req.now)) return bad("now");
+    if (req.requiresAuth !== undefined && typeof req.requiresAuth !== "boolean") return bad("requiresAuth");
     if (req.idempotencyKey !== undefined && (typeof req.idempotencyKey !== "string" || !KEY.test(req.idempotencyKey))) return bad("idempotencyKey");
     return null;
 }
@@ -135,7 +138,8 @@ export function checkStatic(req: ActionRequest): Refusal | null {
         if (tp.tos !== "ok") return refuse("blocked", "tos-not-cleared", "a recorded terms-of-service check that permits access", "The terms-of-service check is missing or negative.");
     }
 
-    if (req.mode === "read-only" && (req.requiresAuth === true || req.credential !== undefined)) {
+    // read-only must positively assert that the endpoint is public; silence is not enough
+    if (req.mode === "read-only" && (req.requiresAuth !== false || req.credential !== undefined)) {
         return refuse("blocked", "read-only-private-endpoint", "owner or delegated mode (read-only never replays private endpoints or attaches credentials)", "Mode read-only does not permit authenticated requests.");
     }
     const needsCredential = req.effect !== "read" || req.requiresAuth === true;
@@ -154,6 +158,9 @@ export function checkStatic(req: ActionRequest): Refusal | null {
         const m = req.money;
         if (!m || typeof m.merchant !== "string" || typeof m.item !== "string" || typeof m.payee !== "string" || typeof m.currency !== "string" || !isSafePosInt(m.totalMinor)) {
             return refuse("blocked", "invalid-request", "a well-formed money object (merchant, item, totalMinor, currency, payee)", "Financial action lacks well-formed money details.");
+        }
+        if (typeof m.egressHost !== "string" || normalizeHost(m.egressHost) !== normalizeHost(m.merchant)) {
+            return refuse("blocked", "egress-host-mismatch", "a request whose egress host is the authorized merchant", "The host the request goes to is not the merchant being authorized.");
         }
         if (normalizeHost(m.payee) !== normalizeHost(m.merchant)) {
             return refuse("blocked", "payee-merchant-mismatch", "a payee equal to the merchant the mandate allows", "The payee differs from the merchant being called.");

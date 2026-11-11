@@ -30,12 +30,23 @@ export interface NodeStyle {
     readonly clipPath?: string;
     readonly scale?: number;
     readonly contentVisibility?: string;
+    /** True when a background image or gradient sits behind the text: the backdrop colour is then unknown. */
+    readonly backgroundImage?: boolean;
+}
+
+export interface Rect {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
 }
 
 export interface PageNode {
     readonly tag: string;
     readonly attrs?: Readonly<Record<string, string>>;
     readonly style?: NodeStyle;
+    /** Border box in document coordinates, when the capture has it. */
+    readonly rect?: Rect;
     /** Text directly inside this node (before its children). */
     readonly text?: string;
     readonly children?: readonly PageNode[];
@@ -87,7 +98,7 @@ function over(top: Rgba, bottom: Rgba): Rgba {
  * backgrounds composited; white page if none), because a node's own computed background
  * is usually transparent even when the text on it is unreadable.
  */
-export function ownHiddenReasons(n: PageNode, backdrop: Rgba = WHITE): HiddenReason[] {
+export function ownHiddenReasons(n: PageNode, backdrop: Rgba | null = WHITE, doc?: { readonly width: number; readonly height: number }): HiddenReason[] {
     const out: HiddenReason[] = [];
     const a = n.attrs ?? {};
     const s = n.style ?? {};
@@ -102,14 +113,21 @@ export function ownHiddenReasons(n: PageNode, backdrop: Rgba = WHITE): HiddenRea
     if (s.fontSizePx !== undefined && s.fontSizePx < 2) out.push("tiny-font");
     if (s.color) {
         if (s.color.a < 0.1) out.push("low-contrast"); // (near-)transparent text colour
-        else {
+        else if (backdrop !== null && !s.backgroundImage) {
+            // backdrop === null: an ancestor has a background image; the colour behind the text is unknown
             const bg = s.backgroundColor && s.backgroundColor.a > 0 ? over(s.backgroundColor, backdrop) : backdrop;
             if (contrastRatio(over(s.color, bg), bg) < 1.1) out.push("low-contrast");
         }
     }
+    // Without a bounding box only *negative* offsets are judged: they leave the page on the
+    // left/top edge, where no scrolling can reach. A large positive `top` is just content
+    // further down the page. With the box and the document size, any box wholly outside
+    // the document is off-screen.
     const moved = s.position === "absolute" || s.position === "fixed" || s.position === "relative" || s.position === "sticky";
-    const far = (v: number | undefined) => v !== undefined && Math.abs(v) >= 900;
-    if ((moved && (far(s.leftPx) || far(s.topPx))) || (s.textIndentPx !== undefined && Math.abs(s.textIndentPx) >= 900)) out.push("offscreen");
+    const behind = (v: number | undefined) => v !== undefined && v <= -900;
+    const r = n.rect;
+    const outside = r !== undefined && (r.x + r.width <= 0 || r.y + r.height <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
+    if ((moved && (behind(s.leftPx) || behind(s.topPx))) || (s.textIndentPx !== undefined && s.textIndentPx <= -900) || outside) out.push("offscreen");
     const clip = (s.clip ?? "").replace(/[\s,]+/g, "").toLowerCase();
     const cp = (s.clipPath ?? "").replace(/\s+/g, "").toLowerCase();
     if (/^rect\((0(px)?){4}\)$/.test(clip) || insetHidesAll((s.clipPath ?? "").toLowerCase().trim()) || cp === "circle(0)" || cp === "circle(0px)") out.push("clipped");
@@ -143,6 +161,10 @@ export interface ExcludedSegment {
 }
 
 export interface CollectOptions {
+    /** Document size, to judge boxes that lie beyond the right/bottom edge. */
+    readonly document?: { readonly width: number; readonly height: number };
+    /** Page background behind the root (default white, the CSS canvas). */
+    readonly pageBackground?: Rgba;
     /** Explicit opt-in: hidden text is returned (with reasons) instead of excluded. */
     readonly includeHidden?: boolean;
 }
@@ -164,12 +186,15 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
     const hiddenOptIn: (TextSegment & { reasons: readonly HiddenReason[] })[] = [];
     const attributes: TextSegment[] = [];
 
-    const walk = (n: PageNode, path: string, inherited: readonly HiddenReason[], visibilityHidden: boolean, backdrop: Rgba): void => {
+    const walk = (n: PageNode, path: string, inherited: readonly HiddenReason[], visibilityHidden: boolean, backdrop: Rgba | null, opacity: number): void => {
         const tag = TAG_OK.test(n.tag.toLowerCase()) ? n.tag.toLowerCase() : "node";
         const here = path === "" ? tag : `${path}>${tag}`;
-        const own = ownHiddenReasons(n, backdrop);
+        const own = ownHiddenReasons(n, backdrop, opts.document);
         const bg = n.style?.backgroundColor;
-        const childBackdrop = bg && bg.a > 0 ? over(bg, backdrop) : backdrop;
+        // an image or gradient makes the backdrop unknown for the whole subtree (until an opaque colour covers it)
+        const childBackdrop: Rgba | null = n.style?.backgroundImage ? null : bg && bg.a >= 1 ? bg : bg && bg.a > 0 && backdrop ? over(bg, backdrop) : backdrop;
+        const effOpacity = opacity * (n.style?.opacity ?? 1);
+        if (effOpacity <= 0.01 && !own.includes("zero-opacity")) own.push("zero-opacity"); // opacity compounds down the tree
         const vis = (n.style?.visibility ?? "").toLowerCase();
         const hiddenByVisibility = vis === "hidden" || vis === "collapse" ? true : vis === "visible" ? false : visibilityHidden;
         const reasons: HiddenReason[] = [...inherited, ...own];
@@ -194,9 +219,9 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         (n.children ?? []).forEach((c) => {
             let extra: HiddenReason[] = [];
             if (isDetails && !detailsOpen && c.tag.toLowerCase() !== "summary") extra = ["closed-details"];
-            walk(c, here, [...pass, ...extra], hiddenByVisibility, childBackdrop);
+            walk(c, here, [...pass, ...extra], hiddenByVisibility, childBackdrop, effOpacity);
         });
     };
-    walk(root, "", [], false, WHITE);
+    walk(root, "", [], false, opts.pageBackground ?? WHITE, 1);
     return { visible, excluded, attributes, hiddenOptIn };
 }

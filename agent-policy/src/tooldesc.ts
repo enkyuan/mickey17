@@ -94,17 +94,21 @@ export function describeTool(spec: ToolSpec): ToolDescriptor {
         if (typeof p.id !== "string" || !ID_RE.test(p.id) || !(PARAM_TYPES as readonly string[]).includes(p.type) || typeof p.required !== "boolean") bad();
         return { name: p.id, type: p.type, required: p.required, description: `Parameter of type ${p.type}${p.required ? ", required" : ""}.` };
     });
-    if (spec.pageLabel !== undefined && !isPageText(spec.pageLabel)) bad();
+    // Read each caller-controlled value exactly once (getters and proxies may change between reads).
+    const label = spec.pageLabel;
+    if (label !== undefined && !isPageText(label)) bad();
     const paramIds = new Set<string>(params.map((p) => p.name));
+    const labels: Record<string, PageText> = {};
     for (const [k, v] of Object.entries(spec.paramLabels ?? {})) {
         // keys are surface ids of declared parameters; never free-form strings
         if (!ID_RE.test(k) || !paramIds.has(k) || !isPageText(v)) bad();
+        labels[k] = v;
     }
     return {
         name: spec.id,
         description,
         params,
-        pageLabels: { origin: "page", action: spec.pageLabel ?? null, params: { ...(spec.paramLabels ?? {}) } },
+        pageLabels: { origin: "page", action: label ?? null, params: labels },
     };
 }
 

@@ -101,15 +101,21 @@ export interface ConsumedStore {
 }
 
 export class InMemoryConsumedStore implements ConsumedStore {
-    readonly #seen = new Map<string, number>();
-    #highWater = Number.NEGATIVE_INFINITY;
-    consume(jti: string, expiresAt: number, now: number): Promise<boolean> {
-        // Prune against the highest clock value ever seen, with a long margin, so a clock
-        // that steps backwards cannot make an already-spent token spendable again.
-        this.#highWater = Math.max(this.#highWater, now);
-        for (const [k, exp] of this.#seen) if (exp + CONSUMED_RETENTION_MS <= this.#highWater) this.#seen.delete(k);
+    readonly #seen = new Map<string, number>(); // jti -> monotonic time it was recorded
+    readonly #mono: () => number;
+    /**
+     * Retention runs on the store's own monotonic clock, never on the caller's `now`: a
+     * wall clock that steps back (NTP) or jumps forward (glitch, hostile input) can then
+     * neither revive a spent token nor flush the table.
+     */
+    constructor(monotonicMs: () => number = () => performance.now()) {
+        this.#mono = monotonicMs;
+    }
+    consume(jti: string, _expiresAt: number, _now: number): Promise<boolean> {
+        const t = this.#mono();
+        for (const [k, at] of this.#seen) if (at + CONSUMED_RETENTION_MS <= t) this.#seen.delete(k);
         if (this.#seen.has(jti)) return Promise.resolve(false);
-        this.#seen.set(jti, expiresAt);
+        this.#seen.set(jti, t);
         return Promise.resolve(true);
     }
 }

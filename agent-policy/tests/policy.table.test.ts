@@ -36,7 +36,7 @@ function requestFor(mode: Mode, tier: Tier, effect: Effect): ActionRequest {
         evidence: "observed",
         idempotent: true,
         now: NOW,
-        ...(mode === "read-only" ? { thirdParty: { robots: "allowed" as const, tos: "ok" as const } } : {}),
+        ...(mode === "read-only" ? { requiresAuth: false, thirdParty: { robots: "allowed" as const, tos: "ok" as const } } : {}),
         ...(mode === "owner" ? { credential: { kind: "service" as const, scopes: [effect] } } : {}),
         ...(mode === "delegated" ? { credential: { kind: "oauth" as const, scopes: [effect] } } : {}),
         ...(effect === "financial" ? { idempotencyKey: "idem-key-0001", money: moneyReq().money! } : {}),

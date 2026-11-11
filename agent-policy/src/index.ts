@@ -1,7 +1,12 @@
 export * from "./types.ts";
 export { b64urlDecode, b64urlEncode, canonicalJson, constantTimeEqual, sha256Hex } from "./bytes.ts";
 export { ed25519Verifier, generateEd25519, hmacSigner, type SigAlg, type Signer, type Verifier } from "./sign.ts";
-export * from "./policy.ts";
+// `decide` and `checkProofs` are deliberately not exported here: they authorize without
+// reserving spend or consuming a confirmation. Executors call `authorize`.
+export {
+    authorize, bindingFor, checkStatic, hostMatchesMerchant, modeCell,
+    type ActionRequest, type Allow, type Authorization, type AuthorizeDeps, type Credential, type MoneyDetails, type Proofs, type ThirdPartyChecks, type Tokens,
+} from "./policy.ts";
 export * from "./mandate.ts";
 export * from "./confirm.ts";
 export * from "./idempotency.ts";

@@ -22,6 +22,11 @@ export interface IdempotencyStore {
     release(key: string, fingerprint: string): Promise<void>;
     /** The request may have been sent and the outcome is unknown. */
     markUnknown(key: string, fingerprint: string): Promise<void>;
+    /**
+     * Human reconciliation of an unknown outcome: `not-executed` frees the key, a stored
+     * result records what happened. Nothing else can clear an unknown entry.
+     */
+    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult): Promise<boolean>;
 }
 
 export async function requestFingerprint(actionId: string, args: unknown): Promise<string> {
@@ -65,6 +70,17 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
         const e = this.#m.get(key);
         if (e && e.fingerprint === fingerprint && e.state === "in-flight") this.#m.delete(key);
         return Promise.resolve();
+    }
+
+    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult): Promise<boolean> {
+        const e = this.#m.get(key);
+        if (!e || e.fingerprint !== fingerprint || e.state === "completed") return Promise.resolve(false);
+        if (outcome === "not-executed") this.#m.delete(key);
+        else {
+            e.state = "completed";
+            e.result = outcome;
+        }
+        return Promise.resolve(true);
     }
 
     markUnknown(key: string, fingerprint: string): Promise<void> {

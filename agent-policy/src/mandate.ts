@@ -145,8 +145,9 @@ export function checkMandateScope(m: VerifiedMandate, s: SpendRequest, now: numb
 export type SettleOutcome = "committed" | "released";
 
 /**
- * Cumulative spend, per mandate. `reserve` must be atomic with respect to other
- * reserves on the same mandate. An ambiguous outcome (request sent, result unknown)
+ * Cumulative spend, per mandate. Contract for every implementation: `reserve` is atomic
+ * with respect to other reserves on the same mandate; only a `reserved` entry can be
+ * released or committed (a committed spend is final); a repeated `ref` is refused. An ambiguous outcome (request sent, result unknown)
  * stays reserved: over-counting is the safe direction.
  */
 export interface SpendLedger {

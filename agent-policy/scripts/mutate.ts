@@ -56,7 +56,9 @@ async function worker(n: number): Promise<void> {
         }
         writeFileSync(path, text.replace(m.find, () => m.replace));
         const r = await runTests(dir);
-        results.push({ id: m.id, killed: r.code !== 0, by: r.failed[0] ?? (r.code !== 0 ? "(crash / compile error)" : "") });
+        // A kill needs a named failing test. A non-zero exit with none (syntax error, crash) is an invalid mutant.
+        const killed = r.code !== 0 && r.failed.length > 0;
+        results.push({ id: m.id, killed, by: r.failed[0] ?? (r.code !== 0 ? "INVALID: no failing test (crash or compile error)" : "") });
         rmSync(dir, { recursive: true, force: true });
     }
 }

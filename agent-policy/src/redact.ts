@@ -46,11 +46,17 @@ const CARD = /\b(?:\d[ -]?){12,18}\d\b/g;
 /** Variants of one secret as it might appear after ordinary encoding. */
 function variants(secret: string): string[] {
     const out = new Set<string>([secret]);
-    const enc = encodeURIComponent(secret);
-    out.add(enc);
-    out.add(enc.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase())); // lowercase %xx
-    out.add(enc.replaceAll("%20", "+")); // application/x-www-form-urlencoded
-    out.add(enc.replaceAll("%20", "+").replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase()));
+    // Percent-encodings: RFC 3986 "component" and strict (also encodes ! ' ( ) *), upper and
+    // lower hex, space as %20 or +, and double-encoded.
+    const component = encodeURIComponent(secret);
+    const strict = component.replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    for (const e of [component, strict]) {
+        for (const form of [e, e.replaceAll("%20", "+")]) {
+            out.add(form);
+            out.add(form.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase()));
+        }
+        out.add(encodeURIComponent(e)); // double-encoded
+    }
     out.add(encodeURI(secret));
     out.add(JSON.stringify(secret).slice(1, -1));
     out.add(JSON.stringify(secret).slice(1, -1).replaceAll("/", "\\/"));
@@ -82,9 +88,11 @@ function variants(secret: string): string[] {
  */
 export class Redactor {
     #vars: string[] = [];
+    #raw = new Set<string>();
 
     register(secret: string): void {
         if (typeof secret !== "string" || secret.length < 4) throw new RangeError("secret too short to redact safely");
+        this.#raw.add(secret);
         this.#vars = [...new Set([...this.#vars, ...variants(secret)])].sort((a, b) => b.length - a.length);
     }
 
@@ -106,8 +114,12 @@ export class Redactor {
         if (typeof value === "string") return this.redactString(value);
         if (typeof value === "number" || typeof value === "bigint") {
             // A secret or card number can travel as a number: judge its decimal text.
+            // Exact match against a registered secret, or a card-shaped integer (IIN 2-6, Luhn).
+            // Deliberately not the general string rules: epoch timestamps and amounts that merely
+            // contain secret digits must keep their type and value.
             const text = String(value);
-            return this.redactString(text) === text ? value : REDACTED;
+            const card = /^[2-6]\d{12,18}$/.test(text) && luhn(text);
+            return this.#raw.has(text) || this.#vars.includes(text) || card ? REDACTED : value;
         }
         if (value === null || typeof value !== "object") {
             return typeof value === "function" || typeof value === "symbol" ? REDACTED : value;

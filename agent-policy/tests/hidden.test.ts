@@ -92,10 +92,37 @@ describe("hidden-text rules", () => {
         expect(collectText({ tag: "p", style: { color: { r: 0, g: 0, b: 0, a: 0.8 } }, text: "x" }).visible).toHaveLength(1);
     });
 
+    test("with a bounding box, anything wholly outside the document is off-screen", () => {
+        const doc = { width: 1440, height: 3000 };
+        const at = (x: number, y: number, w = 100, h = 20) => collectText({ tag: "p", text: "x", rect: { x, y, width: w, height: h } }, { document: doc }).visible.length;
+        expect(at(10, 10)).toBe(1);
+        expect(at(-850, 10, 800)).toBe(0); // left:-850px; width:800px
+        expect(at(10, -500, 100, 100)).toBe(0);
+        expect(at(99999, 10)).toBe(0);
+        expect(at(10, 99999)).toBe(0);
+        expect(at(1000, 1200)).toBe(1); // a sidebar and content far down are fine
+        expect(at(-50, 10, 100)).toBe(1); // partially visible
+    });
+
+    test("an unknown backdrop (background image) is not judged; the page background is configurable; opacity compounds", () => {
+        const white = { r: 255, g: 255, b: 255, a: 1 };
+        const hero: PageNode = { tag: "div", style: { backgroundImage: true }, children: [{ tag: "h1", style: { color: white }, text: "Hero title" }] };
+        expect(collectText(hero).visible).toHaveLength(1);
+        const dark = { r: 10, g: 10, b: 10, a: 1 };
+        expect(collectText({ tag: "p", style: { color: white }, text: "x" }, { pageBackground: dark }).visible).toHaveLength(1);
+        expect(collectText({ tag: "p", style: { color: white }, text: "x" }).visible).toHaveLength(0);
+        const faded: PageNode = { tag: "div", style: { opacity: 0.05 }, children: [{ tag: "div", style: { opacity: 0.05 }, children: [{ tag: "p", text: "x" }] }] };
+        expect(collectText(faded).visible).toEqual([]);
+    });
+
     test("more off-screen and clipping spellings", () => {
         const r = (style: PageNode["style"]) => ownHiddenReasons({ tag: "p", style });
-        expect(r({ position: "absolute", leftPx: 99999 })).toContain("offscreen");
+        // large POSITIVE offsets are ordinary page layout without a bounding box
+        expect(r({ position: "absolute", leftPx: 99999 })).toEqual([]);
+        expect(r({ position: "absolute", topPx: 1200 })).toEqual([]);
+        expect(r({ position: "relative", topPx: 950 })).toEqual([]);
         expect(r({ position: "relative", topPx: -9999 })).toContain("offscreen");
+        expect(r({ position: "absolute", leftPx: -9999 })).toContain("offscreen");
         expect(r({ clip: "rect(0 0 0 0)" })).toContain("clipped");
         expect(r({ clip: "rect(0px, 0px, 0px, 0px)" })).toContain("clipped");
         expect(r({ clipPath: "inset(0 0 100% 0)" })).toContain("clipped");

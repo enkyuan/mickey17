@@ -166,9 +166,9 @@ describe("canary scan: receipts, errors, logs, refusals", () => {
         const w = await world();
         const canary = "CANARYITEM-0f1e2d3c4b5a";
         const reqs = [
-            moneyReq({ actionId: canary, idempotencyKey: `K-${canary}`, money: { merchant: `${canary}.example.com`, item: canary, totalMinor: 1, currency: "USD", payee: canary } }),
-            moneyReq({ idempotencyKey: `K-${canary}`, money: { merchant: "shop.example.com", item: canary, totalMinor: 4_999_999, currency: "USD", payee: canary } }),
-            moneyReq({ idempotencyKey: `K-${canary}`, money: { merchant: `${canary}.example.com`, item: canary, totalMinor: 1, currency: "EUR", payee: canary } }),
+            moneyReq({ actionId: canary, idempotencyKey: `K-${canary}`, money: { egressHost: `${canary}.example.com`, merchant: `${canary}.example.com`, item: canary, totalMinor: 1, currency: "USD", payee: canary } }),
+            moneyReq({ idempotencyKey: `K-${canary}`, money: { egressHost: "shop.example.com", merchant: "shop.example.com", item: canary, totalMinor: 4_999_999, currency: "USD", payee: canary } }),
+            moneyReq({ idempotencyKey: `K-${canary}`, money: { egressHost: `${canary}.example.com`, merchant: `${canary}.example.com`, item: canary, totalMinor: 1, currency: "EUR", payee: canary } }),
         ];
         for (const req of reqs) {
             const outs = [

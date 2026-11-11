@@ -18,7 +18,13 @@ const MAX_BYTES = 500 * 1024;
 const MAX_PATTERN = 1024;
 
 export function parseRobots(text: string): Robots {
-    const clipped = text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text;
+    let clipped = text;
+    if (clipped.length > MAX_BYTES) {
+        let cut = MAX_BYTES;
+        const hi = clipped.charCodeAt(cut - 1);
+        if (hi >= 0xd800 && hi <= 0xdbff) cut -= 1; // never split a surrogate pair
+        clipped = clipped.slice(0, cut);
+    }
     const groups: { agents: string[]; rules: RobotsRule[]; crawlDelay: number | null }[] = [];
     let cur: { agents: string[]; rules: RobotsRule[]; crawlDelay: number | null } | null = null;
     let lastWasAgent = false;
@@ -73,7 +79,8 @@ export function robotsFromFetch(status: number | null, body: string): Robots {
 /** Uppercase %XX; decode %XX of unreserved characters so equal paths compare equal. */
 function normalizePct(input: string): string {
     // non-ASCII is compared in its UTF-8 percent-encoded form (RFC 9309 2.2.2)
-    const s = input.replace(/[^\x00-\x7f]/gu, (c) => encodeURIComponent(c));
+    const wellFormed = input.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
+    const s = wellFormed.replace(/[^\x00-\x7f]/gu, (c) => encodeURIComponent(c));
     return s.replace(/%([0-9a-fA-F]{2})/g, (_m, h: string) => {
         const c = String.fromCharCode(parseInt(h, 16));
         return /[A-Za-z0-9\-._~]/.test(c) ? c : `%${h.toUpperCase()}`;
@@ -119,7 +126,7 @@ export interface RobotsVerdict {
 export function evaluateRobots(robots: Robots, productToken: string, target: string): RobotsVerdict {
     if (robots.kind === "allow-all") return { allowed: true, reason: robots.reason, crawlDelay: null };
     if (robots.kind === "disallow-all") return { allowed: false, reason: robots.reason, crawlDelay: null };
-    const token = productToken.toLowerCase();
+    const token = productToken.toLowerCase().replace(/\/.*$/, "").trim();
     const matching = robots.groups.filter((g) => g.agents.includes(token));
     const groups = matching.length > 0 ? matching : robots.groups.filter((g) => g.agents.includes("*"));
     const delay = groups.map((g) => g.crawlDelay).find((d) => d !== null) ?? null;
@@ -127,7 +134,10 @@ export function evaluateRobots(robots: Robots, productToken: string, target: str
     // Evaluate the path the server will actually see: dot-segments and %2e are resolved by the URL parser.
     let path: string;
     try {
-        const u = new URL(target === "" ? "/" : target.startsWith("/") ? target : `/${target}`, "https://robots.invalid");
+        // Backslashes and leading slash runs are merged the way lenient servers do, so a
+        // target like "//admin/x" is judged as "/admin/x" and not parsed as a host.
+        const pathOnly = ("/" + target.replaceAll("\\", "/")).replace(/^\/+/, "/");
+        const u = new URL(`https://robots.invalid${pathOnly}`);
         path = u.pathname + u.search;
     } catch {
         return { allowed: false, reason: "unparsable target", crawlDelay: delay };

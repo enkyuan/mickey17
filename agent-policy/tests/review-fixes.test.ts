@@ -18,12 +18,20 @@ describe("1: the mandate allowlist limits who is paid", () => {
     test("payee that differs from the merchant is refused, even with a matching confirmation", async () => {
         const w = await world();
         const mt = await mandateToken(w, { merchants: ["a.example.com", "b.example.com"] });
-        for (const m of [money({ merchant: "shop.example.com", payee: "attacker.example.com" }), money({ merchant: "b.example.com", payee: "a.example.com" })]) {
+        for (const m of [money({ merchant: "shop.example.com", payee: "attacker.example.com" }), money({ egressHost: "b.example.com", merchant: "b.example.com", payee: "a.example.com" })]) {
             const req = moneyReq({ money: m });
             const r = await authorize(req, { mandate: mt, confirmation: await confirmToken(w, req) }, w.deps);
             expect(r.ok ? "ok" : r.code).toBe("payee-merchant-mismatch");
         }
         expect(await w.ledger.spent("mandate-1")).toBe(0);
+    });
+    test("the request must go to the authorized merchant (egress host bound into authorize)", async () => {
+        const w = await world();
+        const req = moneyReq({ money: money({ egressHost: "evil.example.net" }) });
+        const r = await authorize(req, { mandate: await mandateToken(w), confirmation: await confirmToken(w, req) }, w.deps);
+        expect(r.ok ? "ok" : r.code).toBe("egress-host-mismatch");
+        const ok = moneyReq({ money: money({ egressHost: "SHOP.example.com." }) });
+        expect((await authorize(ok, { mandate: await mandateToken(w), confirmation: await confirmToken(w, ok) }, w.deps)).ok).toBe(true);
     });
     test("the payee itself must be on the allowlist", async () => {
         const w = await world();
@@ -80,7 +88,7 @@ describe("2: a committed spend cannot be refunded; settle is one-shot", () => {
 });
 
 describe("3: read-only never carries credentials or private endpoints", () => {
-    const base: ActionRequest = { actionId: "act_read", mode: "read-only", tier: "T1", effect: "read", evidence: "observed", idempotent: true, now: NOW, thirdParty: { robots: "allowed", tos: "ok" } };
+    const base: ActionRequest = { actionId: "act_read", mode: "read-only", tier: "T1", effect: "read", evidence: "observed", idempotent: true, requiresAuth: false, now: NOW, thirdParty: { robots: "allowed", tos: "ok" } };
     test("requiresAuth or an attached credential is refused", () => {
         expect(decide(base).ok).toBe(true);
         const a = decide({ ...base, requiresAuth: true });
@@ -258,6 +266,7 @@ describe("14: irreversible and account-control actions must name their target", 
 describe("15: egress extras", () => {
     test("wildcards on public suffixes are rejected at compile time", () => {
         for (const h of ["*.co.uk", "*.github.io", "*.com.au", "*.herokuapp.com"]) expect(() => compileEgressPolicy({ allowHosts: [h] })).toThrow();
+        for (const h of ["*.s3.amazonaws.com", "*.web.app", "*.co.kr", "*.azurewebsites.net", "*.vercel.app", "*.pages.dev"]) expect(() => compileEgressPolicy({ allowHosts: [h] }), h).toThrow();
         expect(() => compileEgressPolicy({ allowHosts: ["*.shop.co.uk"] })).not.toThrow();
     });
     test("a non-redirect status is not followed", () => {

@@ -56,6 +56,8 @@ const SCRIPT_TESTS: ReadonlyArray<readonly [string, RegExp]> = [
     ["Latin", /\p{Script=Latin}/u], ["Cyrillic", /\p{Script=Cyrillic}/u], ["Greek", /\p{Script=Greek}/u], ["Armenian", /\p{Script=Armenian}/u],
     ["Cherokee", /\p{Script=Cherokee}/u], ["Georgian", /\p{Script=Georgian}/u], ["Hebrew", /\p{Script=Hebrew}/u], ["Arabic", /\p{Script=Arabic}/u],
     ["Coptic", /\p{Script=Coptic}/u], ["Lisu", /\p{Script=Lisu}/u], ["Canadian_Aboriginal", /\p{Script=Canadian_Aboriginal}/u],
+    ["Old_Italic", /\p{Script=Old_Italic}/u], ["Runic", /\p{Script=Runic}/u], ["Tifinagh", /\p{Script=Tifinagh}/u], ["Lycian", /\p{Script=Lycian}/u],
+    ["Carian", /\p{Script=Carian}/u], ["Ogham", /\p{Script=Ogham}/u], ["Gothic", /\p{Script=Gothic}/u], ["Glagolitic", /\p{Script=Glagolitic}/u],
     ["Thai", /\p{Script=Thai}/u], ["Devanagari", /\p{Script=Devanagari}/u], ["Ethiopic", /\p{Script=Ethiopic}/u],
     ["CJK", /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u],
 ];
@@ -65,6 +67,7 @@ function scriptOf(ch: string): string | null {
     return null;
 }
 const LATIN = /\p{Script=Latin}/u;
+const MAX_RAW_CHARS = 1_000_000;
 const TOKEN = /[\p{L}\p{M}\p{N}_'-]+/gu;
 
 function bump(m: Map<FlagKind, number>, k: FlagKind, n = 1): void {
@@ -73,12 +76,15 @@ function bump(m: Map<FlagKind, number>, k: FlagKind, n = 1): void {
 
 function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: number[][]): string {
     let out = "";
+    let prevCp = -1; // last code point appended to `out` (kept so emoji-selector checks are O(1))
     let tagRun: number[] = [];
     const flushTags = () => {
         if (tagRun.length) tags.push(tagRun);
         tagRun = [];
     };
-    for (const ch of input) {
+    const chars = Array.from(input);
+    for (let i = 0; i < chars.length; i++) {
+        const ch = chars[i]!;
         const cp = ch.codePointAt(0)!;
         if (cp >= 0xe0000 && cp <= 0xe007f) {
             bump(flags, "unicode-tag");
@@ -88,9 +94,11 @@ function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: numbe
         flushTags();
         if (cp === 0x0a || cp === 0x09) {
             out += ch;
+            prevCp = cp;
         } else if (cp === 0x0d || cp === 0x0b || cp === 0x0c || cp === 0x85 || cp === 0x2028 || cp === 0x2029) {
             bump(flags, "line-separator");
             out += "\n";
+            prevCp = 0x0a;
         } else if (cp < 0x20 || cp === 0x7f || (cp >= 0x80 && cp <= 0x9f)) {
             bump(flags, "control-char");
         } else if (BIDI.has(cp)) {
@@ -100,15 +108,20 @@ function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: numbe
         } else if ((cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef)) {
             bump(flags, "variation-selector");
         } else if (cp === 0xfe0e || cp === 0xfe0f) {
-            // emoji presentation selectors are only legitimate right after an emoji
-            if (EMOJI.test(Array.from(out).at(-1) ?? "")) out += ch;
-            else bump(flags, "variation-selector");
+            // emoji presentation selectors are only legitimate right after an emoji,
+            // or right after a keycap base ("1" + FE0F + U+20E3)
+            const next = chars[i + 1]?.codePointAt(0);
+            if ((prevCp >= 0 && EMOJI.test(String.fromCodePoint(prevCp))) || next === 0x20e3) {
+                out += ch;
+                prevCp = cp;
+            } else bump(flags, "variation-selector");
         } else if (DEFAULT_IGNORABLE.test(ch)) {
             bump(flags, "zero-width");
         } else if (cp === 0xfffc || cp === 0xfffd || (cp >= 0xfff9 && cp <= 0xfffb) || /\p{Cf}/u.test(ch) || /\p{Co}/u.test(ch) || /\p{Cn}/u.test(ch) || /\p{Cs}/u.test(ch)) {
             bump(flags, "format-char");
         } else {
             out += ch;
+            prevCp = cp;
         }
     }
     flushTags();
@@ -118,7 +131,16 @@ function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: numbe
 export function sanitizePageText(input: string, opts: SanitizeOptions = {}): SanitizeResult {
     const flags = new Map<FlagKind, number>();
     const tagRuns: number[][] = [];
-    let text = stripInvisible(input, flags, tagRuns);
+    // Hard bound on work, applied before any per-character pass.
+    let raw = input;
+    if (raw.length > MAX_RAW_CHARS) {
+        let cut = MAX_RAW_CHARS;
+        const hi = raw.charCodeAt(cut - 1);
+        if (hi >= 0xd800 && hi <= 0xdbff) cut -= 1; // never split a surrogate pair
+        bump(flags, "truncated", raw.length - cut);
+        raw = raw.slice(0, cut);
+    }
+    let text = stripInvisible(raw, flags, tagRuns);
 
     const folded = text.normalize("NFKC");
     if (folded !== text) {
@@ -154,7 +176,9 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
             else if (!/[\p{N}_'-]/u.test(ch) && !LATIN.test(ch)) allMapped = false;
         }
         let flagged = false;
-        if (scripts.size > 1) {
+        // Latin embedded in CJK or Thai running text (no spaces between words) is ordinary.
+        const benign = [...scripts].every((s) => s === "Latin" || s === "CJK" || s === "Thai");
+        if (scripts.size > 1 && !benign) {
             bump(flags, "mixed-script");
             flagged = true;
         } else if (anyMapped && allMapped && !hasLatin) {

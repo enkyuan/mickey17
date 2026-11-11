@@ -19,7 +19,7 @@ export interface EgressPolicy {
 }
 
 /** A small, non-exhaustive guard against wildcards on public suffixes. */
-const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.jp", "co.nz", "co.in", "co.za", "com.br", "com.cn", "com.mx", "github.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "appspot.com", "cloudfront.net", "amazonaws.com", "blogspot.com"]);
+const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.jp", "co.nz", "co.in", "co.za", "com.br", "com.cn", "com.mx", "github.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "appspot.com", "cloudfront.net", "amazonaws.com", "s3.amazonaws.com", "blogspot.com", "web.app", "firebaseapp.com", "azurewebsites.net", "cloudapp.azure.com", "co.kr", "or.kr", "com.tr", "co.id", "com.sg", "com.hk", "com.tw", "com.ar", "co.il", "ne.jp", "or.jp", "ac.jp", "go.jp", "edu.au", "gov.au", "com.my", "com.ph", "com.vn", "co.th", "com.pl", "fly.dev", "onrender.com", "railway.app", "ngrok.io", "ngrok-free.app", "trycloudflare.com", "pythonanywhere.com", "repl.co", "glitch.me", "surge.sh"]);
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
