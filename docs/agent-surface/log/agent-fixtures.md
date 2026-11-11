@@ -9,7 +9,7 @@ Three shops (React, server-rendered with a ~70-line htmx-style script, Svelte), 
 scenarios × two runs each, hand-labelled ground truth per shop, a recorder that writes HAR 1.2 +
 interaction traces, and `benchmarks/tests/agent-shops.test.ts`.
 
-`bun test tests/agent-shops.test.ts` (from `benchmarks/`): **118 pass, 3 skipped, 0 fail** (after review round 2; was 89/3/0 at 359bf0c). `tsc
+`bun test tests/agent-shops.test.ts` (from `benchmarks/`): **119 pass, 3 skipped, 0 fail** (after review round 3; was 89/3/0 at 359bf0c). `tsc
 --noEmit` over the test and its imports is clean (run from a scratch tsconfig, see below).
 
 ## What could not be run here
@@ -169,10 +169,10 @@ The reviewer confirmed round-1 fixes 1, 2, 3, 5, 7, 9 and the recorder changes b
 
 | Finding | Verdict | Action |
 | --- | --- | --- |
-| strict routes (fix 4) had no test | confirmed | test: extra/empty segments are 404 before auth on all stacks; SSR also rejects `//` paths |
+| strict routes (fix 4) had no test | confirmed | test over item/address/rates/rate/orders/order routes; extra, empty and trailing segments are 404 on every stack (round 3 found only 2 of 6 routes pinned and JSON/SSR disagreeing on trailing `//`; both fixed) |
 | "input already sent" exemption let a mislabelled CSRF token pass (header counted as "sent") | confirmed | exemption now only for caller-supplied *body fields*; mutation added |
 | `decodeURIComponent` crashed on `%` and mangled `+` in JSON bodies | confirmed | bodies are parsed (JSON walk / `URLSearchParams`), no decoding hacks |
-| untested guards: second order on a closed cart, CSRF bound to session, quote dies with address, `cart_closed` in set-address, failures not cached and declined token spent, rate id from another cart, stock re-check for every line | confirmed | tests added; four of the reviewer's mutants re-run here (route strictness, order-time `cart_closed`, session-bound CSRF, all-lines stock check) now fail 2/3/9/3 tests |
+| untested guards: second order on a closed cart, CSRF bound to session, quote dies with address, `cart_closed` in set-address, failures not cached and declined token spent, rate id from another cart, stock re-check for every line | confirmed | tests added; four of the reviewer's mutants re-run here (route strictness, order-time `cart_closed`, session-bound CSRF, all-lines stock check) now fail 2/3/3/3 tests (a first count of 9 for session-bound CSRF came from a weaker mutant) |
 | signature relabelled `input` caught only by the "exactly one" rule | confirmed | HAR check: a value that verifies as `sign(ts, body)` must be labelled client-computed |
 | effects only partly checked | partly fixed | financial effect and idempotency key must go together; non-read effect needs a non-GET request. Finer effect labels (e.g. `write-reversible` vs `write-irreversible`) cannot be derived from traffic and stay unchecked |
 | `automatic` switches off constant checks | confirmed | `automatic` is only valid on derived cookies |
@@ -183,13 +183,33 @@ The reviewer confirmed round-1 fixes 1, 2, 3, 5, 7, 9 and the recorder changes b
 Residual limits: the graph-equality test is a consistency check (two truth files were derived from
 the React file); per-stack truth is checked against that stack's own HARs.
 
+## 2026-11-10 entry: review round 3 (Opus, delta 5894250..d9a36c6) and fixes
+
+No correctness defects in the checker or shops. It confirmed every round-2 test against the guard it
+targets (mutants removed in a scratch copy fail the tests) and the narrowed `bodyHas` exemption.
+Findings, all test or consistency gaps, all fixed:
+
+- each new `truth.ts` rule could be deleted with the suite still green (the new mutations were also
+  rejected by older rules) -> a test now pins each rule with a mutation only it catches
+  (automatic constant without a value, valid signature labelled input, financial without key, key on a
+  non-financial step, write effect on a GET-only step, read step that is not a GET);
+- route strictness pinned for 2 of 6 routes, and trailing empty segments reached auth (401) while
+  `//` was 404 only on SSR -> all stacks reject empty/trailing/extra segments; test covers all six routes;
+- log count wording (above).
+
+Mutants re-run after the fixes (scratch copy): JSON `shipping-rate` lax, JSON empty segments lax, SSR
+`orders` lax, `automatic` rule off, financial-iff-key weakened each fail at least one test.
+
+**Review status:** rounds 1 and 2 were followed by an independent re-review; the round-3 fixes were
+verified by my own mutation runs and a clean type check, not by a fourth independent review.
+
 ## PR text (not opened until round-2 review is clean; base `feat/tanstack-exporter`)
 
 **Title:** `test(agent): fixture shops in three stacks with ground truth, recorder and cross-stack test`
 
 **What:** React, server-rendered (htmx-style) and Svelte shops with one flow and four scenarios;
 hand-labelled `flow.truth.json` per stack; HAR 1.2 + interaction-trace recorder (24 committed
-runs); `agent-shops.test.ts`. **Why:** M0 neutrality test and M2 ground truth. **Evidence:** 118
+runs); `agent-shops.test.ts`. **Why:** M0 neutrality test and M2 ground truth. **Evidence:** 119
 pass / 3 skip; mutation tests for the truth checks; recordings byte-reproducible. **Limits:**
 no socket runs, happy-dom not Chromium, no listener inventory, idempotency-key class pending,
-truth not yet in agent-schema types. **Review:** Opus adversarial rounds 1 and 2 (tables above); round 3 (delta only) pending.
+truth not yet in agent-schema types. **Review:** Opus adversarial rounds 1 and 2 (tables above); round 3 (delta only); round-3 fixes self-verified by mutation.

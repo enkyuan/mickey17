@@ -116,6 +116,7 @@ export function spaHandler(cfg: SpaConfig): Handler {
         }
         const ctx = ctxOf(req, raw);
         const seg = path.slice("/api/".length).split("/");
+        if (seg.includes("")) return notFound(); // empty or trailing segments are not routes
         const m = req.method;
         const op = (name: string, extra: Record<string, unknown> = {}) =>
             jsonResponse(shop.exec(name, ctx, { ...input, ...extra }));

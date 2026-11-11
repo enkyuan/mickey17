@@ -42,7 +42,7 @@ export function createShop(opts: ShopOptions = optionsFromEnv()) {
         const form = new URLSearchParams(raw);
         const ctx = ctxOf(req, raw);
         ctx.csrf ??= form.get("_csrf") ?? undefined; // no-JS fallback: hidden field instead of header
-        if (path.includes("//")) return html(404, "<p>Not found.</p>");
+        if (path.slice(1).split("/").includes("")) return html(404, "<p>Not found.</p>"); // empty or trailing segments are not routes
         const seg = path.split("/").filter(Boolean);
 
         let op = "";

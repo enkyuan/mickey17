@@ -237,16 +237,23 @@ describe("request value classes behave as labelled", () => {
                 expect([late.status, code(late)]).toEqual([409, "out_of_stock"]);
                 expect(s.shop.snapshot().stock.mug).toBe(10); // the failed order took nothing
             });
-            test("routes are strict: extra or empty segments are 404 before any auth", async () => {
+            test("routes are strict: extra, empty and trailing segments are 404 on every parameterised route", async () => {
                 const { handler } = setup(stack, 36);
                 const api = stack === "server-rendered" ? "" : "/api";
-                for (const [method, path] of [
-                    ["POST", `${api}/carts/cart_x/items/anything`],
-                    ["GET", `${api}/orders/ord_x/extra`],
-                    ["POST", `${api}/carts//items`],
-                    ["POST", `/${api}/carts/cart_x/items`.replace("///", "//")],
-                ] as const)
-                    expect([method, path, (await handler(new Request(`http://shop.test${path}`, { method }))).status]).toEqual([method, path, 404]);
+                const routes: [string, string][] = [
+                    ["POST", `${api}/carts/cart_x/items`],
+                    [stack === "server-rendered" ? "POST" : "PUT", `${api}/carts/cart_x/address`],
+                    ["GET", `${api}/carts/cart_x/shipping-rates`],
+                    [stack === "server-rendered" ? "POST" : "PUT", `${api}/carts/cart_x/shipping-rate`],
+                    ["POST", `${api}/carts/cart_x/orders`],
+                    ["GET", `${api}/orders/ord_x`],
+                ];
+                const status = async (method: string, path: string) => (await handler(new Request(`http://shop.test${path}`, { method }))).status;
+                for (const [method, path] of routes) {
+                    expect([method, path, await status(method, path)]).toEqual([method, path, 401]); // routed, then refused for lack of a session
+                    for (const variant of [`${path}/anything`, `${path}/`, `${path}//`, path.replace("/cart_x", "//cart_x").replace("/ord_x", "//ord_x"), path.replace("cart_x/", "cart_x//")].filter((v) => v !== path))
+                        expect([method, variant, await status(method, variant)]).toEqual([method, variant, 404]);
+                }
             });
             test("idempotency keys are scoped to the session", async () => {
                 const a = await ready(21);
@@ -471,6 +478,37 @@ describe("ground truth", () => {
                     f(t);
                     expect({ stack, name, rejected: problems(t, stack).length > 0 }).toEqual({ stack, name, rejected: true });
                 }
+        });
+
+        test("each truth rule is pinned by a mutation only it catches", () => {
+            const vals = (t: Truth, req: string) => requestsOf(t).find((r) => r.id === req)!.values;
+            for (const stack of STACKS) {
+                const mutate = (f: (t: Truth) => void) => {
+                    const t = structuredClone(truths[stack]);
+                    f(t);
+                    return t;
+                };
+                const hars = SCENARIO_NAMES.flatMap((sc) => [1, 2].map((r) => har(stack, sc, r)));
+                const har1 = (t: Truth) => hars.flatMap((h) => checkTruthAgainstHar(t, h));
+                const qty = (t: Truth) => vals(t, "add-item").find((v) => v.at.endsWith(".quantity"))!;
+                // an automatic constant without a value (the old escape hatch)
+                const auto = mutate((t) => { const v = qty(t); v.class = "constant"; v.automatic = true; delete v.value; });
+                expect(validateTruth(auto).join()).toContain("automatic is only for derived cookies");
+                // a valid signature labelled as an input is caught by the HAR check alone
+                const sig = mutate((t) => { vals(t, "place-order").find((v) => v.at === "header.x-signature")!.class = "input"; });
+                expect(har1(sig).join()).toContain("is a valid signature but is labelled input");
+                // financial without an idempotency key (POST step), and a key on a non-financial step
+                const fin = mutate((t) => { t.steps.find((s) => s.id === "tokenize-payment")!.effect = "financial"; });
+                expect(validateTruth(fin).join()).toContain("must go together");
+                const keyed = mutate((t) => { t.steps.find((s) => s.id === "place-order")!.effect = "write-reversible"; });
+                expect(validateTruth(keyed).join()).toContain("must go together");
+                // a write effect on a step that only issues GETs
+                const get = mutate((t) => { t.steps.find((s) => s.id === "shipping-rates")!.effect = "write-reversible"; });
+                expect(validateTruth(get).join()).toContain("every request is a GET");
+                // a step that is read but not a GET
+                const post = mutate((t) => { t.steps.find((s) => s.id === "create-cart")!.effect = "read"; });
+                expect(validateTruth(post).join()).toContain("effect read but a request is not GET");
+            }
         });
 
         test("a tampered recording is caught (the check can fail)", () => {
