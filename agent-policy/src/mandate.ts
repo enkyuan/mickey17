@@ -109,7 +109,7 @@ export async function verifyMandate(
     if (!p) return refuse("requires_auth", "mandate-malformed", need, "Mandate payload is malformed.");
     if (opts.now < p.notBefore) return refuse("requires_auth", "mandate-not-yet-valid", need, "Mandate is not yet valid.");
     if (opts.now >= p.expiresAt) return refuse("requires_auth", "mandate-expired", "an unexpired mandate", "Mandate has expired.");
-    if (p.expiresAt - p.notBefore > (opts.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS)) {
+    if (p.expiresAt - p.notBefore > (Number.isFinite(opts.maxLifetimeMs) ? (opts.maxLifetimeMs as number) : DEFAULT_MAX_LIFETIME_MS)) {
         return refuse("requires_auth", "mandate-lifetime-too-long", need, "Mandate lifetime exceeds the allowed maximum.");
     }
     if (opts.revoked?.has(p.id)) return refuse("requires_auth", "mandate-revoked", need, "Mandate has been revoked.");

@@ -524,3 +524,31 @@ None is adopted yet; adoption waits for #7 to merge. For the parent:
    codes; each of mine maps to one `BlockedReason` and keeps its code as detail.
 10. **Enforcement matrix** is not in the schema (it says so); agreed: it stays here, and the
     schema's tier/effect/mode enums are identical to mine.
+
+## 11. Entry 2026-11-10: review round 6
+
+Round 6 (Opus, high; diff da04aa7..98110b5): nothing at MEDIUM or above in the sanitizer
+(40 adversarial ~100 KB inputs each took <= 32 ms; the enumeration is sound). Four MEDIUM
+in `hidden.ts`, all confirmed and fixed:
+
+- Zero-area boxes are judged as 1 px boxes (my round-5 "zero-area is never outside" let
+  `margin-left:-5000px; width:0` text through, and zero-height headers at a clip edge were
+  still hidden by the clip test): both fixed by treating width/height `max(x, 1)` in the
+  outside and intersects tests; zero-size also falls back to the rect when style sizes are
+  missing.
+- A fixed box and everything inside it is now judged against the viewport as a clip (not
+  only the box itself).
+- A scroll container resets the clip only when it overlaps it and is not larger than it
+  beyond 2 px (a real scroller vs an auto-height wrapper; sub-pixel rects and an app-shell
+  main pane starting below a header work), and the reset region is the half-plane to the
+  right of and below the container's origin (content above/left cannot be scrolled to).
+- Known and left, stated: a non-positioned scroller inside a `position:relative` clipper
+  (containing-block tracking for absolute descendants), indent judged against the clipper's
+  width not the node's position, a fixed nav captured while the page was scrolled, a
+  rectless app shell. These need capture data (rects, scroll sizes, scroll offset) and are
+  part of the capture contract: T0 reports what it could not judge.
+- LOW fixed: NaN `maxLifetimeMs` no longer disables the mandate lifetime check (same bug
+  class as the confirmation one); each mark-like code point has its own timing test (the
+  U+FF9F removal mutant used to survive); the enumeration test scans to U+10FFFF.
+
+Results: `bun test` 401 pass; `tsc` clean; mutation run 225/225 non-equivalent killed.

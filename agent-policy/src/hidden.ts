@@ -159,7 +159,10 @@ export function ownHiddenReasons(n: PageNode, ctx: Partial<HideContext> = {}): H
     const moved = s.position === "absolute" || s.position === "fixed" || s.position === "relative" || s.position === "sticky";
     const behind = (v: number | undefined) => v !== undefined && v <= -900;
     const r = n.rect;
-    const outside = r !== undefined && r.width > 0 && r.height > 0 && (r.x + r.width <= 0 || r.y + r.height <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
+    // zero-area boxes are judged as 1px boxes: text in them still paints outward from the corner
+    const rw = r ? Math.max(r.width, 1) : 0;
+    const rh = r ? Math.max(r.height, 1) : 0;
+    const outside = r !== undefined && (r.x + rw <= 0 || r.y + rh <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
     // Positive offsets are ordinary layout, unless an overflow-clipping ancestor (or the node
     // itself) would cut the content off: then a far offset or text-indent hides it.
     // When the node has a bounding box, only the box (against the document and the
@@ -174,7 +177,7 @@ export function ownHiddenReasons(n: PageNode, ctx: Partial<HideContext> = {}): H
     const cp = (s.clipPath ?? "").replace(/\s+/g, "").toLowerCase();
     if (/^rect\((0(px)?){4}\)$/.test(clip) || insetHidesAll((s.clipPath ?? "").toLowerCase().trim()) || cp === "circle(0)" || cp === "circle(0px)") out.push("clipped");
     const tiny = (v: number | undefined) => v !== undefined && v <= 1;
-    if ((tiny(s.widthPx) || tiny(s.heightPx)) && (ownClips || scrollsOverflow(s.overflow))) out.push("zero-size");
+    if ((tiny(s.widthPx ?? r?.width) || tiny(s.heightPx ?? r?.height)) && (ownClips || scrollsOverflow(s.overflow))) out.push("zero-size");
     if (s.scale !== undefined && s.scale <= 0.01) out.push("scaled-to-zero");
     return out;
 }
@@ -251,15 +254,20 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
     const hiddenOptIn: (TextSegment & { reasons: readonly HiddenReason[] })[] = [];
     const attributes: TextSegment[] = [];
     const unjudged: TextSegment[] = [];
-    const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    // zero-area boxes count as 1px so a header of height 0 at the clip's edge is still "inside" it
+    const intersects = (a0: Rect, b: Rect) => {
+        const a = { x: a0.x, y: a0.y, width: Math.max(a0.width, 1), height: Math.max(a0.height, 1) };
+        return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    };
 
-    const contains = (a: Rect, b: Rect) => b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
 
     const walk = (n: PageNode, path: string, inherited: readonly HiddenReason[], visibilityHidden: boolean, backdrop: Rgba | null, opacity: number, clipIn: Rect | null, clippedIn: boolean, clipperSizeIn: { width?: number; height?: number } | undefined, fixedBlocked: boolean): void => {
         const style0 = n.style ?? {};
         // position:fixed escapes ancestor clipping unless an ancestor is its containing block
         const escapes = (style0.position ?? "").toLowerCase() === "fixed" && !fixedBlocked;
-        const clip = escapes ? null : clipIn;
+        // a fixed box (and everything in it) never scrolls: it is judged against the viewport
+        const vpRect: Rect | null = opts.viewport ? { x: 0, y: 0, width: opts.viewport.width, height: opts.viewport.height } : null;
+        const clip = escapes ? vpRect : clipIn;
         const clippedAncestor = escapes ? false : clippedIn;
         const clipperSize = escapes ? undefined : clipperSizeIn;
         const tag = TAG_OK.test(n.tag.toLowerCase()) ? n.tag.toLowerCase() : "node";
@@ -272,17 +280,18 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         if (effOpacity <= 0.01 && !own.includes("zero-opacity")) own.push("zero-opacity"); // opacity compounds down the tree
         // a box wholly outside an ancestor's clipped area is not shown
         if (n.rect && clip && !intersects(n.rect, clip)) own.push("clipped");
-        // a fixed box never scrolls: it is shown only if it lies inside the viewport
-        const vp = opts.viewport;
-        const r0 = n.rect;
-        if (escapes && vp && r0 && r0.width > 0 && r0.height > 0 && (r0.x >= vp.width || r0.y >= vp.height || r0.x + r0.width <= 0 || r0.y + r0.height <= 0)) own.push("offscreen");
         const overflowClips = clipsOverflow(style.overflow);
         const scrolls = scrollsOverflow(style.overflow) && !overflowClips;
         // A scroll container's content is reachable, so it starts a fresh unbounded region, but only
         // when the container itself is inside what its ancestors show: an auto-height wrapper
         // that sticks out of a clipping ancestor does not scroll, it just overflows and is cut.
-        const resets = scrolls && ((clip === null && !clippedAncestor) || (clip !== null && n.rect !== undefined && contains(clip, n.rect)));
-        const childClip = resets ? null : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
+        // (it must overlap the clip and not be larger than it beyond rounding: an auto-height wrapper
+        // that grows with its content is not a scroller)
+        const TOL = 2;
+        const looksLikeScroller = clip !== null && n.rect !== undefined && intersects(n.rect, clip) && n.rect.width <= clip.width + TOL && n.rect.height <= clip.height + TOL;
+        const resets = scrolls && ((clip === null && !clippedAncestor) || looksLikeScroller);
+        // Scrolling reaches content below and to the right of the container's origin, not above or left.
+        const childClip = resets ? (n.rect ? { x: n.rect.x, y: n.rect.y, width: Infinity, height: Infinity } : null) : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
         const childClipped = resets ? false : clippedAncestor || overflowClips;
         const childSize = resets ? undefined : overflowClips ? { ...(style.widthPx !== undefined ? { width: style.widthPx } : {}), ...(style.heightPx !== undefined ? { height: style.heightPx } : {}) } : clipperSize;
         const vis = (n.style?.visibility ?? "").toLowerCase();
