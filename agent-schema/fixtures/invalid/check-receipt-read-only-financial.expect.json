@@ -1,0 +1,19 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "effect"
+      ],
+      "code": "mode_forbids_effect"
+    },
+    {
+      "path": [
+        "tier"
+      ],
+      "code": "mode_forbids_tier"
+    }
+  ],
+  "why": "read-only mode never records a write"
+}

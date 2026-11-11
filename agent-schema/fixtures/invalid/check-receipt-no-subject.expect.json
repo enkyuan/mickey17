@@ -1,0 +1,11 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [],
+      "code": "subject_missing"
+    }
+  ],
+  "why": "a receipt says what it records"
+}

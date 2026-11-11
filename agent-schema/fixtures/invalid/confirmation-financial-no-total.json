@@ -1,6 +1,5 @@
 {
   "id": "confirm-1",
-  "action": "add-to-cart",
   "flow": "checkout",
   "step": "pay",
   "effect": "financial",

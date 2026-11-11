@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "evidence",
+        2,
+        "source"
+      ],
+      "code": "evidence_not_ordered"
+    }
+  ],
+  "why": "evidence is ordered by descending trust"
+}

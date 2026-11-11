@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "description",
+        "value"
+      ],
+      "code": "page_text_in_surface"
+    }
+  ],
+  "why": "page text never appears in a surface-origin field (section 6)"
+}

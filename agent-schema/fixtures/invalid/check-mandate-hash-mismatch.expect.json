@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "hash"
+      ],
+      "code": "hash_mismatch"
+    }
+  ],
+  "why": "a mandate is content-addressed"
+}

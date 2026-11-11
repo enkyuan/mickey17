@@ -1,0 +1,23 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "effect"
+      ],
+      "code": "payment_effect_mismatch"
+    },
+    {
+      "path": [
+        "actions",
+        1,
+        "idempotency"
+      ],
+      "code": "idempotency_key_missing"
+    }
+  ],
+  "why": "a money-moving action names how it is paid and carries an idempotency key (D11)"
+}

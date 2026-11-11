@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "schema_version"
+      ],
+      "code": "schema_version_newer"
+    }
+  ],
+  "why": "a reader refuses a minor newer than its own"
+}

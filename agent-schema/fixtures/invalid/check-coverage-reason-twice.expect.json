@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "coverage",
+        "unsupported_reasons",
+        1,
+        "reason"
+      ],
+      "code": "duplicate_id"
+    }
+  ],
+  "why": "a reason is counted once"
+}

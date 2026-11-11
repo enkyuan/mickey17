@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "unclassified",
+        0,
+        "at"
+      ],
+      "code": "unclassified_has_value"
+    }
+  ],
+  "why": "an unclassified value is not also classed"
+}

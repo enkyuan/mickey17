@@ -1,15 +1,27 @@
 {
   "status": "ok",
   "tier": "T2",
-  "fields": {
-    "order_id": {
-      "origin": "page",
-      "value": "A-1001"
+  "fields": [
+    {
+      "name": {
+        "origin": "surface",
+        "value": "order_id"
+      },
+      "value": {
+        "origin": "page",
+        "value": "A-1001"
+      }
     },
-    "note": {
-      "origin": "surface",
-      "value": "Order placed."
+    {
+      "name": {
+        "origin": "surface",
+        "value": "note"
+      },
+      "value": {
+        "origin": "surface",
+        "value": "Order placed."
+      }
     }
-  },
+  ],
   "receipt": "receipt-1"
 }

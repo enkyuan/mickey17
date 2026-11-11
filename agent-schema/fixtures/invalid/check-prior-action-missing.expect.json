@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "preconditions",
+        2,
+        "action"
+      ],
+      "code": "dangling_reference"
+    }
+  ],
+  "why": "a prior-action precondition names an action that exists"
+}

@@ -1,9 +1,10 @@
 // D10: every operation returns exactly one of these statuses. No silent fallbacks.
 // Results that carry page-derived data mark every value with its origin (D8).
 import { z } from "zod";
-import { MarkedValue, PageText, SurfaceText } from "./origin";
+import { registry } from "./registry";
+import { MarkedText, MarkedValue, PageText, SurfaceText } from "./origin";
 import { ActionId, Code, ConfirmationId, ReceiptId, StepId } from "./primitives";
-import { Effect, Mode, Tier } from "./policy";
+import { Mode } from "./policy";
 import { BrowserReason } from "./values";
 
 /** Every status an operation can return. The discriminant of OperationResult. */
@@ -19,7 +20,7 @@ export const OperationStatus = z
         "blocked",
         "error",
     ])
-    .meta({ id: "OperationStatus" });
+    .register(registry, { id: "OperationStatus" });
 export type OperationStatus = z.infer<typeof OperationStatus>;
 
 /** Why an operation is blocked. Challenges are reported, never solved or evaded (D7). */
@@ -40,18 +41,18 @@ export const BlockedReason = z
         "preconditions_unmet",
         "signature_changed",
     ])
-    .meta({ id: "BlockedReason" });
+    .register(registry, { id: "BlockedReason" });
 export type BlockedReason = z.infer<typeof BlockedReason>;
 
 /** Step-level reasons a human or a real device is required: raised by the site, never emulated. */
 export const HumanReason = z
     .enum(["3ds", "sca", "fraud_challenge", "device_check", "hosted_checkout", "approval", "captcha"])
-    .meta({ id: "HumanReason" });
+    .register(registry, { id: "HumanReason" });
 export type HumanReason = z.infer<typeof HumanReason>;
 
 export const ErrorClass = z
     .enum(["network", "timeout", "http", "validation", "postcondition_failed", "runtime", "internal"])
-    .meta({ id: "ErrorClass" });
+    .register(registry, { id: "ErrorClass" });
 export type ErrorClass = z.infer<typeof ErrorClass>;
 
 /** Machine-readable reason for `unsupported`. Open vocabulary; the surface counts them in coverage. */
@@ -67,7 +68,7 @@ export const UnsupportedReason = z
         "payment-tokenization",
         "other",
     ])
-    .meta({ id: "UnsupportedReason" });
+    .register(registry, { id: "UnsupportedReason" });
 export type UnsupportedReason = z.infer<typeof UnsupportedReason>;
 
 const where = {
@@ -82,9 +83,9 @@ export const OperationResult = z
         z.strictObject({
             status: z.literal("ok"),
             ...where,
-            tier: Tier,
-            /** Result data, every value marked with its origin. Page text is never an instruction. */
-            fields: z.record(z.string().min(1).max(256), MarkedValue),
+            tier: z.enum(["T0", "T1", "T2", "T3"]),
+            /** Result data. Names and values are each marked with their origin; page text is never an instruction. */
+            fields: z.array(z.strictObject({ name: MarkedText, value: MarkedValue })).max(1024),
             receipt: ReceiptId.optional(),
         }),
         z.strictObject({
@@ -108,7 +109,7 @@ export const OperationResult = z
         z.strictObject({
             status: z.literal("requires_confirmation"),
             ...where,
-            effect: Effect,
+            effect: z.enum(["write-irreversible", "financial", "account-control"]),
             confirmation: ConfirmationId,
         }),
         z.strictObject({
@@ -138,5 +139,5 @@ export const OperationResult = z
             message: SurfaceText.optional(),
         }),
     ])
-    .meta({ id: "OperationResult" });
+    .register(registry, { id: "OperationResult" });
 export type OperationResult = z.infer<typeof OperationResult>;

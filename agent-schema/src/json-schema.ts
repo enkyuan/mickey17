@@ -6,12 +6,14 @@
 // (OperationResult, Mandate, Receipt...) by pointing at `#/$defs/<Name>`.
 import { z } from "zod";
 import "./index-types";
+import { registry } from "./registry";
 import { SCHEMA_VERSION } from "./primitives";
 
 type JsonObject = Record<string, unknown>;
 
 export function buildSchema(): JsonObject {
-    const all = z.toJSONSchema(z.globalRegistry, {
+    const all = z.toJSONSchema(registry, {
+        metadata: registry,
         target: "draft-2020-12",
         unrepresentable: "throw",
         io: "input",

@@ -1,0 +1,18 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "idempotency",
+        "key"
+      ],
+      "code": "idempotency_key_not_in_request"
+    }
+  ],
+  "why": "the key location is a caller-supplied input of the request"
+}

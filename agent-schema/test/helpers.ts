@@ -11,6 +11,7 @@ import {
     Receipt,
     checkConfirmationRequest,
     checkMandate,
+    checkReceipt,
     checkSurface,
     fromZodIssues,
 } from "../src/index";
@@ -28,7 +29,7 @@ export const SCHEMAS = {
     mandate: { zod: Mandate as z.ZodType, def: "Mandate", check: (d: unknown): CheckIssue[] => checkMandate(d as never) },
     "confirmation-request": { zod: ConfirmationRequest as z.ZodType, def: "ConfirmationRequest", check: (d: unknown): CheckIssue[] => checkConfirmationRequest(d as never) },
     "confirmation-token": { zod: ConfirmationToken as z.ZodType, def: "ConfirmationToken", check: (): CheckIssue[] => [] },
-    receipt: { zod: Receipt as z.ZodType, def: "Receipt", check: (): CheckIssue[] => [] },
+    receipt: { zod: Receipt as z.ZodType, def: "Receipt", check: (d: unknown): CheckIssue[] => checkReceipt(d as never) },
 } as const;
 export type SchemaKey = keyof typeof SCHEMAS;
 

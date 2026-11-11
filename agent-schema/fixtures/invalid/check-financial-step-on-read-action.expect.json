@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "effect"
+      ],
+      "code": "step_effect_mismatch"
+    }
+  ],
+  "why": "a financial step cannot claim a read-only navigation as its action"
+}

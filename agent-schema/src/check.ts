@@ -1,15 +1,17 @@
 // Invariants the wire format cannot express (it has no refinements). They run in code
-// after parsing: cross-references, uniqueness, hash, coverage, and rules tied to the mode.
-// Each issue carries a stable `code` so fixtures can assert the reason, not the wording.
+// after parsing: cross-references, uniqueness, hash, coverage, money and secret rules,
+// and rules tied to the mode. Each issue carries a stable `code` so fixtures assert the
+// reason, not the wording.
 import { z } from "zod";
-import type { Action } from "./action";
+import type { Action, Input } from "./action";
+import type { ConfirmationRequest, Mandate, Receipt } from "./authority";
+import type { Flow, FlowStep } from "./flow";
+import { canonicalize, computeHash } from "./hash";
+import { EFFECT_ORDER, EVIDENCE_ORDER, effectRank, requiresConfirmation } from "./policy";
+import type { Effect, Tier } from "./policy";
+import { SCHEMA_MAJOR, SCHEMA_MINOR } from "./primitives";
 import { AgentSurface } from "./surface";
 import type { Coverage } from "./surface";
-import { Mandate, ConfirmationRequest } from "./authority";
-import type { Flow } from "./flow";
-import { computeHash } from "./hash";
-import { EVIDENCE_ORDER, effectRank } from "./policy";
-import type { Tier } from "./policy";
 import type { DependencyEdge, RequestSpec, ValueClass } from "./values";
 
 export type IssuePath = (string | number)[];
@@ -20,29 +22,58 @@ export interface CheckIssue {
     message: string;
 }
 
-export type CheckCode =
-    | "hash_mismatch"
-    | "duplicate_id"
-    | "dangling_reference"
-    | "hidden_not_opted_in"
-    | "mode_forbids_tier"
-    | "mode_forbids_flows"
-    | "evidence_not_ordered"
-    | "coverage_mismatch"
-    | "flow_effect_below_step"
-    | "dependency_not_earlier"
-    | "undeclared_input"
-    | "payment_effect_mismatch"
-    | "time_order"
-    | "cap_order"
-    | "tier_duplicated";
+export const CHECK_CODES = [
+    "hash_mismatch",
+    "duplicate_id",
+    "dangling_reference",
+    "hidden_not_opted_in",
+    "mode_forbids_tier",
+    "mode_forbids_effect",
+    "mode_forbids_flows",
+    "gates_forbid_read_only",
+    "read_only_requires_auth",
+    "evidence_not_ordered",
+    "evidence_too_long",
+    "coverage_mismatch",
+    "coverage_not_canonical",
+    "flow_effect_mismatch",
+    "step_effect_mismatch",
+    "dependency_not_earlier",
+    "dependency_missing_step",
+    "edge_needs_flow",
+    "undeclared_input",
+    "payment_effect_mismatch",
+    "idempotency_key_missing",
+    "idempotency_key_not_in_request",
+    "time_order",
+    "invalid_timestamp",
+    "cap_order",
+    "currency_mismatch",
+    "total_mismatch",
+    "tier_duplicated",
+    "secret_constant",
+    "card_number_constant",
+    "password_not_credential",
+    "card_input_forbidden",
+    "sensitive_in_url",
+    "page_text_in_surface",
+    "ill_formed_string",
+    "parent_cycle",
+    "unclassified_has_value",
+    "constraint_order",
+    "enum_without_options",
+    "schema_version_newer",
+    "unsupported_tier_mismatch",
+    "subject_missing",
+    "receipt_incomplete",
+] as const;
+export type CheckCode = (typeof CHECK_CODES)[number];
 
 const issues = () => {
     const list: CheckIssue[] = [];
     const add = (path: IssuePath, code: CheckCode, message: string) => list.push({ path, code, message });
     return { list, add };
 };
-
 type Add = ReturnType<typeof issues>["add"];
 
 function duplicates<T>(items: readonly T[], key: (t: T) => string): number[] {
@@ -56,7 +87,144 @@ function duplicates<T>(items: readonly T[], key: (t: T) => string): number[] {
     return dups;
 }
 
-function evidenceOrder(path: IssuePath, evidence: readonly { source: string }[], add: Add) {
+// ---------------------------------------------------------------------------
+// Schema version
+// ---------------------------------------------------------------------------
+
+export type VersionCheck = { ok: true } | { ok: false; reason: "malformed" | "major" | "minor" };
+
+/** Reader rule: accept the same major and a minor no newer than this package's. */
+export function checkSchemaVersion(version: string): VersionCheck {
+    const m = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(version);
+    if (!m) return { ok: false, reason: "malformed" };
+    if (Number(m[1]) !== SCHEMA_MAJOR) return { ok: false, reason: "major" };
+    if (Number(m[2]) > SCHEMA_MINOR) return { ok: false, reason: "minor" };
+    return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Generic scan: ill-formed strings, timestamps, page text copied into surface text
+// ---------------------------------------------------------------------------
+
+const MIN_PAGE_TEXT_COPY = 8;
+
+/**
+ * Scans any document. Flags (1) ill-formed UTF-16 (a lone surrogate cannot round-trip through
+ * UTF-8 JSON), (2) timestamps that are not real instants, and (3) surface-authored text that
+ * contains a verbatim page string of at least 8 characters (D8 property: page text never appears
+ * in a surface-origin field). Detection is verbatim only; paraphrase is out of reach.
+ */
+function scan(doc: unknown, add: Add) {
+    const page = new Set<string>();
+    const surface: { path: IssuePath; value: string }[] = [];
+    const walk = (n: unknown, path: IssuePath) => {
+        if (typeof n === "string") {
+            if (!n.isWellFormed()) add(path, "ill_formed_string", "string contains a lone surrogate");
+            return;
+        }
+        if (Array.isArray(n)) return n.forEach((x, i) => walk(x, [...path, i]));
+        if (!n || typeof n !== "object") return;
+        const o = n as Record<string, unknown>;
+        if (typeof o.value === "string" && (o.origin === "page" || o.origin === "surface")) {
+            if (o.origin === "page") {
+                if (o.value.length >= MIN_PAGE_TEXT_COPY) page.add(o.value);
+            } else surface.push({ path: [...path, "value"], value: o.value });
+        }
+        for (const [k, v] of Object.entries(o)) {
+            if ((k === "at" || k.endsWith("_at")) && typeof v === "string" && /^[0-9]{4}-/.test(v)) {
+                const t = new Date(v);
+                if (Number.isNaN(t.getTime()) || `${t.toISOString().slice(0, 19)}Z` !== v) {
+                    add([...path, k], "invalid_timestamp", `${v} is not a real instant`);
+                }
+            }
+            walk(v, [...path, k]);
+        }
+    };
+    walk(doc, []);
+    for (const s of surface) {
+        for (const p of page) {
+            if (s.value.includes(p)) {
+                add(s.path, "page_text_in_surface", "surface-authored text contains page text verbatim");
+                break;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Secrets and instruments (D7, D11)
+// ---------------------------------------------------------------------------
+
+const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|[a-z0-9-]*-api-key|[a-z0-9-]*-auth-token|x-auth-token)$/i;
+const SECRET_SHAPE = /^(Bearer|Basic)\s+\S+|\bsk_(live|test)_[A-Za-z0-9]+|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$|^AKIA[0-9A-Z]{16}$/;
+const CARD_INPUT = /(^|[_-])(card_?number|cardnumber|card_?no|pan|cvv|cvc|cvv2|card_?exp[a-z_]*)($|[_-])/i;
+
+function luhn(digits: string): boolean {
+    let sum = 0;
+    let alt = false;
+    for (let i = digits.length - 1; i >= 0; i--) {
+        let d = digits.charCodeAt(i) - 48;
+        if (alt) {
+            d *= 2;
+            if (d > 9) d -= 9;
+        }
+        sum += d;
+        alt = !alt;
+    }
+    return sum % 10 === 0;
+}
+
+function checkInputs(path: IssuePath, inputs: readonly Input[], add: Add) {
+    duplicates(inputs, (i) => i.name).forEach((i) => add([...path, i, "name"], "duplicate_id", "duplicate input name"));
+    inputs.forEach((inp, i) => {
+        const p = [...path, i];
+        if (CARD_INPUT.test(inp.name)) add([...p, "name"], "card_input_forbidden", "card data never passes through the surface; use a payment-token input");
+        if (inp.type === "password" && inp.sensitivity !== "credential") add([...p, "sensitivity"], "password_not_credential", "a password input must be sensitivity credential");
+        if (inp.min !== undefined && inp.max !== undefined && inp.min > inp.max) add([...p, "min"], "constraint_order", "min exceeds max");
+        if (inp.min_length !== undefined && inp.max_length !== undefined && inp.min_length > inp.max_length) add([...p, "min_length"], "constraint_order", "min_length exceeds max_length");
+        if (inp.type === "enum" && (!inp.options || inp.options.length === 0)) add([...p, "options"], "enum_without_options", "an enum input lists its options");
+    });
+}
+
+function edgesOf(value: ValueClass): { edge: DependencyEdge; sub: IssuePath }[] {
+    if (value.class === "derived") return [{ edge: value.edge, sub: ["edge"] }];
+    if (value.class === "client-computed" && value.resolution.kind === "lift") {
+        return value.resolution.args.map((edge, j) => ({ edge, sub: ["resolution", "args", j] }));
+    }
+    return [];
+}
+
+/** Rules every request obeys, in or out of a flow. */
+function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly Input[], add: Add, onEdge: (edge: DependencyEdge, p: IssuePath) => void) {
+    const byName = new Map(inputs.map((i) => [i.name, i]));
+    request.values.forEach((rv, i) => {
+        const vp = [...path, "values", i, "value"];
+        const v = rv.value;
+        if (v.class === "input") {
+            const inp = byName.get(v.input);
+            if (!inp) add([...vp, "input"], "undeclared_input", `input ${v.input} is not declared`);
+            else if ((inp.sensitivity === "credential" || inp.sensitivity === "payment-token") && (rv.at.in === "query" || rv.at.in === "path")) {
+                add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential or payment token must not be placed in the URL");
+            }
+        }
+        if (v.class === "constant") {
+            const raw = String(v.value.value);
+            if (rv.at.in === "cookie" || (rv.at.in === "header" && SECRET_HEADER.test(rv.at.name)) || SECRET_SHAPE.test(raw)) {
+                add([...vp, "value"], "secret_constant", "a credential or session value must be supplied at run time, not embedded");
+            }
+            const digits = raw.replace(/[ -]/g, "");
+            if (/^[0-9]{13,19}$/.test(digits) && luhn(digits)) add([...vp, "value"], "card_number_constant", "constant looks like a payment card number");
+        }
+        edgesOf(v).forEach(({ edge, sub }) => onEdge(edge, [...vp, ...sub]));
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Evidence and money rules shared by actions and flow steps
+// ---------------------------------------------------------------------------
+
+function evidenceRules(path: IssuePath, evidence: readonly { source: string }[], add: Add) {
+    if (evidence.length > 64) add(path, "evidence_too_long", "at most 64 evidence entries");
     let last = -1;
     evidence.forEach((e, i) => {
         const rank = EVIDENCE_ORDER.indexOf(e.source as (typeof EVIDENCE_ORDER)[number]);
@@ -65,117 +233,142 @@ function evidenceOrder(path: IssuePath, evidence: readonly { source: string }[],
     });
 }
 
-function edgesOf(value: ValueClass): DependencyEdge[] {
-    if (value.class === "derived") return [value.edge];
-    if (value.class === "client-computed" && value.resolution.kind === "lift") return value.resolution.args;
-    return [];
-}
-
-function checkRequestValues(
+function idempotencyRules(
     path: IssuePath,
-    request: RequestSpec,
-    declaredInputs: ReadonlySet<string>,
+    effect: Effect,
+    idem: { idempotent: boolean; key?: { in: string; name: string } | undefined },
+    requests: readonly RequestSpec[],
     add: Add,
-    onEdge?: (edge: DependencyEdge, edgePath: IssuePath) => void,
 ) {
-    request.values.forEach((rv, i) => {
-        const vp = [...path, "values", i, "value"];
-        if (rv.value.class === "input" && !declaredInputs.has(rv.value.input)) {
-            add([...vp, "input"], "undeclared_input", `input ${rv.value.input} is not declared`);
-        }
-        if (onEdge) {
-            edgesOf(rv.value).forEach((edge, j) =>
-                onEdge(edge, rv.value.class === "derived" ? [...vp, "edge"] : [...vp, "resolution", "args", j]),
-            );
-        }
-    });
+    if (effect === "financial" && idem.key === undefined) {
+        add([...path, "idempotency"], "idempotency_key_missing", "a money-moving call carries an idempotency key (D11)");
+    }
+    if (idem.key !== undefined) {
+        const key = idem.key;
+        const found = requests.some((r) => r.values.some((rv) => rv.at.in === key.in && rv.at.name === key.name && rv.value.class === "input"));
+        if (!found) add([...path, "idempotency", "key"], "idempotency_key_not_in_request", "the key location must be a caller-supplied input in the request");
+    }
 }
 
-function checkFlow(flow: Flow, fi: number, doc: AgentSurface, nodeIds: ReadonlySet<string>, actionIds: ReadonlySet<string>, add: Add) {
+// ---------------------------------------------------------------------------
+// Flows and actions
+// ---------------------------------------------------------------------------
+
+interface DocIndex {
+    nodeIds: ReadonlySet<string>;
+    routeIds: ReadonlySet<string>;
+    actions: ReadonlyMap<string, Action>;
+}
+
+function postconditionRefs(path: IssuePath, pc: Action["postconditions"][number], idx: DocIndex, add: Add) {
+    if ((pc.type === "node_present" || pc.type === "node_text_changed") && !idx.nodeIds.has(pc.node)) add([...path, "node"], "dangling_reference", `unknown node ${pc.node}`);
+    if (pc.type === "navigates_to" && !idx.routeIds.has(pc.route)) add([...path, "route"], "dangling_reference", `unknown route ${pc.route}`);
+}
+
+function checkFlow(flow: Flow, fi: number, idx: DocIndex, add: Add) {
     const p: IssuePath = ["flows", fi];
-    const declared = new Set(flow.inputs.map((i) => i.name));
-    duplicates(flow.inputs, (i) => i.name).forEach((i) => add([...p, "inputs", i, "name"], "duplicate_id", "duplicate input name"));
+    checkInputs([...p, "inputs"], flow.inputs, add);
     duplicates(flow.steps, (s) => s.id).forEach((i) => add([...p, "steps", i, "id"], "duplicate_id", "duplicate step id"));
 
     const stepIndex = new Map<string, number>();
     flow.steps.forEach((s, i) => {
         if (!stepIndex.has(s.id)) stepIndex.set(s.id, i);
     });
-    const requestsOf = new Map<string, Set<string>>();
-    flow.steps.forEach((s) => {
-        const set = new Set<string>();
-        s.requests.forEach((r) => set.add(r.id));
-        requestsOf.set(s.id, set);
-    });
+    const requestsOf = new Map<string, FlowStep["requests"]>();
+    flow.steps.forEach((s) => { if (!requestsOf.has(s.id)) requestsOf.set(s.id, s.requests); });
     const allRequestIds = flow.steps.flatMap((s, si) => s.requests.map((r, ri) => ({ id: r.id, path: [...p, "steps", si, "requests", ri, "id"] as IssuePath })));
     duplicates(allRequestIds, (r) => r.id).forEach((i) => add(allRequestIds[i]!.path, "duplicate_id", "duplicate request id within flow"));
 
-    let top: number = 0;
+    const edgeRule = (si: number, ri: number | null) => (edge: DependencyEdge, ep: IssuePath) => {
+        const src = edge.source;
+        if (src.step === undefined) {
+            add([...ep, "source"], "dependency_missing_step", "in a flow every dependency names the step it was observed at");
+            return;
+        }
+        const srcStep = stepIndex.get(src.step);
+        if (srcStep === undefined) {
+            add([...ep, "source", "step"], "dangling_reference", `dependency refers to unknown step ${src.step}`);
+            return;
+        }
+        if (srcStep > si) add([...ep, "source", "step"], "dependency_not_earlier", "a value can only be sourced from the same or an earlier step");
+        if (src.kind === "response") {
+            const reqs = requestsOf.get(src.step) ?? [];
+            const target = reqs.findIndex((r) => r.id === src.request);
+            if (target < 0) add([...ep, "source", "request"], "dangling_reference", `dependency refers to unknown request ${src.request} in step ${src.step}`);
+            else if (srcStep === si && ri !== null && target >= ri) add([...ep, "source", "request"], "dependency_not_earlier", "a request can only depend on an earlier request");
+        }
+        if (src.kind === "dom" && !idx.nodeIds.has(src.node)) add([...ep, "source", "node"], "dangling_reference", `dependency refers to unknown node ${src.node}`);
+    };
+
+    let top = 0;
     flow.steps.forEach((step, si) => {
         const sp = [...p, "steps", si];
         top = Math.max(top, effectRank(step.effect));
-        if (step.action !== undefined && !actionIds.has(step.action)) {
-            add([...sp, "action"], "dangling_reference", `step refers to unknown action ${step.action}`);
+        if (step.action !== undefined) {
+            const a = idx.actions.get(step.action);
+            if (!a) add([...sp, "action"], "dangling_reference", `step refers to unknown action ${step.action}`);
+            else if (step.effect !== a.effect) add([...sp, "effect"], "step_effect_mismatch", `step effect differs from its action's effect (${a.effect})`);
         }
         if ((step.effect === "financial") !== (step.payment !== undefined)) {
-            add(
-                [...sp, step.payment !== undefined ? "payment" : "effect"],
-                "payment_effect_mismatch",
-                "exactly the financial step declares a payment method",
-            );
+            add([...sp, step.payment !== undefined ? "payment" : "effect"], "payment_effect_mismatch", "exactly the financial step declares a payment method");
         }
-        step.requests.forEach((req, ri) => {
-            checkRequestValues([...sp, "requests", ri], req, declared, add, (edge, ep) => {
-                const src = edge.source;
-                const srcStep = stepIndex.get(src.step);
-                if (srcStep === undefined) {
-                    add([...ep, "source", "step"], "dangling_reference", `dependency refers to unknown step ${src.step}`);
-                    return;
-                }
-                // A request may depend on an earlier request of the same step, never a later step.
-                if (srcStep > si) add([...ep, "source", "step"], "dependency_not_earlier", "a value can only be sourced from the same or an earlier step");
-                if (src.kind === "response") {
-                    if (!requestsOf.get(src.step)?.has(src.request)) {
-                        add([...ep, "source", "request"], "dangling_reference", `dependency refers to unknown request ${src.request} in step ${src.step}`);
-                    } else if (srcStep === si) {
-                        const order = step.requests.findIndex((r) => r.id === src.request);
-                        if (order >= ri) add([...ep, "source", "request"], "dependency_not_earlier", "a request can only depend on an earlier request");
-                    }
-                }
-                if (src.kind === "dom" && !nodeIds.has(src.node)) add([...ep, "source", "node"], "dangling_reference", `dependency refers to unknown node ${src.node}`);
-            });
+        idempotencyRules(sp, step.effect, step.idempotency, step.requests, add);
+        step.preconditions.forEach((pc, i) => {
+            if (pc.type === "prior_action" && !idx.actions.has(pc.action)) add([...sp, "preconditions", i, "action"], "dangling_reference", `unknown action ${pc.action}`);
+            if (pc.type === "token") edgeRule(si, null)(pc.source, [...sp, "preconditions", i, "source"]);
         });
+        step.postconditions.forEach((pc, i) => postconditionRefs([...sp, "postconditions", i], pc, idx, add));
+        step.requests.forEach((req, ri) => checkRequest([...sp, "requests", ri], req, flow.inputs, add, edgeRule(si, ri)));
     });
-    if (effectRank(flow.effect) < top) {
-        add([...p, "effect"], "flow_effect_below_step", "flow effect must be at least the most consequential step effect");
-    }
-    evidenceOrder([...p, "evidence"], flow.evidence, add);
+    if (flow.effect !== EFFECT_ORDER[top]) add([...p, "effect"], "flow_effect_mismatch", "flow effect must equal the most consequential step effect");
+    evidenceRules([...p, "evidence"], flow.evidence, add);
     if (flow.status === "blocked") {
         flow.unclassified.forEach((u, i) => {
-            const sr = requestsOf.get(u.step);
-            if (!sr) add([...p, "unclassified", i, "step"], "dangling_reference", `unknown step ${u.step}`);
-            else if (!sr.has(u.request)) add([...p, "unclassified", i, "request"], "dangling_reference", `unknown request ${u.request}`);
+            const reqs = requestsOf.get(u.step);
+            const req = reqs?.find((r) => r.id === u.request);
+            if (!reqs) add([...p, "unclassified", i, "step"], "dangling_reference", `unknown step ${u.step}`);
+            else if (!req) add([...p, "unclassified", i, "request"], "dangling_reference", `unknown request ${u.request}`);
+            else if (req.values.some((rv) => rv.at.in === u.at.in && rv.at.name === u.at.name)) {
+                add([...p, "unclassified", i, "at"], "unclassified_has_value", "a value listed as unclassified is also classed in its request");
+            }
         });
     }
 }
 
-function checkAction(action: Action, ai: number, nodeIds: ReadonlySet<string>, routeIds: ReadonlySet<string>, add: Add) {
+function checkAction(action: Action, ai: number, idx: DocIndex, add: Add) {
     const p: IssuePath = ["actions", ai];
-    if (action.node !== undefined && !nodeIds.has(action.node)) add([...p, "node"], "dangling_reference", `unknown node ${action.node}`);
-    if (action.kind === "navigate" && action.route !== undefined && !routeIds.has(action.route)) {
-        add([...p, "route"], "dangling_reference", `unknown route ${action.route}`);
-    }
-    if (action.kind === "state") action.affects.forEach((n, i) => { if (!nodeIds.has(n)) add([...p, "affects", i], "dangling_reference", `unknown node ${n}`); });
-    duplicates(action.inputs, (i) => i.name).forEach((i) => add([...p, "inputs", i, "name"], "duplicate_id", "duplicate input name"));
-    if ("request" in action) {
-        checkRequestValues([...p, "request"], action.request, new Set(action.inputs.map((i) => i.name)), add);
-    }
-    action.postconditions.forEach((pc, i) => {
-        if ((pc.type === "node_present" || pc.type === "node_text_changed") && !nodeIds.has(pc.node)) add([...p, "postconditions", i, "node"], "dangling_reference", `unknown node ${pc.node}`);
-        if (pc.type === "navigates_to" && !routeIds.has(pc.route)) add([...p, "postconditions", i, "route"], "dangling_reference", `unknown route ${pc.route}`);
+    if (action.node !== undefined && !idx.nodeIds.has(action.node)) add([...p, "node"], "dangling_reference", `unknown node ${action.node}`);
+    if (action.kind === "navigate" && action.route !== undefined && !idx.routeIds.has(action.route)) add([...p, "route"], "dangling_reference", `unknown route ${action.route}`);
+    if (action.kind === "state") action.affects.forEach((n, i) => { if (!idx.nodeIds.has(n)) add([...p, "affects", i], "dangling_reference", `unknown node ${n}`); });
+    checkInputs([...p, "inputs"], action.inputs, add);
+
+    // A standalone action has no steps: only dom, cookie and storage sources, with no step.
+    const edgeRule = (edge: DependencyEdge, ep: IssuePath) => {
+        const src = edge.source;
+        if (src.kind === "response") add([...ep, "source", "kind"], "edge_needs_flow", "a response source needs a flow step; model it in a flow");
+        else if (src.step !== undefined) add([...ep, "source", "step"], "dangling_reference", "a standalone action has no steps");
+        if (src.kind === "dom" && !idx.nodeIds.has(src.node)) add([...ep, "source", "node"], "dangling_reference", `dependency refers to unknown node ${src.node}`);
+    };
+    action.preconditions.forEach((pc, i) => {
+        if (pc.type === "prior_action" && !idx.actions.has(pc.action)) add([...p, "preconditions", i, "action"], "dangling_reference", `unknown action ${pc.action}`);
+        if (pc.type === "token") edgeRule(pc.source, [...p, "preconditions", i, "source"]);
     });
-    evidenceOrder([...p, "evidence"], action.evidence, add);
+    action.postconditions.forEach((pc, i) => postconditionRefs([...p, "postconditions", i], pc, idx, add));
+    if ("request" in action) {
+        checkRequest([...p, "request"], action.request, action.inputs, add, edgeRule);
+        if ((action.effect === "financial") !== (action.payment !== undefined)) {
+            add([...p, action.payment !== undefined ? "payment" : "effect"], "payment_effect_mismatch", "exactly a financial action declares a payment method");
+        }
+        idempotencyRules(p, action.effect, action.idempotency, [action.request], add);
+    } else if (action.idempotency.key !== undefined) {
+        add([...p, "idempotency", "key"], "idempotency_key_not_in_request", "an action without a request has no key location");
+    }
+    evidenceRules([...p, "evidence"], action.evidence, add);
 }
+
+// ---------------------------------------------------------------------------
+// Surface
+// ---------------------------------------------------------------------------
 
 const TIER_ORDER: readonly Tier[] = ["T0", "T1", "T2", "T3", "T4"];
 
@@ -200,48 +393,85 @@ export function deriveCoverage(doc: Pick<AgentSurface, "routes" | "actions" | "u
     };
 }
 
+const OPAQUE_REASONS: ReadonlySet<string> = new Set(["opaque-canvas", "opaque-webgl", "drag-only", "video"]);
+
+/** Hash of a document, or undefined when it cannot be canonicalised (the scan reports why). */
+function safeHash(doc: { hash: string }): string | undefined {
+    try {
+        return computeHash(doc);
+    } catch {
+        return undefined;
+    }
+}
+
 /** Checks a structurally valid surface. Returns [] when every invariant holds. */
 export function checkSurface(doc: AgentSurface): CheckIssue[] {
     const { list, add } = issues();
 
-    if (computeHash(doc) !== doc.hash) add(["hash"], "hash_mismatch", "hash does not match the canonical content");
+    const hash = safeHash(doc);
+    if (hash !== undefined && hash !== doc.hash) add(["hash"], "hash_mismatch", "hash does not match the canonical content");
+    if (!checkSchemaVersion(doc.schema_version).ok) add(["schema_version"], "schema_version_newer", `this reader supports schema ${SCHEMA_MAJOR}.0 to ${SCHEMA_MAJOR}.${SCHEMA_MINOR}`);
+    scan(doc, add);
 
     duplicates(doc.routes, (r) => r.id).forEach((i) => add(["routes", i, "id"], "duplicate_id", "duplicate route id"));
     const allNodes = doc.routes.flatMap((r, ri) => r.nodes.map((n, ni) => ({ n, path: ["routes", ri, "nodes", ni] as IssuePath })));
     duplicates(allNodes, (x) => x.n.id).forEach((i) => add([...allNodes[i]!.path, "id"], "duplicate_id", "duplicate node id"));
-    const ids = [...doc.actions.map((a, i) => ({ id: a.id, path: ["actions", i, "id"] as IssuePath })), ...doc.unsupported.map((a, i) => ({ id: a.id, path: ["unsupported", i, "id"] as IssuePath }))];
+    const ids = [
+        ...doc.actions.map((a, i) => ({ id: a.id, path: ["actions", i, "id"] as IssuePath })),
+        ...doc.unsupported.map((a, i) => ({ id: a.id, path: ["unsupported", i, "id"] as IssuePath })),
+    ];
     duplicates(ids, (x) => x.id).forEach((i) => add(ids[i]!.path, "duplicate_id", "duplicate action id"));
     duplicates(doc.flows, (f) => f.id).forEach((i) => add(["flows", i, "id"], "duplicate_id", "duplicate flow id"));
 
-    const nodeIds = new Set(allNodes.map((x) => x.n.id));
-    const routeIds = new Set(doc.routes.map((r) => r.id));
-    const actionIds = new Set(doc.actions.map((a) => a.id));
+    const idx: DocIndex = {
+        nodeIds: new Set(allNodes.map((x) => x.n.id)),
+        routeIds: new Set(doc.routes.map((r) => r.id)),
+        actions: new Map(doc.actions.map((a) => [a.id, a])),
+    };
 
     doc.routes.forEach((route, ri) => {
-        const local = new Set(route.nodes.map((n) => n.id));
+        const parentOf = new Map(route.nodes.map((n) => [n.id, n.parent]));
         route.nodes.forEach((n, ni) => {
-            if (n.parent !== undefined && !local.has(n.parent)) add(["routes", ri, "nodes", ni, "parent"], "dangling_reference", "parent must be a node of the same route");
-            if (n.visibility !== "visible" && !doc.options.include_hidden) add(["routes", ri, "nodes", ni, "visibility"], "hidden_not_opted_in", "hidden or inert nodes require options.include_hidden");
+            const np = ["routes", ri, "nodes", ni];
+            if (n.parent !== undefined && !parentOf.has(n.parent)) add([...np, "parent"], "dangling_reference", "parent must be a node of the same route");
+            else if (n.parent !== undefined) {
+                const seen = new Set<string>([n.id]);
+                for (let cur: string | undefined = n.parent; cur !== undefined; cur = parentOf.get(cur)) {
+                    if (seen.has(cur)) {
+                        add([...np, "parent"], "parent_cycle", "a node cannot be its own ancestor");
+                        break;
+                    }
+                    seen.add(cur);
+                }
+            }
+            if (n.visibility !== "visible" && !doc.options.include_hidden) add([...np, "visibility"], "hidden_not_opted_in", "hidden or inert nodes require options.include_hidden");
         });
         if (new Set(route.tiers).size !== route.tiers.length) add(["routes", ri, "tiers"], "tier_duplicated", "tiers must be unique");
     });
 
-    doc.actions.forEach((a, i) => checkAction(a, i, nodeIds, routeIds, add));
+    doc.actions.forEach((a, i) => checkAction(a, i, idx, add));
     doc.unsupported.forEach((u, i) => {
-        if (u.node !== undefined && !nodeIds.has(u.node)) add(["unsupported", i, "node"], "dangling_reference", `unknown node ${u.node}`);
+        if (u.node !== undefined && !idx.nodeIds.has(u.node)) add(["unsupported", i, "node"], "dangling_reference", `unknown node ${u.node}`);
+        if (OPAQUE_REASONS.has(u.reason) && u.tier !== "T4") add(["unsupported", i, "tier"], "unsupported_tier_mismatch", `${u.reason} is opaque: tier T4`);
     });
-    doc.flows.forEach((f, i) => checkFlow(f, i, doc, nodeIds, actionIds, add));
+    doc.flows.forEach((f, i) => checkFlow(f, i, idx, add));
 
-    // D2: a read-only surface carries T0/T1 only. Unsupported items (T4) are listed, not offered.
+    // D2: a read-only surface carries T0/T1 only, needs no auth, and is not built where robots or ToS forbid it.
     if (doc.mode === "read-only") {
         const allowed: ReadonlySet<Tier> = new Set<Tier>(["T0", "T1"]);
-        doc.actions.forEach((a, i) => { if (!allowed.has(a.tier)) add(["actions", i, "tier"], "mode_forbids_tier", "read-only surfaces carry T0/T1 only"); });
-        doc.routes.forEach((r, ri) => r.tiers.forEach((t, ti) => { if (!allowed.has(t) && t !== "T4") add(["routes", ri, "tiers", ti], "mode_forbids_tier", "read-only surfaces carry T0/T1 only"); }));
+        doc.actions.forEach((a, i) => {
+            if (!allowed.has(a.tier)) add(["actions", i, "tier"], "mode_forbids_tier", "read-only surfaces carry T0/T1 only");
+            else if (a.auth.kind !== "none") add(["actions", i, "auth"], "read_only_requires_auth", "read-only surfaces carry no authenticated actions");
+        });
+        doc.routes.forEach((r, ri) => r.tiers.forEach((t, ti) => { if (!allowed.has(t)) add(["routes", ri, "tiers", ti], "mode_forbids_tier", "read-only surfaces carry T0/T1 only"); }));
         if (doc.flows.length > 0) add(["flows"], "mode_forbids_flows", "read-only surfaces carry no flows");
+        if (doc.gates.robots_txt === "disallowed") add(["gates", "robots_txt"], "gates_forbid_read_only", "robots.txt disallows access");
+        if (doc.gates.tos === "restricted") add(["gates", "tos"], "gates_forbid_read_only", "terms of service restrict automated access");
     }
 
-    // Coverage must equal what the document contains.
+    // Coverage must equal what the document contains, in exactly one encoding.
     const expected = deriveCoverage(doc);
+    const before = list.length;
     const expectedTiers = new Map(expected.tiers.map((t) => [t.tier, t]));
     const seenTiers = new Set<Tier>();
     doc.coverage.tiers.forEach((c, i) => {
@@ -258,37 +488,85 @@ export function checkSurface(doc: AgentSurface): CheckIssue[] {
     const reasons = new Map(expected.unsupported_reasons.map((r) => [r.reason, r.count]));
     const listed = new Set<string>();
     doc.coverage.unsupported_reasons.forEach((r, i) => {
+        if (listed.has(r.reason)) add(["coverage", "unsupported_reasons", i, "reason"], "duplicate_id", "reason listed twice");
         listed.add(r.reason);
         if ((reasons.get(r.reason) ?? 0) !== r.count) add(["coverage", "unsupported_reasons", i, "count"], "coverage_mismatch", `count for ${r.reason} is ${r.count} but the document has ${reasons.get(r.reason) ?? 0}`);
     });
     reasons.forEach((_, r) => {
         if (!listed.has(r)) add(["coverage", "unsupported_reasons"], "coverage_mismatch", `coverage is missing unsupported reason ${r}`);
     });
+    if (list.length === before && canonicalize(doc.coverage) !== canonicalize(expected)) {
+        add(["coverage"], "coverage_not_canonical", "coverage must be exactly deriveCoverage(document): tier order, no empty rows");
+    }
 
     return list;
 }
 
+// ---------------------------------------------------------------------------
+// Authority documents
+// ---------------------------------------------------------------------------
+
+function subjectRule(c: { action?: string | undefined; flow?: string | undefined; step?: string | undefined }, add: Add) {
+    const ok = c.action !== undefined || (c.flow !== undefined && c.step !== undefined);
+    const stray = (c.flow === undefined) !== (c.step === undefined);
+    if (!ok || stray) add([], "subject_missing", "name an action, or a flow together with a step");
+}
+
 /** Cross-field rules for a mandate. */
-export function checkMandate(m: z.infer<typeof Mandate>): CheckIssue[] {
+export function checkMandate(m: Mandate): CheckIssue[] {
     const { list, add } = issues();
-    if (computeHash(m) !== m.hash) add(["hash"], "hash_mismatch", "hash does not match the canonical content");
+    scan(m, add);
+    const hash = safeHash(m);
+    if (hash !== undefined && hash !== m.hash) add(["hash"], "hash_mismatch", "hash does not match the canonical content");
     if (m.expires_at <= m.issued_at) add(["expires_at"], "time_order", "expires_at must be after issued_at");
     if (m.per_call_cap_minor !== undefined && m.per_call_cap_minor > m.spend_cap_minor) add(["per_call_cap_minor"], "cap_order", "per-call cap exceeds the spend cap");
     duplicates(m.scope, (s) => `${s.kind}:${s.id}`).forEach((i) => add(["scope", i], "duplicate_id", "duplicate scope entry"));
+    duplicates(m.merchants, (h) => h).forEach((i) => add(["merchants", i], "duplicate_id", "duplicate merchant"));
     return list;
 }
 
 /** Cross-field rules for a confirmation request. */
-export function checkConfirmationRequest(c: z.infer<typeof ConfirmationRequest>): CheckIssue[] {
+export function checkConfirmationRequest(c: ConfirmationRequest): CheckIssue[] {
     const { list, add } = issues();
+    scan(c, add);
+    subjectRule(c, add);
     if (c.expires_at <= c.issued_at) add(["expires_at"], "time_order", "expires_at must be after issued_at");
     if (c.effect === "financial") {
+        let sum = 0;
+        let complete = true;
         c.items.forEach((it, i) => {
-            if (it.amount !== undefined && it.amount.currency !== c.total.currency) add(["items", i, "amount", "currency"], "cap_order", "item currency differs from total currency");
+            if (it.amount === undefined) complete = false;
+            else {
+                if (it.amount.currency !== c.total.currency) add(["items", i, "amount", "currency"], "currency_mismatch", "item currency differs from total currency");
+                sum += it.amount.amount_minor * it.quantity;
+            }
         });
+        if (complete && sum !== c.total.amount_minor) add(["total", "amount_minor"], "total_mismatch", `items sum to ${sum} but the total is ${c.total.amount_minor}`);
     }
     return list;
 }
+
+/** Cross-field rules for a receipt. */
+export function checkReceipt(r: Receipt): CheckIssue[] {
+    const { list, add } = issues();
+    scan(r, add);
+    subjectRule(r, add);
+    if (r.mode === "read-only") {
+        if (r.effect !== "read") add(["effect"], "mode_forbids_effect", "read-only mode records reads only");
+        if (r.tier !== "T0" && r.tier !== "T1") add(["tier"], "mode_forbids_tier", "read-only mode records T0/T1 only");
+    }
+    if (r.result === "ok") {
+        const need: ("amount" | "confirmation" | "mandate" | "idempotency_key")[] = [];
+        if (r.effect === "financial") need.push("amount", "confirmation", "mandate", "idempotency_key");
+        else if (requiresConfirmation(r.effect)) need.push("confirmation");
+        for (const f of need) if (r[f] === undefined) add([f], "receipt_incomplete", `a completed ${r.effect} call records ${f}`);
+    }
+    return list;
+}
+
+// ---------------------------------------------------------------------------
+// Validation entry point
+// ---------------------------------------------------------------------------
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; phase: "schema" | "check"; issues: CheckIssue[] };
 

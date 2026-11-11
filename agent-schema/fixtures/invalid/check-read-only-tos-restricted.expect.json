@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "gates",
+        "tos"
+      ],
+      "code": "gates_forbid_read_only"
+    }
+  ],
+  "why": "no read-only surface where terms restrict automated access"
+}

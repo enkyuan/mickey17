@@ -1,7 +1,13 @@
 {
   "status": "ok",
   "tier": "T2",
-  "fields": {
-    "order_id": "A-1001"
-  }
+  "fields": [
+    {
+      "name": {
+        "origin": "page",
+        "value": "order_id"
+      },
+      "value": "A-1001"
+    }
+  ]
 }

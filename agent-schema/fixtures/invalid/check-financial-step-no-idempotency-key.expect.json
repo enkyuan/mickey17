@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "idempotency"
+      ],
+      "code": "idempotency_key_missing"
+    }
+  ],
+  "why": "the paying step carries an idempotency key"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "coverage"
+      ],
+      "code": "coverage_not_canonical"
+    }
+  ],
+  "why": "one document has one coverage encoding, so equal content hashes equal"
+}

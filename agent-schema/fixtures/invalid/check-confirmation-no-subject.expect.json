@@ -1,0 +1,11 @@
+{
+  "schema": "confirmation-request",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [],
+      "code": "subject_missing"
+    }
+  ],
+  "why": "a confirmation says what it is for"
+}

@@ -16,6 +16,7 @@ export function canonicalize(value: unknown): string {
             if (!Number.isInteger(value)) throw new Error("non-integer number in canonical JSON: the wire format has no floats");
             return JSON.stringify(value);
         case "string":
+            if (!value.isWellFormed()) throw new Error("ill-formed string (lone surrogate) in canonical JSON");
             return JSON.stringify(value);
         case "object": {
             if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;

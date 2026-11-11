@@ -39,9 +39,17 @@ bun run generate   # rewrite schema/agent-surface.schema.json
   observed; each action kind fixes its tier; a derived value must carry its dependency edge; a blocked
   flow lists its unclassified values and a ready flow has none; money confirmations carry item, total and payee.
 - No secret appears anywhere. Auth names a requirement; sensitive inputs are typed, never valued; there
-  is no card-number input type. A test fails if any schema property is named like a secret.
-- Free text is only ever inside `PageText`/`PageValue`/`PageUrl` (page) or `SurfaceText` (surface). A test
-  fails if a new bare string property appears without being added to a reviewed list.
+  is no card-number input type. A test fails if any schema property is named like a secret, and the checks
+  reject embedded credentials (`Authorization`, cookies, bearer/JWT shapes), Luhn-valid card numbers, card-named
+  inputs, and credentials or payment tokens placed in a URL.
+- Free text is only ever inside the marked wrappers (`PageText`, `PageValue`, `PageUrl`, `PagePath`,
+  `MarkedText`, `MarkedValue`, `SurfaceText`). Everything else is a grammar: ids are slugs, names and pointers
+  (`Name`) are token characters with no whitespace, roles are the ARIA enum. A test walks the generated JSON Schema
+  (properties, array items, record keys) and fails if a new bare string appears without review.
+- `check.ts` also scans for surface-authored text that repeats a page string of 8 or more characters verbatim.
+  That catches copying, not paraphrase; treat it as a tripwire, not a proof.
+- Lengths are Unicode code points. A lone surrogate is rejected by `check.ts` and by `canonicalize`, because it
+  cannot round-trip through UTF-8 JSON.
 
 ## Content hash
 
@@ -59,17 +67,20 @@ The Rust emitter must produce the same bytes; `fixtures/valid/*.json` are the sh
 - **Minor** bumps for additive change; **patch** for documentation or a fix that accepts no new documents
   and rejects no previously valid ones.
 - A reader accepts a document of the same major and a minor **at most its own**: it knows every field
-  and enum value that document can use. A reader meeting a newer minor must refuse (strict objects make
-  this automatic) rather than guess.
+  and enum value that document can use. The wire format pins the major (`1.x.y`); `checkSchemaVersion()` (also run
+  by `checkSurface`) refuses a newer minor. Strict objects alone do not catch a newer minor that adds only an enum
+  value or a union variant, which is why the version check exists.
 - An emitter writes the lowest minor that covers what it emitted, so older readers keep working.
 - Every change that alters `schema/agent-surface.schema.json` ships with the regenerated file and fixtures;
   the check script and a test fail otherwise.
 - A major bump needs a migration note in `docs/agent-surface/log/agent-schema.md` and keeps the previous
   major's schema file alongside.
 
-## How the Rust side validates
+## How emitters validate
 
-The Rust emitter is not a second definition (design section 6). Two checks, both in CI:
+No emitter is a second definition (design section 6); the Zod schemas here are the source of truth.
+A TypeScript emitter imports `validateSurface()` directly. Any emitter (including a Rust one) can run
+two checks in CI:
 
 1. **Emit validates against this package.** The test that runs the emitter writes each document it
    produces to a temp file and runs
@@ -78,13 +89,14 @@ The Rust emitter is not a second definition (design section 6). Two checks, both
    bun agent-schema/scripts/validate.ts <file.json>...
    ```
 
-   Exit `0` means every file passed schema and checks; exit `1` prints a JSON report of
-   `{file, schema, phase, issues: [{path, code, message}]}`; exit `2` is a usage error. The schema is
+   A JSON report of `{file, schema, ok, phase, issues: [{path, code, message}]}` always goes to stdout.
+   Exit `0`: every file passed schema and checks. Exit `1`: at least one failed (phase `schema`, `check`, or `parse`
+   for unreadable JSON). Exit `2`: usage error, including a file whose schema cannot be inferred. The schema is
    inferred from `kind: "agent-surface"` or the file prefix (`result.x.json`, `receipt.x.json`), or pass
    `--schema <surface|result|mandate|confirmation-request|confirmation-token|receipt>`.
    A non-TS consumer can instead validate with `schema/agent-surface.schema.json` (draft 2020-12; point at
    `#/$defs/<Name>`), which covers the wire format but not `check.ts` invariants.
-2. **Round trip on the Rust side.** Deserialise every file in `fixtures/valid/` into the Rust types and
+2. **Round trip in a non-TS emitter.** Deserialise every file in `fixtures/valid/` into the Rust types and
    serialise it back; the result must be byte-identical after canonicalisation. Serde structs should use
    `#[serde(deny_unknown_fields)]` and `skip_serializing_if = "Option::is_none"` to mirror strict, absent-not-null.
 

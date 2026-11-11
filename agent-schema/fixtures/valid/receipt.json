@@ -4,7 +4,6 @@
   "mode": "delegated",
   "tier": "T2",
   "effect": "financial",
-  "action": "add-to-cart",
   "flow": "checkout",
   "step": "pay",
   "evidence": [

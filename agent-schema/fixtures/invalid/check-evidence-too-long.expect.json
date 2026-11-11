@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "evidence"
+      ],
+      "code": "evidence_too_long"
+    }
+  ],
+  "why": "evidence lists are bounded"
+}

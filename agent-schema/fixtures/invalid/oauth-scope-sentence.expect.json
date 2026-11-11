@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "auth",
+        "scopes",
+        0
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "scopes are token strings, not prose"
+}

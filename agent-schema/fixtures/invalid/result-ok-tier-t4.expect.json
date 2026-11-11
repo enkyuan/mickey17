@@ -1,0 +1,13 @@
+{
+  "schema": "result",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "tier"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "T4 is unsupported and cannot succeed"
+}

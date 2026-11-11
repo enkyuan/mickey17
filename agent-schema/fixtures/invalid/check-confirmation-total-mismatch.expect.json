@@ -1,0 +1,14 @@
+{
+  "schema": "confirmation-request",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "total",
+        "amount_minor"
+      ],
+      "code": "total_mismatch"
+    }
+  ],
+  "why": "items sum to the total the human is shown"
+}

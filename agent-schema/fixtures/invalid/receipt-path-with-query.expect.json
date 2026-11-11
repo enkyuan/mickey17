@@ -1,0 +1,15 @@
+{
+  "schema": "receipt",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "request",
+        "path",
+        "value"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "a receipt records the path template only, never query values"
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "inputs",
+        4,
+        "name"
+      ],
+      "code": "duplicate_id"
+    }
+  ],
+  "why": "input names are unique"
+}

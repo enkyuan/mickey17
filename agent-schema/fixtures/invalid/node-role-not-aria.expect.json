@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "nodes",
+        2,
+        "role"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "roles are a closed ARIA vocabulary, never page text"
+}

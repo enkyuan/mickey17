@@ -1,0 +1,16 @@
+{
+  "schema": "confirmation-request",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "items",
+        0,
+        "amount",
+        "currency"
+      ],
+      "code": "currency_mismatch"
+    }
+  ],
+  "why": "one currency per confirmation"
+}

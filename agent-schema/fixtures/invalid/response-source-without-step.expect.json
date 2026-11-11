@@ -1,0 +1,24 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "edge",
+        "source",
+        "step"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "a response source names the step it came from"
+}

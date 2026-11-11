@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        0,
+        "effect"
+      ],
+      "code": "step_effect_mismatch"
+    }
+  ],
+  "why": "a step has the effect of the action it performs"
+}

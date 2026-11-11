@@ -1,0 +1,124 @@
+{
+  "kind": "agent-surface",
+  "schema_version": "1.0.0",
+  "hash": "sha256:5d1be9db0b27fb361569800bee519c81cdcf7aa5f383b69019c64fb00c4a8e1f",
+  "capture": {
+    "hash": "sha256:90c80e17c9159ef71190d3d9a423ef59e4f64c703fec2a82ce401e417aea7e60",
+    "captured_at": "2026-11-10T12:00:00Z",
+    "tool": {
+      "name": "mochi",
+      "version": "0.1.0"
+    }
+  },
+  "mode": "read-only",
+  "site": {
+    "host": "docs.example.test",
+    "scheme": "https"
+  },
+  "gates": {
+    "robots_txt": "disallowed",
+    "llms_txt": "present",
+    "tos": "not-checked"
+  },
+  "options": {
+    "include_hidden": false
+  },
+  "coverage": {
+    "tiers": [
+      {
+        "tier": "T0",
+        "routes": 1,
+        "actions": 0,
+        "unsupported": 0
+      },
+      {
+        "tier": "T1",
+        "routes": 1,
+        "actions": 1,
+        "unsupported": 0
+      }
+    ],
+    "unsupported_reasons": []
+  },
+  "routes": [
+    {
+      "id": "index",
+      "url": {
+        "origin": "page",
+        "value": "/"
+      },
+      "tiers": [
+        "T0",
+        "T1"
+      ],
+      "nodes": [
+        {
+          "id": "n_daa00fb582363bd8",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Docs"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Docs"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_fd5340f57de00f85",
+          "role": "link",
+          "name": {
+            "origin": "page",
+            "value": "Guide"
+          },
+          "href": {
+            "origin": "page",
+            "value": "/guide"
+          },
+          "visibility": "visible",
+          "confidence": 80
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-guide",
+      "kind": "navigate",
+      "tier": "T1",
+      "effect": "read",
+      "node": "n_fd5340f57de00f85",
+      "description": {
+        "origin": "surface",
+        "value": "Open the guide."
+      },
+      "inputs": [],
+      "auth": {
+        "kind": "none"
+      },
+      "preconditions": [],
+      "postconditions": [],
+      "idempotency": {
+        "idempotent": true
+      },
+      "state": "enabled",
+      "target": {
+        "origin": "page",
+        "value": "/guide"
+      },
+      "confidence": 80,
+      "evidence": [
+        {
+          "source": "inferred",
+          "type": "heuristic",
+          "ref": "role:link",
+          "hash": "sha256:ae3ab818e4c5291f6ed45783b4797357f8f918be764220494e8c09dd4b7f78fc"
+        }
+      ]
+    }
+  ],
+  "flows": [],
+  "unsupported": []
+}

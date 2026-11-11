@@ -44,7 +44,7 @@
           "const": "agent-surface"
         },
         "schema_version": {
-          "$ref": "#/$defs/SemVer"
+          "$ref": "#/$defs/SchemaVersion"
         },
         "hash": {
           "$ref": "#/$defs/Sha256"
@@ -140,6 +140,93 @@
       "additionalProperties": false,
       "description": "Agent surface document, schema v1."
     },
+    "AriaRole": {
+      "type": "string",
+      "enum": [
+        "alert",
+        "alertdialog",
+        "application",
+        "article",
+        "banner",
+        "blockquote",
+        "button",
+        "caption",
+        "cell",
+        "checkbox",
+        "code",
+        "columnheader",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "definition",
+        "deletion",
+        "dialog",
+        "directory",
+        "document",
+        "emphasis",
+        "feed",
+        "figure",
+        "form",
+        "generic",
+        "grid",
+        "gridcell",
+        "group",
+        "heading",
+        "img",
+        "insertion",
+        "link",
+        "list",
+        "listbox",
+        "listitem",
+        "log",
+        "main",
+        "marquee",
+        "math",
+        "menu",
+        "menubar",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "meter",
+        "navigation",
+        "none",
+        "note",
+        "option",
+        "paragraph",
+        "presentation",
+        "progressbar",
+        "radio",
+        "radiogroup",
+        "region",
+        "row",
+        "rowgroup",
+        "rowheader",
+        "scrollbar",
+        "search",
+        "searchbox",
+        "separator",
+        "slider",
+        "spinbutton",
+        "status",
+        "strong",
+        "subscript",
+        "superscript",
+        "switch",
+        "tab",
+        "table",
+        "tablist",
+        "tabpanel",
+        "term",
+        "textbox",
+        "time",
+        "timer",
+        "toolbar",
+        "tooltip",
+        "tree",
+        "treegrid",
+        "treeitem"
+      ]
+    },
     "AuthRequirement": {
       "oneOf": [
         {
@@ -179,9 +266,7 @@
               "maxItems": 64,
               "type": "array",
               "items": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256
+                "$ref": "#/$defs/Name"
               }
             }
           },
@@ -199,9 +284,7 @@
               "const": "api-key"
             },
             "header": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "$ref": "#/$defs/Name"
             }
           },
           "required": [
@@ -428,7 +511,6 @@
           },
           "required": [
             "id",
-            "action",
             "request_digest",
             "idempotency_key",
             "issued_at",
@@ -436,7 +518,8 @@
             "effect",
             "items",
             "total",
-            "payee"
+            "payee",
+            "mandate"
           ],
           "additionalProperties": false
         },
@@ -483,7 +566,6 @@
           },
           "required": [
             "id",
-            "action",
             "request_digest",
             "idempotency_key",
             "issued_at",
@@ -620,14 +702,11 @@
               "$ref": "#/$defs/NodeId"
             },
             "attribute": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "$ref": "#/$defs/Name"
             }
           },
           "required": [
             "kind",
-            "step",
             "node"
           ],
           "additionalProperties": false
@@ -643,14 +722,11 @@
               "$ref": "#/$defs/StepId"
             },
             "name": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "$ref": "#/$defs/Name"
             }
           },
           "required": [
             "kind",
-            "step",
             "name"
           ],
           "additionalProperties": false
@@ -673,14 +749,11 @@
               ]
             },
             "key": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "$ref": "#/$defs/Name"
             }
           },
           "required": [
             "kind",
-            "step",
             "area",
             "key"
           ],
@@ -743,6 +816,9 @@
         },
         "effect": {
           "$ref": "#/$defs/Effect"
+        },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
         },
         "request": {
           "$ref": "#/$defs/RequestSpec"
@@ -809,9 +885,7 @@
           "$ref": "#/$defs/Code"
         },
         "ref": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
+          "$ref": "#/$defs/Name"
         },
         "hash": {
           "$ref": "#/$defs/Sha256"
@@ -890,6 +964,9 @@
         "effect": {
           "$ref": "#/$defs/Effect"
         },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
         "request": {
           "$ref": "#/$defs/RequestSpec"
         },
@@ -958,12 +1035,22 @@
             "$ref": "#/$defs/RequestSpec"
           }
         },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
         "postconditions": {
           "maxItems": 64,
           "type": "array",
           "items": {
             "$ref": "#/$defs/Postcondition"
           }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
         },
         "payment": {
           "$ref": "#/$defs/PaymentMethod"
@@ -980,7 +1067,9 @@
         "id",
         "effect",
         "requests",
+        "preconditions",
         "postconditions",
+        "idempotency",
         "human_gates"
       ],
       "additionalProperties": false
@@ -1162,9 +1251,7 @@
           "$ref": "#/$defs/MandateId"
         },
         "grantor": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "$ref": "#/$defs/Name"
         },
         "mode": {
           "type": "string",
@@ -1266,6 +1353,46 @@
       "pattern": "^[a-z][a-z0-9_-]{0,63}$",
       "description": "Mandate id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
     },
+    "MarkedText": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "page"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "surface"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "MarkedValue": {
       "oneOf": [
         {
@@ -1365,6 +1492,11 @@
         "currency"
       ],
       "additionalProperties": false
+    },
+    "Name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~@+*%-]{1,256}$",
+      "description": "Token characters only; no whitespace or quoting."
     },
     "NavigateAction": {
       "type": "object",
@@ -1479,17 +1611,32 @@
               "$ref": "#/$defs/StepId"
             },
             "tier": {
-              "$ref": "#/$defs/Tier"
+              "type": "string",
+              "enum": [
+                "T0",
+                "T1",
+                "T2",
+                "T3"
+              ]
             },
             "fields": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256
-              },
-              "additionalProperties": {
-                "$ref": "#/$defs/MarkedValue"
+              "maxItems": 1024,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/MarkedText"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/MarkedValue"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "additionalProperties": false
               }
             },
             "receipt": {
@@ -1589,7 +1736,12 @@
               "$ref": "#/$defs/StepId"
             },
             "effect": {
-              "$ref": "#/$defs/Effect"
+              "type": "string",
+              "enum": [
+                "write-irreversible",
+                "financial",
+                "account-control"
+              ]
             },
             "confirmation": {
               "$ref": "#/$defs/ConfirmationId"
@@ -1728,6 +1880,26 @@
         "page",
         "surface"
       ]
+    },
+    "PagePath": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^?#]*$"
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
     },
     "PageText": {
       "type": "object",
@@ -1888,9 +2060,7 @@
               "const": "response_field_equals_input"
             },
             "at": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "$ref": "#/$defs/Name"
             },
             "input": {
               "$ref": "#/$defs/InputName"
@@ -2067,7 +2237,7 @@
               "$ref": "#/$defs/Host"
             },
             "path": {
-              "$ref": "#/$defs/PageText"
+              "$ref": "#/$defs/PagePath"
             }
           },
           "required": [
@@ -2112,7 +2282,6 @@
         "mode",
         "tier",
         "effect",
-        "action",
         "evidence",
         "request",
         "result",
@@ -2167,9 +2336,7 @@
           ]
         },
         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "$ref": "#/$defs/Name"
         }
       },
       "required": [
@@ -2263,9 +2430,7 @@
           ]
         },
         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "$ref": "#/$defs/Name"
         }
       },
       "required": [
@@ -2291,10 +2456,10 @@
         },
         "tiers": {
           "minItems": 1,
-          "maxItems": 5,
+          "maxItems": 4,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Tier"
+            "$ref": "#/$defs/RouteTier"
           }
         },
         "nodes": {
@@ -2317,6 +2482,20 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,63}$",
       "description": "Route id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "RouteTier": {
+      "type": "string",
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3"
+      ]
+    },
+    "SchemaVersion": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "1.MINOR.PATCH; see checkSchemaVersion"
     },
     "SemVer": {
       "type": "string",
@@ -2449,9 +2628,7 @@
           "$ref": "#/$defs/Code"
         },
         "ref": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
+          "$ref": "#/$defs/Name"
         },
         "hash": {
           "$ref": "#/$defs/Sha256"
@@ -2521,6 +2698,9 @@
         "effect": {
           "$ref": "#/$defs/Effect"
         },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
         "request": {
           "$ref": "#/$defs/RequestSpec"
         },
@@ -2564,8 +2744,7 @@
           "$ref": "#/$defs/NodeId"
         },
         "role": {
-          "type": "string",
-          "pattern": "^[a-z][a-z-]{0,31}$"
+          "$ref": "#/$defs/AriaRole"
         },
         "name": {
           "$ref": "#/$defs/PageText"
@@ -2656,7 +2835,7 @@
     },
     "Timestamp": {
       "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
       "description": "RFC 3339 UTC, second precision, e.g. 2026-11-10T12:00:00Z"
     },
     "UnclassifiedValue": {
@@ -2701,8 +2880,7 @@
           "$ref": "#/$defs/PageText"
         },
         "tier": {
-          "type": "string",
-          "const": "T4"
+          "$ref": "#/$defs/Tier"
         },
         "reason": {
           "$ref": "#/$defs/UnsupportedReason"

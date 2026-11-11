@@ -1,0 +1,14 @@
+{
+  "schema": "confirmation-request",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "summary",
+        "value"
+      ],
+      "code": "page_text_in_surface"
+    }
+  ],
+  "why": "the surface summary does not repeat page text"
+}

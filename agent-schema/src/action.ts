@@ -1,10 +1,11 @@
 // D5: an action is typed, classed and guarded. D1: its tier follows its kind.
 import { z } from "zod";
+import { registry } from "./registry";
 import { PageText, SurfaceText } from "./origin";
-import { ActionId, Code, InputName, LIMITS, NodeId, Percent, RouteId, Sha256 } from "./primitives";
-import { Effect, EvidenceSource } from "./policy";
+import { ActionId, Code, InputName, Name, NodeId, Percent, RouteId, Sha256 } from "./primitives";
+import { Effect, EvidenceSource, Tier } from "./policy";
 import { UnsupportedReason } from "./result";
-import { RequestLocation, RequestSpec, ResponseClass, DependencyEdge } from "./values";
+import { PaymentMethod, RequestLocation, RequestSpec, ResponseClass, DependencyEdge } from "./values";
 
 /** One piece of evidence behind a claim (D1, section 3). `hash` pins the artifact it came from. */
 export const Evidence = z
@@ -13,10 +14,10 @@ export const Evidence = z
         /** What kind of artifact: `form-action`, `http-exchange`, `interaction-trace`, `handler-analysis`, `heuristic`... */
         type: Code,
         /** Pointer into the capture (an id or JSON Pointer). Authored by the emitter, not by the page. */
-        ref: z.string().min(1).max(512),
+        ref: Name,
         hash: Sha256,
     })
-    .meta({ id: "Evidence" });
+    .register(registry, { id: "Evidence" });
 export type Evidence = z.infer<typeof Evidence>;
 
 /** Evidence trusted enough to ground an action: declared by the site, or observed (D5: >= observed). */
@@ -24,10 +25,10 @@ export const StrongEvidence = z
     .strictObject({
         source: z.enum(["declared", "observed"]),
         type: Code,
-        ref: z.string().min(1).max(512),
+        ref: Name,
         hash: Sha256,
     })
-    .meta({ id: "StrongEvidence" });
+    .register(registry, { id: "StrongEvidence" });
 export type StrongEvidence = z.infer<typeof StrongEvidence>;
 
 /** D7: names what is needed, never a value. */
@@ -35,19 +36,19 @@ export const AuthRequirement = z
     .discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("none") }),
         z.strictObject({ kind: z.literal("session-cookie") }),
-        z.strictObject({ kind: z.literal("oauth"), scopes: z.array(z.string().min(1).max(LIMITS.short)).max(64) }),
-        z.strictObject({ kind: z.literal("api-key"), header: z.string().min(1).max(LIMITS.short) }),
+        z.strictObject({ kind: z.literal("oauth"), scopes: z.array(Name).max(64) }),
+        z.strictObject({ kind: z.literal("api-key"), header: Name }),
     ])
-    .meta({ id: "AuthRequirement" });
+    .register(registry, { id: "AuthRequirement" });
 export type AuthRequirement = z.infer<typeof AuthRequirement>;
 
 /** How sensitive an input is. `credential` and `payment-token` are supplied at run time and redacted everywhere. */
-export const Sensitivity = z.enum(["none", "personal", "credential", "payment-token"]).meta({ id: "Sensitivity" });
+export const Sensitivity = z.enum(["none", "personal", "credential", "payment-token"]).register(registry, { id: "Sensitivity" });
 
 /** Types an input can take. There is deliberately no raw card-number type (D11): card data never passes through the surface. */
 export const InputType = z
     .enum(["string", "number", "integer", "boolean", "enum", "email", "tel", "url", "date", "password", "file"])
-    .meta({ id: "InputType" });
+    .register(registry, { id: "InputType" });
 
 /** A typed input field with constraints taken from HTML validation, a schema or handler analysis. */
 export const Input = z
@@ -65,7 +66,7 @@ export const Input = z
         max_length: z.int().min(0).optional(),
         pattern: PageText.optional(),
     })
-    .meta({ id: "Input" });
+    .register(registry, { id: "Input" });
 export type Input = z.infer<typeof Input>;
 
 /** What must hold before the call (D5). A missing CSRF token is fetched the way the site's own client does. */
@@ -81,7 +82,7 @@ export const Precondition = z
             source: DependencyEdge,
         }),
     ])
-    .meta({ id: "Precondition" });
+    .register(registry, { id: "Precondition" });
 export type Precondition = z.infer<typeof Precondition>;
 
 /** What the executor checks after the call to verify it had the intended effect. */
@@ -93,11 +94,11 @@ export const Postcondition = z
         z.strictObject({ type: z.literal("navigates_to"), route: RouteId }),
         z.strictObject({
             type: z.literal("response_field_equals_input"),
-            at: z.string().min(1).max(LIMITS.short),
+            at: Name,
             input: InputName,
         }),
     ])
-    .meta({ id: "Postcondition" });
+    .register(registry, { id: "Postcondition" });
 export type Postcondition = z.infer<typeof Postcondition>;
 
 /** D5. A non-idempotent action is never retried automatically. */
@@ -107,11 +108,11 @@ export const Idempotency = z
         /** Where the action takes an idempotency key, if it does. */
         key: RequestLocation.optional(),
     })
-    .meta({ id: "Idempotency" });
+    .register(registry, { id: "Idempotency" });
 export type Idempotency = z.infer<typeof Idempotency>;
 
 /** The action is enabled, or marked stale/disabled by drift detection (D3). */
-export const ActionState = z.enum(["enabled", "stale", "disabled"]).meta({ id: "ActionState" });
+export const ActionState = z.enum(["enabled", "stale", "disabled"]).register(registry, { id: "ActionState" });
 
 const base = {
     id: ActionId,
@@ -145,7 +146,7 @@ export const NavigateAction = z
         evidence: z.array(Evidence).min(1).max(64),
         confidence: Percent.optional(),
     })
-    .meta({ id: "NavigateAction" });
+    .register(registry, { id: "NavigateAction" });
 
 /** T3. Local state change with no network (tabs, accordions, filters). */
 export const StateAction = z
@@ -158,7 +159,7 @@ export const StateAction = z
         affects: z.array(NodeId).max(256),
         evidence: strongFirst,
     })
-    .meta({ id: "StateAction" });
+    .register(registry, { id: "StateAction" });
 
 const networkAction = <K extends "submit" | "fetch" | "download">(kind: K) =>
     z.strictObject({
@@ -166,20 +167,22 @@ const networkAction = <K extends "submit" | "fetch" | "download">(kind: K) =>
         kind: z.literal(kind),
         tier: z.literal("T2"),
         effect: Effect,
+        /** Present exactly when the effect is financial (checked in code). */
+        payment: PaymentMethod.optional(),
         request: RequestSpec,
         evidence: strongFirst,
     });
 
 /** T2. A form submission. */
-export const SubmitAction = networkAction("submit").meta({ id: "SubmitAction" });
+export const SubmitAction = networkAction("submit").register(registry, { id: "SubmitAction" });
 /** T2. A handler-driven request. */
-export const FetchAction = networkAction("fetch").meta({ id: "FetchAction" });
+export const FetchAction = networkAction("fetch").register(registry, { id: "FetchAction" });
 /** T2. A file download. */
-export const DownloadAction = networkAction("download").meta({ id: "DownloadAction" });
+export const DownloadAction = networkAction("download").register(registry, { id: "DownloadAction" });
 
 export const Action = z
     .discriminatedUnion("kind", [NavigateAction, StateAction, SubmitAction, FetchAction, DownloadAction])
-    .meta({ id: "Action" });
+    .register(registry, { id: "Action" });
 export type Action = z.infer<typeof Action>;
 
 /** D1 T4 and D10: an action we cannot model is listed, with a reason, and counted in coverage. */
@@ -188,9 +191,10 @@ export const UnsupportedItem = z
         id: ActionId,
         node: NodeId.optional(),
         label: PageText.optional(),
-        tier: z.literal("T4"),
+        /** The tier the control would have been at. Opaque reasons (canvas, webgl, drag, video) are T4. */
+        tier: Tier,
         reason: UnsupportedReason,
         note: SurfaceText.optional(),
     })
-    .meta({ id: "UnsupportedItem" });
+    .register(registry, { id: "UnsupportedItem" });
 export type UnsupportedItem = z.infer<typeof UnsupportedItem>;

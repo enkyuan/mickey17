@@ -5,8 +5,8 @@
 // <name> is one of: surface, result, mandate, confirmation-request, confirmation-token,
 // receipt. When omitted it is inferred from the file name prefix (`surface.shop.json`) or,
 // for a document with kind "agent-surface", from the content.
-// Exit 0: every file valid. Exit 1: at least one invalid; a JSON report goes to stdout.
-// Exit 2: usage error. This is how the Rust test suite validates its own emit.
+// Exit 0: every file valid. Exit 1: at least one invalid or unreadable (a JSON report always goes
+// to stdout). Exit 2: usage error, including a file whose schema cannot be inferred. This is how the Rust test suite validates its own emit.
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
@@ -18,6 +18,7 @@ import {
     Receipt,
     checkConfirmationRequest,
     checkMandate,
+    checkReceipt,
     checkSurface,
     fromZodIssues,
 } from "../src/index";
@@ -30,7 +31,7 @@ const SCHEMAS = {
     mandate: { zod: Mandate as z.ZodType, check: (d: unknown) => checkMandate(d as never) },
     "confirmation-request": { zod: ConfirmationRequest as z.ZodType, check: (d: unknown) => checkConfirmationRequest(d as never) },
     "confirmation-token": { zod: ConfirmationToken as z.ZodType, check: (): CheckIssue[] => [] },
-    receipt: { zod: Receipt as z.ZodType, check: (): CheckIssue[] => [] },
+    receipt: { zod: Receipt as z.ZodType, check: (d: unknown) => checkReceipt(d as never) },
 } as const;
 type Name = keyof typeof SCHEMAS;
 
@@ -53,15 +54,23 @@ if (files.length === 0) {
     process.exit(2);
 }
 
-const report: { file: string; schema: string; ok: boolean; phase?: "schema" | "check"; issues?: CheckIssue[] }[] = [];
+type Entry = { file: string; schema: string; ok: boolean; phase?: "parse" | "usage" | "schema" | "check"; issues?: CheckIssue[] };
+const report: Entry[] = [];
+const fail = (file: string, schema: string, phase: "parse" | "usage", message: string): Entry => ({ file, schema, ok: false, phase, issues: [{ path: [], code: phase, message }] });
 for (const file of files) {
-    const doc: unknown = JSON.parse(readFileSync(file, "utf8"));
+    let doc: unknown;
+    try {
+        doc = JSON.parse(readFileSync(file, "utf8"));
+    } catch (e) {
+        report.push(fail(file, "unknown", "parse", e instanceof Error ? e.message : String(e)));
+        continue;
+    }
     const prefix = basename(file).replace(/\.json$/, "").split(".")[0] as Name;
     const name: Name | undefined =
-        forced ?? (prefix in SCHEMAS ? prefix : (doc as { kind?: string })?.kind === "agent-surface" ? "surface" : undefined);
+        forced ?? (prefix in SCHEMAS ? prefix : (doc as { kind?: string } | null)?.kind === "agent-surface" ? "surface" : undefined);
     if (!name) {
-        console.error(`${file}: cannot infer the schema; pass --schema`);
-        process.exit(2);
+        report.push(fail(file, "unknown", "usage", "cannot infer the schema; pass --schema"));
+        continue;
     }
     const parsed = SCHEMAS[name].zod.safeParse(doc);
     if (!parsed.success) {
@@ -72,4 +81,5 @@ for (const file of files) {
     report.push(found.length === 0 ? { file, schema: name, ok: true } : { file, schema: name, ok: false, phase: "check", issues: found });
 }
 console.log(JSON.stringify(report, null, 2));
-process.exit(report.every((r) => r.ok) ? 0 : 1);
+// 0: all valid. 1: some invalid (including unreadable JSON). 2: usage problem (schema not inferable).
+process.exit(report.some((r) => r.phase === "usage") ? 2 : report.every((r) => r.ok) ? 0 : 1);

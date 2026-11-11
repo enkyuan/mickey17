@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { invalidFixtures, validFixtures } from "../scripts/fixtures";
+import { CHECK_CODES } from "../src/index";
 import type { Expect } from "../scripts/fixtures";
 import { SCHEMAS, fixtureDir, listJson, parseIssues, readJson, schemaKeyOf } from "./helpers";
 
@@ -70,10 +71,9 @@ describe("invalid fixtures fail for the stated reason", () => {
             }
         });
     }
-    test("each issue code and path is exercised by exactly the fixtures that name it", () => {
-        const codes = new Set(Object.values(invalidFixtures).flatMap((f) => f.expect.issues.map((i) => i.code)));
-        for (const c of ["hash_mismatch", "duplicate_id", "dangling_reference", "hidden_not_opted_in", "mode_forbids_tier", "coverage_mismatch", "flow_effect_below_step", "dependency_not_earlier", "undeclared_input", "payment_effect_mismatch", "time_order", "cap_order"]) {
-            expect(codes.has(c)).toBe(true);
-        }
+    test("every code-level check code has at least one fixture that fails with it", () => {
+        const used = new Set(Object.values(invalidFixtures).filter((f) => f.expect.phase === "check").flatMap((f) => f.expect.issues.map((i) => i.code)));
+        expect(CHECK_CODES.filter((c) => !used.has(c))).toEqual([]);
+        expect([...used].filter((c) => !(CHECK_CODES as readonly string[]).includes(c))).toEqual([]);
     });
 });

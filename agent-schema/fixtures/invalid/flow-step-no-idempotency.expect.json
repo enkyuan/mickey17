@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        0,
+        "idempotency"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "every step says whether it is idempotent (D5)"
+}

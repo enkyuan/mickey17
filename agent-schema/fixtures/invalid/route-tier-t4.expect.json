@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "tiers",
+        0
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "T4 is a property of controls; a route is covered at T0-T3"
+}

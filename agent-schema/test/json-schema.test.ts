@@ -10,6 +10,18 @@ const committed = readFileSync(committedPath, "utf8");
 const schema = JSON.parse(committed) as { $defs: Record<string, any> };
 
 describe("generated JSON Schema", () => {
+    test("generation ignores Zod's global registry (fresh process, polluted with a colliding id)", async () => {
+        const script = `
+            import { z } from "zod";
+            z.object({}).meta({ id: "Action" });
+            z.object({}).meta({ id: "ConsumerThing" });
+            const { renderSchema } = await import(${JSON.stringify(join(root, "src", "json-schema.ts"))});
+            process.stdout.write(renderSchema());
+        `;
+        const proc = Bun.spawnSync([process.execPath, "-e", script], { cwd: root });
+        expect(proc.stderr.toString()).toBe("");
+        expect(proc.stdout.toString()).toBe(committed);
+    });
     test("committed file equals the generated schema", () => {
         expect(committed).toBe(renderSchema());
     });
@@ -62,41 +74,34 @@ describe("generated JSON Schema", () => {
         const forbidden = /(password|passwd|secret|cvv|cvc|pan|card_number|private_key|api_key|apikey|access_token|refresh_token|bearer|cookie_value)/i;
         expect([...names].filter((n) => forbidden.test(n))).toEqual([]);
     });
-    test("free-form strings are limited to marked text, identifiers and pointers", () => {
-        // A property whose schema is a bare `type: string` (no pattern, enum, const or $ref) is
-        // free text. D8 says page text is only ever carried by PageText/PageValue; the only other
-        // free strings allowed are bounded names and pointers authored by the emitter.
-        const free: string[] = [];
-        for (const [name, def] of Object.entries(schema.$defs)) {
-            const walk = (n: any, path: string) => {
-                if (Array.isArray(n)) return n.forEach((x, i) => walk(x, `${path}/${i}`));
-                if (!n || typeof n !== "object") return;
-                if (n.properties) {
-                    for (const [k, v] of Object.entries<any>(n.properties)) {
-                        if (v.type === "string" && !v.pattern && !v.enum && v.const === undefined) free.push(`${name}.${k}`);
-                    }
-                }
-                for (const v of Object.values(n)) walk(v, path);
-            };
-            walk(def, name);
-        }
-        // PageText/SurfaceText/PageValue carry the marked strings; the rest are bounded
-        // names, JSON pointers and capture refs written by the emitter, never by the page.
-        expect([...new Set(free)].sort()).toEqual([
-            "AuthRequirement.header",
-            "Evidence.ref",
-            "PageText.value",
-            "RequestLocation.name",
-            "PageUrl.value",
-            "ResponseLocation.name",
-            "StrongEvidence.ref",
-            "SurfaceText.value",
-            "Mandate.grantor",
-            "DependencySource.attribute",
-            "DependencySource.key",
-            "DependencySource.name",
-            "Postcondition.at",
-        ].sort());
+    test("free-form strings are limited to marked text and reviewed bounded fields", () => {
+        // Any schema node (property, array item, record value, property name) that is a bare
+        // `type: string` with no pattern, enum or const is free text. D8: page text is only carried
+        // by the marked wrappers (PageText, PageValue, PageUrl, PagePath, MarkedText, MarkedValue,
+        // SurfaceText); everything else must be a grammar (pattern/enum/const).
+        const free = new Set<string>();
+        const walk = (n: any, path: string, def: string) => {
+            if (Array.isArray(n)) return n.forEach((x, i) => walk(x, `${path}[${i}]`, def));
+            if (!n || typeof n !== "object") return;
+            if (n.type === "string" && n.pattern === undefined && n.enum === undefined && n.const === undefined) free.add(path);
+            for (const [k, v] of Object.entries<any>(n)) {
+                if (k === "properties") for (const [pk, pv] of Object.entries<any>(v)) walk(pv, `${path}.${pk}`, def);
+                else walk(v, k === "items" || k === "prefixItems" ? `${path}[]` : k === "propertyNames" ? `${path}{key}` : k === "additionalProperties" ? `${path}{value}` : path, def);
+            }
+        };
+        for (const [name, def] of Object.entries(schema.$defs)) walk(def, name, name);
+        expect([...free].sort()).toEqual(
+            [
+                "MarkedText[0].value",
+                "MarkedText[1].value",
+                "MarkedValue[0].value[0]",
+                "MarkedValue[1].value[0]",
+                "PageText.value",
+                "PageUrl.value",
+                "PageValue.value[0]",
+                "SurfaceText.value",
+            ].sort(),
+        );
     });
 });
 
@@ -123,6 +128,14 @@ describe("JSON Schema agrees with Zod on every fixture", () => {
             const ok = v(readJson(join(fixtureDir("invalid"), file)));
             // Schema-phase fixtures must also fail the JSON Schema; check-phase ones are wire-valid.
             expect(ok).toBe(want.phase === "check");
+            if (want.phase === "schema") {
+                // ...and fail where Zod says: at the stated path, or at its parent (ajv reports a
+                // missing key or an unrecognised key on the containing object).
+                const expectedPaths = (readJson(join(fixtureDir("invalid"), file.replace(/\.json$/, ".expect.json"))) as { issues: { path: (string | number)[] }[] }).issues.map((i) => i.path);
+                const ptr = (p: (string | number)[]) => p.map((x) => `/${x}`).join("");
+                const where = new Set((v.errors ?? []).map((e) => e.instancePath));
+                for (const p of expectedPaths) expect(where.has(ptr(p)) || where.has(ptr(p.slice(0, -1)))).toBe(true);
+            }
         });
     }
 });

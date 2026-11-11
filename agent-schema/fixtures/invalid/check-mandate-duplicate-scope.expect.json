@@ -1,0 +1,14 @@
+{
+  "schema": "mandate",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "scope",
+        1
+      ],
+      "code": "duplicate_id"
+    }
+  ],
+  "why": "scope entries are unique"
+}

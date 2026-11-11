@@ -323,7 +323,6 @@
           "source": {
             "source": {
               "kind": "dom",
-              "step": "add-item",
               "node": "n_00e42ec9b0dd5fdb",
               "attribute": "content"
             },
@@ -504,6 +503,10 @@
           "action": "add-to-cart",
           "effect": "write-reversible",
           "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": false
+          },
           "postconditions": [
             {
               "type": "response_class",
@@ -571,6 +574,10 @@
           "id": "set-shipping",
           "effect": "write-reversible",
           "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": true
+          },
           "postconditions": [
             {
               "type": "response_class",
@@ -628,6 +635,10 @@
           "id": "create-intent",
           "effect": "write-reversible",
           "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": false
+          },
           "postconditions": [
             {
               "type": "response_class",
@@ -706,6 +717,14 @@
             "3ds",
             "fraud_challenge"
           ],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": true,
+            "key": {
+              "in": "header",
+              "name": "idempotency-key"
+            }
+          },
           "postconditions": [
             {
               "type": "response_class",
@@ -788,5 +807,5 @@
       }
     }
   ],
-  "hash": "sha256:d0077abb2a879f1979211f0ba7deeaf10a03a91a24e6fcc3dad12093c48757dc"
+  "hash": "sha256:c3f884cef9ff8e084847e09139cd43ebe4fa6295ec36d4003e401c18d1ab6851"
 }
