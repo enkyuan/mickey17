@@ -311,21 +311,36 @@ page contains and neither constrains the other.
 
 ```
 capture ──► page model (DOM, ARIA, computed style, network, cookies/storage,
-            listeners, interaction traces)
-              ├─► semantic::{ir,emit}          (TanStack Start source; React-aware)
-              └─► agent::{model,flows,emit}    (agent surface; framework-neutral)
+ (Rust)     listeners, interaction traces)  ── emitted as JSON files ──┐
+              ├─► semantic::{ir,emit}   (Rust; TanStack Start source)   │
+              └─────────────────────────────────────────────────────────┘
+                                         │ files: page model, HAR, traces
+                                         ▼
+                      agent-* packages (TypeScript, Bun): framework-neutral
 ```
 
-`semantic::js` (React bundle facts) stays an optional evidence provider to either side.
+**Language split (decided).** Rust owns capture and the page model and hands off JSON
+files (page model, HAR 1.2, interaction traces). Everything that consumes them is
+TypeScript: schema, flow inference, policy, executor, verifier, MCP server. Reasons:
+the executor needs a JS engine anyway for client-computed values (the same reason
+`mochi lift`'s differential checker runs in Bun); one Zod definition replaces a
+Zod/serde pair; agent skills and MCP servers are run with `bunx`/`npx`, so no
+per-platform binary or Rust toolchain is needed at run time; and the repo's parity
+and lift tooling is already Bun. No new crate is published for the agent surface. The
+only Rust change is the page-model extraction in `mochi-web`, released through the
+existing process.
 
-| Piece | Responsibility | Reuses |
+`semantic::js` (React bundle facts) stays an optional evidence provider.
+
+| Package / module | Responsibility | Reuses |
 | --- | --- | --- |
-| `agent::model` | schema types, node-id derivation, tiering | page model (roles, names, state, inert/hidden; HTML-AAM and accessible-name rules shared with `semantic::ir`, not forked) |
-| `agent::flows` | flow recorder format, cross-request dependency inference, value classing, action graph | captured network and interaction traces; optional `semantic::js` facts; `lift` for client-computed values |
-| `agent::emit` | `agent-surface.json`, Markdown projections, MCP server, OpenAPI | none; the MCP server is a small standalone Bun package |
-| `agent::exec` | HTTP replay, JS runtime, mode and effect enforcement, receipts | `lift` differential runner patterns |
-| `agent::verify` | tier-by-tier checks against a browser | `check-parity` |
-| CLI | `mochi agent <capture> --out … [--mode owner|delegated|read-only]` | |
+| `agent-schema/` (TS) | Zod schema, generated JSON Schema, node-id derivation, tiering | page model (roles, names, state, inert/hidden; HTML-AAM and accessible-name rules shared with `semantic::ir`, not forked) |
+| `agent-flows/` (TS) | flow recording format, cross-request dependency inference, value classing, action graph | HAR and interaction traces; optional `semantic::js` facts; `lift` for client-computed values |
+| `agent-policy/` (TS) | modes, effects, mandates, confirmations, redaction, egress, injection hygiene | none |
+| `agent-mcp/` (TS) | `agent-surface.json`, Markdown projections, MCP server, OpenAPI | `agent-schema`, `agent-policy` |
+| `agent-exec/` (TS) | HTTP replay, JS runtime, receipts | `lift` differential runner patterns, `agent-policy` |
+| `agent-verify/` (TS) | tier-by-tier checks against a browser | `check-parity` |
+| CLI | `mochi-agent <capture> --out … [--mode owner|delegated|read-only]` (npm package, `bunx`); `mochi` stays the capture front end | |
 
 No change to `export` or `semantic` output is required. The shared page model needs
 three additions that benefit both backends: a node-id scheme that is stable across
@@ -342,10 +357,11 @@ already does must not change `semantic` output; its tests guard that.
   library without depending on ours. A JSON Schema is generated from the Zod types and
   committed, as the language-neutral contract for non-TS consumers; the schema is
   restricted to constructs that convert cleanly (no transforms or refinements in the
-  wire format; those run in code after parsing). The Rust emitter is not a second
-  definition: its output is validated against the Zod schema in `bun test` over
-  every fixture and every emit in CI, with a serde round trip on the Rust side to catch
-  field drift. The MCP server refuses a surface that does not validate.
+  wire format; those run in code after parsing). There is no second definition: every
+  producer of surface data is TypeScript and validates against the Zod schema. The
+  Rust side emits only the page model; its JSON is validated by a Zod page-model schema
+  in `bun test` over every fixture capture. The MCP server refuses a surface that does
+  not validate.
   Alternative considered: schema in Rust (`schemars`) and generate TS from it. Rejected
   because the executor and verifier live in TS, and runtime validation of untrusted
   input is where the schema earns its keep.
@@ -409,10 +425,12 @@ already does must not change `semantic` output; its tests guard that.
 | M5 | JS-runtime executor for client-computed values and CSR sites; drift detection | a fixture whose checkout needs a client-computed signature works without a browser; scripted drift disables exactly the affected steps |
 | M6 | MCP server, per-tier coverage report across the 3 captures plus fixtures, docs | coverage and `unsupported` reasons published; limits documented |
 
-Files are disjoint from the semantic generator (`src/agent/**`, `docs/AGENT_SURFACE.md`,
-`benchmarks/{src,tests,fixtures}/agent/**`, new `agent-schema/` and `agent-mcp/`
-packages). M1's page-model extraction touches `semantic::ir`; it belongs with the IR
-owner and must land with no change to `semantic` output.
+Files are disjoint from the semantic generator (`docs/AGENT_SURFACE.md`,
+`docs/agent-surface/**`, `benchmarks/{src,tests,fixtures}/agent/**`, and the new
+`agent-schema/`, `agent-flows/`, `agent-policy/`, `agent-mcp/`, `agent-exec/` and
+`agent-verify/` TypeScript packages). M1's page-model extraction is the only Rust
+change: it touches `semantic::ir`, belongs with the IR owner, and must land with no
+change to `semantic` output.
 
 ## 8. Risks and open questions
 
