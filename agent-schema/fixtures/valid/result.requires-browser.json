@@ -1,0 +1,5 @@
+{
+  "status": "requires_browser",
+  "step": "create-intent",
+  "reason": "signature"
+}

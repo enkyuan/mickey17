@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "amount"
+      ],
+      "code": "amount_not_financial"
+    }
+  ],
+  "why": "only a financial call records an amount"
+}

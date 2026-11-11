@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "capture"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "the surface is pinned to the capture it came from"
+}

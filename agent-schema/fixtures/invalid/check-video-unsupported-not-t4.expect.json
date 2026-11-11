@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "unsupported",
+        0,
+        "tier"
+      ],
+      "code": "unsupported_tier_mismatch"
+    }
+  ],
+  "why": "video is opaque: tier T4"
+}

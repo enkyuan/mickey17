@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "capture",
+        "captured_at"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "timestamps are real calendar fields"
+}

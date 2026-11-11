@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "tiers",
+        2
+      ],
+      "code": "mode_forbids_tier"
+    }
+  ],
+  "why": "read-only routes are covered at T0/T1 only"
+}

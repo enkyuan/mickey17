@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "tier"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "T4 never executes, so no receipt records it"
+}

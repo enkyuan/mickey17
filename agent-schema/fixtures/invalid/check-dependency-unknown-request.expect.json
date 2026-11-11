@@ -1,0 +1,24 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "edge",
+        "source",
+        "request"
+      ],
+      "code": "dangling_reference"
+    }
+  ],
+  "why": "the dependency names a request that exists in the source step"
+}

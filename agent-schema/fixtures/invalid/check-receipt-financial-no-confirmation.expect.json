@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "confirmation"
+      ],
+      "code": "receipt_incomplete"
+    }
+  ],
+  "why": "a completed money-moving call records its confirmation"
+}

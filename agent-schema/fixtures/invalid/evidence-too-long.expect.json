@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "evidence"
+      ],
+      "code": "too_big"
+    }
+  ],
+  "why": "evidence lists are bounded in the wire format"
+}

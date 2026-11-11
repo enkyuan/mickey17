@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "capture",
+        "captured_at"
+      ],
+      "code": "invalid_timestamp"
+    }
+  ],
+  "why": "a timestamp is a real instant"
+}

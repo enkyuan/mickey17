@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "inputs",
+        4,
+        "name"
+      ],
+      "code": "card_input_forbidden"
+    }
+  ],
+  "why": "card-named inputs are caught in camelCase"
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "preconditions",
+        0
+      ],
+      "code": "read_only_requires_auth"
+    }
+  ],
+  "why": "an authenticated precondition is authentication"
+}

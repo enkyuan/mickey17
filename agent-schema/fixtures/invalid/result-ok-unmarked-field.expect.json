@@ -1,0 +1,15 @@
+{
+  "schema": "result",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "fields",
+        0,
+        "value"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "result values carry their origin (D8)"
+}

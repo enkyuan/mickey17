@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "effect"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "navigation is a read"
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "nodes",
+        2,
+        "visibility"
+      ],
+      "code": "hidden_not_opted_in"
+    }
+  ],
+  "why": "hidden and inert nodes are excluded unless the document opts in (D8)"
+}

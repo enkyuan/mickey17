@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "nodes",
+        1,
+        "parent"
+      ],
+      "code": "parent_cycle"
+    }
+  ],
+  "why": "a node cannot be its own parent"
+}

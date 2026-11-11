@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "response_class"
+      ],
+      "code": "receipt_result_mismatch"
+    }
+  ],
+  "why": "a call refused before sending has no response class"
+}

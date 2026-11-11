@@ -1,0 +1,13 @@
+{
+  "schema": "result",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "effect"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "a plain read never needs confirmation"
+}

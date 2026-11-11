@@ -1,0 +1,13 @@
+{
+  "schema": "confirmation-request",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "mandate"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "a session alone is not enough to move money (D11)"
+}

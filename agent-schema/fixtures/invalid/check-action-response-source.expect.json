@@ -1,0 +1,21 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "request",
+        "values",
+        2,
+        "value",
+        "edge",
+        "source",
+        "kind"
+      ],
+      "code": "edge_needs_flow"
+    }
+  ],
+  "why": "a response source only makes sense inside a flow"
+}

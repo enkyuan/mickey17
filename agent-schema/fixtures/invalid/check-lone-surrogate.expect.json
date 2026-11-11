@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "title",
+        "value"
+      ],
+      "code": "ill_formed_string"
+    }
+  ],
+  "why": "a lone surrogate cannot round-trip through UTF-8 JSON"
+}

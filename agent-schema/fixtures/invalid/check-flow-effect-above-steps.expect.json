@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "effect"
+      ],
+      "code": "flow_effect_mismatch"
+    }
+  ],
+  "why": "flow effect equals the maximum step effect, no more"
+}

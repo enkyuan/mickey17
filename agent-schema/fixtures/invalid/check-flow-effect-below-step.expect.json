@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "effect"
+      ],
+      "code": "flow_effect_mismatch"
+    }
+  ],
+  "why": "a flow's effect equals its most consequential step effect"
+}

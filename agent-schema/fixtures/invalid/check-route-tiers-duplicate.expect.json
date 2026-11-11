@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "tiers"
+      ],
+      "code": "tier_duplicated"
+    }
+  ],
+  "why": "route tiers are a set"
+}

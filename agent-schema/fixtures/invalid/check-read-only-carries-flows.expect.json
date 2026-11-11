@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows"
+      ],
+      "code": "mode_forbids_flows"
+    }
+  ],
+  "why": "read-only surfaces carry no flows (D2)"
+}

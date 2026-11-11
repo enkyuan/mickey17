@@ -1,0 +1,23 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        0,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "edge",
+        "source"
+      ],
+      "code": "dependency_missing_step"
+    }
+  ],
+  "why": "in a flow every dependency names its step"
+}

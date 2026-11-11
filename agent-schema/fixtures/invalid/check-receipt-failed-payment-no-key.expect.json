@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "idempotency_key"
+      ],
+      "code": "receipt_incomplete"
+    }
+  ],
+  "why": "a failed payment is reconciled by its key"
+}

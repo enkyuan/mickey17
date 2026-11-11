@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "hash"
+      ],
+      "code": "hash_mismatch"
+    }
+  ],
+  "why": "content changed without recomputing the hash"
+}

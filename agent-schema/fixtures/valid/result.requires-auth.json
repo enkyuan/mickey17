@@ -1,0 +1,5 @@
+{
+  "status": "requires_auth",
+  "action": "add-to-cart",
+  "requirement": "session-cookie"
+}

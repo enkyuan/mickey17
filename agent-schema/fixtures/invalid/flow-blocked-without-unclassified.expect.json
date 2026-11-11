@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "unclassified"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "a blocked flow lists the values that blocked it"
+}

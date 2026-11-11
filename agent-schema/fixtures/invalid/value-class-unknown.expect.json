@@ -1,0 +1,22 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "class"
+      ],
+      "code": "invalid_union"
+    }
+  ],
+  "why": "there is no 'unknown' value class: unclassifiable values block the flow"
+}

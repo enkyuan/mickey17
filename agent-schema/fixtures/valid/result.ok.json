@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "tier": "T2",
+  "fields": [
+    {
+      "name": {
+        "origin": "surface",
+        "value": "order_id"
+      },
+      "value": {
+        "origin": "page",
+        "value": "A-1001"
+      }
+    },
+    {
+      "name": {
+        "origin": "surface",
+        "value": "note"
+      },
+      "value": {
+        "origin": "surface",
+        "value": "Order placed."
+      }
+    }
+  ],
+  "receipt": "receipt-1"
+}

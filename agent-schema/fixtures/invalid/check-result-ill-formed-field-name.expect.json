@@ -1,0 +1,16 @@
+{
+  "schema": "result",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "fields",
+        0,
+        "name",
+        "value"
+      ],
+      "code": "ill_formed_string"
+    }
+  ],
+  "why": "result strings are well-formed"
+}

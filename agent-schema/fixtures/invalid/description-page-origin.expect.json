@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "description",
+        "origin"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "a surface-authored description cannot carry page origin (D8)"
+}

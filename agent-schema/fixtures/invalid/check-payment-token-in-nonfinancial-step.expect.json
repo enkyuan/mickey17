@@ -1,0 +1,22 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        2,
+        "requests",
+        0,
+        "values",
+        2,
+        "value",
+        "input"
+      ],
+      "code": "payment_token_not_financial"
+    }
+  ],
+  "why": "a request that carries a payment token is financial, whatever the step is labelled"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "confirm-1",
+  "subject": {
+    "flow": "checkout",
+    "step": "pay"
+  },
+  "effect": "financial",
+  "request_digest": "sha256:b3bb08604da72ce482a6101f1ad5e7a6bb6c994f65f7a9bab178c9a1f58e1ed4",
+  "idempotency_key": "idem_9f1c2b7a4d5e6f80",
+  "issued_at": "2026-11-10T12:00:00Z",
+  "expires_at": "2026-11-10T12:05:00Z",
+  "items": [
+    {
+      "name": {
+        "origin": "page",
+        "value": "Ceramic mug"
+      },
+      "quantity": 2,
+      "amount": {
+        "amount_minor": 1800,
+        "currency": "USD"
+      }
+    }
+  ],
+  "payee": {
+    "origin": "page",
+    "value": "shop.example.test"
+  },
+  "mandate": "mandate-1"
+}

@@ -1,0 +1,8 @@
+{
+  "status": "unsupported",
+  "reason": "opaque-canvas",
+  "message": {
+    "origin": "surface",
+    "value": "Canvas viewer is not operable."
+  }
+}

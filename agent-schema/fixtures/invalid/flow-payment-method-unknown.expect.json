@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "payment"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "payment is caller-token, hosted-session or agent-protocol (D11)"
+}

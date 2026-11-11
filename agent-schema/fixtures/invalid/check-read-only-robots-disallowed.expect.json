@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "gates",
+        "robots_txt"
+      ],
+      "code": "gates_forbid_read_only"
+    }
+  ],
+  "why": "no read-only surface where robots.txt disallows (section 6)"
+}

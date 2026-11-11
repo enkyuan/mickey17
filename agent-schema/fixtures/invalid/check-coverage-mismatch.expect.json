@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "coverage",
+        "tiers",
+        1,
+        "actions"
+      ],
+      "code": "coverage_mismatch"
+    }
+  ],
+  "why": "coverage equals what the document contains"
+}

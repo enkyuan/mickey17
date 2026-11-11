@@ -1,0 +1,22 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        0,
+        "requests",
+        0,
+        "values",
+        1,
+        "at",
+        "name"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "names are token characters only: a sentence cannot ride in a field name (D8)"
+}

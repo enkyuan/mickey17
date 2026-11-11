@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "issued_at"
+      ],
+      "code": "invalid_timestamp"
+    }
+  ],
+  "why": "timestamps are real instants"
+}

@@ -1,0 +1,825 @@
+{
+  "kind": "agent-surface",
+  "schema_version": "1.0.0",
+  "capture": {
+    "hash": "sha256:e2f9d9951d1293556352a63b9cf125bd450992faa30f98a35c3f07498daf6553",
+    "captured_at": "2026-11-10T12:00:00Z",
+    "tool": {
+      "name": "mochi",
+      "version": "0.1.0"
+    }
+  },
+  "mode": "owner",
+  "site": {
+    "host": "shop.example.test",
+    "scheme": "https"
+  },
+  "gates": {
+    "robots_txt": "allowed",
+    "llms_txt": "absent",
+    "tos": "permitted"
+  },
+  "options": {
+    "include_hidden": false
+  },
+  "coverage": {
+    "tiers": [
+      {
+        "tier": "T0",
+        "routes": 4,
+        "actions": 0,
+        "unsupported": 0
+      },
+      {
+        "tier": "T1",
+        "routes": 1,
+        "actions": 1,
+        "unsupported": 0
+      },
+      {
+        "tier": "T2",
+        "routes": 2,
+        "actions": 1,
+        "unsupported": 0
+      },
+      {
+        "tier": "T3",
+        "routes": 1,
+        "actions": 1,
+        "unsupported": 0
+      },
+      {
+        "tier": "T4",
+        "routes": 0,
+        "actions": 0,
+        "unsupported": 1
+      }
+    ],
+    "unsupported_reasons": [
+      {
+        "reason": "opaque-canvas",
+        "count": 1
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "home",
+      "url": {
+        "origin": "page",
+        "value": "/"
+      },
+      "title": {
+        "origin": "page",
+        "value": "Mug shop"
+      },
+      "tiers": [
+        "T0",
+        "T1"
+      ],
+      "nodes": [
+        {
+          "id": "n_052ebf894ed1623e",
+          "role": "main",
+          "visibility": "visible"
+        },
+        {
+          "id": "n_ea8bf81cc3b3f2e7",
+          "parent": "n_052ebf894ed1623e",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Mug shop"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Mug shop"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_7cce4bdc487a8c69",
+          "parent": "n_052ebf894ed1623e",
+          "role": "link",
+          "name": {
+            "origin": "page",
+            "value": "Ceramic mug"
+          },
+          "href": {
+            "origin": "page",
+            "value": "/products/mug"
+          },
+          "visibility": "visible"
+        }
+      ]
+    },
+    {
+      "id": "product",
+      "url": {
+        "origin": "page",
+        "value": "/products/mug"
+      },
+      "canonical": {
+        "origin": "page",
+        "value": "https://shop.example.test/products/mug"
+      },
+      "tiers": [
+        "T0",
+        "T2",
+        "T3"
+      ],
+      "nodes": [
+        {
+          "id": "n_98fe9d01c49789fd",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Ceramic mug"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Ceramic mug"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_5aceba0512be1933",
+          "role": "button",
+          "name": {
+            "origin": "page",
+            "value": "Add to cart"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_46f3918ba20393cd",
+          "role": "tab",
+          "name": {
+            "origin": "page",
+            "value": "Details"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_8b980d75fdf72fa4",
+          "role": "tabpanel",
+          "text": {
+            "origin": "page",
+            "value": "Dishwasher safe. 350 ml. Hand wash recommended for the painted rim."
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_e46566b1952a1cc7",
+          "role": "img",
+          "name": {
+            "origin": "page",
+            "value": "3D viewer"
+          },
+          "visibility": "visible",
+          "confidence": 40
+        },
+        {
+          "id": "n_00e42ec9b0dd5fdb",
+          "role": "generic",
+          "visibility": "visible"
+        }
+      ]
+    },
+    {
+      "id": "cart",
+      "url": {
+        "origin": "page",
+        "value": "/cart"
+      },
+      "tiers": [
+        "T0",
+        "T2"
+      ],
+      "nodes": [
+        {
+          "id": "n_73e00e97b1b22ec7",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Cart"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Cart"
+          },
+          "visibility": "visible"
+        }
+      ]
+    },
+    {
+      "id": "checkout",
+      "url": {
+        "origin": "page",
+        "value": "/checkout"
+      },
+      "tiers": [
+        "T0"
+      ],
+      "nodes": [
+        {
+          "id": "n_050d3bc8991502e6",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Checkout"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Checkout"
+          },
+          "visibility": "visible"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "nav-mug",
+      "kind": "navigate",
+      "tier": "T1",
+      "effect": "read",
+      "node": "n_7cce4bdc487a8c69",
+      "label": {
+        "origin": "page",
+        "value": "Ceramic mug"
+      },
+      "description": {
+        "origin": "surface",
+        "value": "Open the product page."
+      },
+      "inputs": [],
+      "auth": {
+        "kind": "none"
+      },
+      "preconditions": [],
+      "postconditions": [
+        {
+          "type": "navigates_to",
+          "route": "product"
+        }
+      ],
+      "idempotency": {
+        "idempotent": true
+      },
+      "state": "enabled",
+      "target": {
+        "origin": "page",
+        "value": "/products/mug"
+      },
+      "route": "product",
+      "evidence": [
+        {
+          "source": "declared",
+          "type": "anchor-href",
+          "ref": "route:home#link-mug",
+          "hash": "sha256:d196259ad00ad6276be483e7bdd66b1b5c0b83a3d328adbf8cac739e6342f264"
+        }
+      ]
+    },
+    {
+      "id": "add-to-cart",
+      "kind": "submit",
+      "tier": "T2",
+      "effect": "write-reversible",
+      "node": "n_5aceba0512be1933",
+      "label": {
+        "origin": "page",
+        "value": "Add to cart"
+      },
+      "description": {
+        "origin": "surface",
+        "value": "Add the product to the cart."
+      },
+      "inputs": [
+        {
+          "name": "quantity",
+          "type": "integer",
+          "required": true,
+          "sensitivity": "none",
+          "min": 1,
+          "max": 10
+        }
+      ],
+      "auth": {
+        "kind": "session-cookie"
+      },
+      "preconditions": [
+        {
+          "type": "authenticated"
+        },
+        {
+          "type": "token",
+          "into": {
+            "in": "header",
+            "name": "x-csrf-token"
+          },
+          "source": {
+            "source": {
+              "kind": "dom",
+              "node": "n_00e42ec9b0dd5fdb",
+              "attribute": "content"
+            },
+            "match": "exact"
+          }
+        }
+      ],
+      "postconditions": [
+        {
+          "type": "response_class",
+          "class": "2xx"
+        },
+        {
+          "type": "response_field_equals_input",
+          "at": "/items/0/quantity",
+          "input": "quantity"
+        }
+      ],
+      "idempotency": {
+        "idempotent": false
+      },
+      "state": "enabled",
+      "request": {
+        "id": "add-item-req",
+        "method": "POST",
+        "url": {
+          "origin": "page",
+          "value": "/api/cart/items"
+        },
+        "body": "json",
+        "values": [
+          {
+            "at": {
+              "in": "body-json",
+              "name": "/sku"
+            },
+            "value": {
+              "class": "constant",
+              "value": {
+                "origin": "page",
+                "value": "mug-01"
+              }
+            }
+          },
+          {
+            "at": {
+              "in": "body-json",
+              "name": "/quantity"
+            },
+            "value": {
+              "class": "input",
+              "input": "quantity"
+            }
+          }
+        ],
+        "expect": "2xx",
+        "recorded": "sha256:0fd19b6a43aa25b4b466dff44333d9ae1bd410eddb0897e2aee31a3c54c006df"
+      },
+      "evidence": [
+        {
+          "source": "observed",
+          "type": "http-exchange",
+          "ref": "capture:net/12",
+          "hash": "sha256:c74adcb22d6809ef97e0d0cd2f6776608937ad1180c53d0e1d80c3c94088d344"
+        },
+        {
+          "source": "derived",
+          "type": "handler-analysis",
+          "ref": "js:onAddToCart",
+          "hash": "sha256:5b31b191de66e06ea2ce3d06d8d53cd8dc8927e214918eadfecec3924a2bd7ed"
+        }
+      ]
+    },
+    {
+      "id": "show-details",
+      "kind": "state",
+      "tier": "T3",
+      "effect": "read",
+      "node": "n_46f3918ba20393cd",
+      "label": {
+        "origin": "page",
+        "value": "Details"
+      },
+      "description": {
+        "origin": "surface",
+        "value": "Show the details panel."
+      },
+      "inputs": [],
+      "auth": {
+        "kind": "none"
+      },
+      "preconditions": [],
+      "postconditions": [
+        {
+          "type": "node_present",
+          "node": "n_8b980d75fdf72fa4"
+        }
+      ],
+      "idempotency": {
+        "idempotent": true
+      },
+      "state": "enabled",
+      "affects": [
+        "n_8b980d75fdf72fa4"
+      ],
+      "evidence": [
+        {
+          "source": "observed",
+          "type": "interaction-trace",
+          "ref": "trace:3",
+          "hash": "sha256:f9ca13bd590b24969b9c38a297287ef332c52df33fc7ba08569b1cd25ddf755b"
+        }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "checkout",
+      "status": "blocked",
+      "description": {
+        "origin": "surface",
+        "value": "Add a mug, set shipping, and pay with a caller-supplied payment token."
+      },
+      "inputs": [
+        {
+          "name": "quantity",
+          "type": "integer",
+          "required": true,
+          "sensitivity": "none",
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "address_line1",
+          "type": "string",
+          "required": true,
+          "sensitivity": "personal",
+          "max_length": 120
+        },
+        {
+          "name": "payment_token",
+          "type": "string",
+          "required": true,
+          "sensitivity": "payment-token"
+        },
+        {
+          "name": "idempotency_key",
+          "type": "string",
+          "required": true,
+          "sensitivity": "none"
+        }
+      ],
+      "auth": {
+        "kind": "session-cookie"
+      },
+      "effect": "financial",
+      "recorded": {
+        "environment": "payment-test-mode",
+        "hash": "sha256:2e29157b7d883a2a8beb3e8dbba09b114f328c27434bad1bebfc6da618d7187e"
+      },
+      "evidence": [
+        {
+          "source": "observed",
+          "type": "http-exchange",
+          "ref": "capture:net/12-31",
+          "hash": "sha256:ca704da46ae075d9f8ac77d46985b27ed1234543f4eade87657948c605ea2b41"
+        },
+        {
+          "source": "derived",
+          "type": "handler-analysis",
+          "ref": "js:checkout",
+          "hash": "sha256:8b401a9792d92b37eaea9f004fdf462a4c4aaaa3e9180b40fa34dd34f2a6c89f"
+        }
+      ],
+      "steps": [
+        {
+          "id": "add-item",
+          "action": "add-to-cart",
+          "effect": "write-reversible",
+          "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": false
+          },
+          "postconditions": [
+            {
+              "type": "response_class",
+              "class": "2xx"
+            }
+          ],
+          "requests": [
+            {
+              "id": "add-item-req",
+              "method": "POST",
+              "url": {
+                "origin": "page",
+                "value": "/api/cart/items"
+              },
+              "body": "json",
+              "values": [
+                {
+                  "at": {
+                    "in": "header",
+                    "name": "x-csrf-token"
+                  },
+                  "value": {
+                    "class": "derived",
+                    "edge": {
+                      "source": {
+                        "kind": "dom",
+                        "step": "add-item",
+                        "node": "n_00e42ec9b0dd5fdb",
+                        "attribute": "content"
+                      },
+                      "match": "exact"
+                    }
+                  }
+                },
+                {
+                  "at": {
+                    "in": "body-json",
+                    "name": "/sku"
+                  },
+                  "value": {
+                    "class": "constant",
+                    "value": {
+                      "origin": "page",
+                      "value": "mug-01"
+                    }
+                  }
+                },
+                {
+                  "at": {
+                    "in": "body-json",
+                    "name": "/quantity"
+                  },
+                  "value": {
+                    "class": "input",
+                    "input": "quantity"
+                  }
+                }
+              ],
+              "expect": "2xx",
+              "recorded": "sha256:0fd19b6a43aa25b4b466dff44333d9ae1bd410eddb0897e2aee31a3c54c006df"
+            }
+          ]
+        },
+        {
+          "id": "set-shipping",
+          "effect": "write-reversible",
+          "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": true
+          },
+          "postconditions": [
+            {
+              "type": "response_class",
+              "class": "2xx"
+            }
+          ],
+          "requests": [
+            {
+              "id": "shipping-req",
+              "method": "PUT",
+              "url": {
+                "origin": "page",
+                "value": "/api/cart/{cart_id}/shipping"
+              },
+              "body": "json",
+              "values": [
+                {
+                  "at": {
+                    "in": "path",
+                    "name": "cart_id"
+                  },
+                  "value": {
+                    "class": "derived",
+                    "edge": {
+                      "source": {
+                        "kind": "response",
+                        "step": "add-item",
+                        "request": "add-item-req",
+                        "at": {
+                          "in": "body-json",
+                          "name": "/cart_id"
+                        }
+                      },
+                      "match": "json-path"
+                    }
+                  }
+                },
+                {
+                  "at": {
+                    "in": "body-json",
+                    "name": "/line1"
+                  },
+                  "value": {
+                    "class": "input",
+                    "input": "address_line1"
+                  }
+                }
+              ],
+              "expect": "2xx",
+              "recorded": "sha256:b9ac77031785b7528c4dbf076ac2e28806db989ceebdbf2fda2fdac12c6005fb"
+            }
+          ]
+        },
+        {
+          "id": "create-intent",
+          "effect": "write-reversible",
+          "human_gates": [],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": false
+          },
+          "postconditions": [
+            {
+              "type": "response_class",
+              "class": "2xx"
+            }
+          ],
+          "requests": [
+            {
+              "id": "intent-req",
+              "method": "POST",
+              "url": {
+                "origin": "page",
+                "value": "/api/payment-intents"
+              },
+              "body": "json",
+              "values": [
+                {
+                  "at": {
+                    "in": "body-json",
+                    "name": "/cart_id"
+                  },
+                  "value": {
+                    "class": "derived",
+                    "edge": {
+                      "source": {
+                        "kind": "response",
+                        "step": "add-item",
+                        "request": "add-item-req",
+                        "at": {
+                          "in": "body-json",
+                          "name": "/cart_id"
+                        }
+                      },
+                      "match": "json-path"
+                    }
+                  }
+                },
+                {
+                  "at": {
+                    "in": "header",
+                    "name": "x-signature"
+                  },
+                  "value": {
+                    "class": "client-computed",
+                    "resolution": {
+                      "kind": "lift",
+                      "spec": "sha256:586b3291cce60b5fe855a62ba1b109284fd31fa5644415474972aeb467d70a10",
+                      "args": [
+                        {
+                          "source": {
+                            "kind": "response",
+                            "step": "set-shipping",
+                            "request": "shipping-req",
+                            "at": {
+                              "in": "body-json",
+                              "name": "/total"
+                            }
+                          },
+                          "match": "json-path"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "expect": "2xx",
+              "recorded": "sha256:8fac624ce3a5001b3ea8633392611c81dc3e3ac4c83c6bbcac331e5006a59895"
+            }
+          ]
+        },
+        {
+          "id": "pay",
+          "effect": "financial",
+          "payment": "caller-token",
+          "human_gates": [
+            "3ds",
+            "fraud_challenge"
+          ],
+          "preconditions": [],
+          "idempotency": {
+            "idempotent": true,
+            "key": {
+              "in": "header",
+              "name": "idempotency-key"
+            }
+          },
+          "postconditions": [
+            {
+              "type": "response_class",
+              "class": "2xx"
+            }
+          ],
+          "requests": [
+            {
+              "id": "confirm-req",
+              "method": "POST",
+              "url": {
+                "origin": "page",
+                "value": "/api/payment-intents/{intent_id}/confirm"
+              },
+              "body": "json",
+              "values": [
+                {
+                  "at": {
+                    "in": "path",
+                    "name": "intent_id"
+                  },
+                  "value": {
+                    "class": "derived",
+                    "edge": {
+                      "source": {
+                        "kind": "response",
+                        "step": "create-intent",
+                        "request": "intent-req",
+                        "at": {
+                          "in": "body-json",
+                          "name": "/id"
+                        }
+                      },
+                      "match": "json-path"
+                    }
+                  }
+                },
+                {
+                  "at": {
+                    "in": "body-json",
+                    "name": "/payment_token"
+                  },
+                  "value": {
+                    "class": "input",
+                    "input": "payment_token"
+                  }
+                },
+                {
+                  "at": {
+                    "in": "header",
+                    "name": "idempotency-key"
+                  },
+                  "value": {
+                    "class": "input",
+                    "input": "idempotency_key"
+                  }
+                }
+              ],
+              "expect": "2xx",
+              "recorded": "sha256:f75dd26990b4243b67bdbf244757877f5bf732db3b7bbd75a02bc274392a72ec"
+            }
+          ]
+        }
+      ],
+      "unclassified": [
+        {
+          "step": "add-item",
+          "request": "add-item-req",
+          "at": {
+            "in": "body-json",
+            "name": "/sku"
+          },
+          "reason": "no-source"
+        }
+      ]
+    }
+  ],
+  "unsupported": [
+    {
+      "id": "viewer-3d",
+      "node": "n_e46566b1952a1cc7",
+      "label": {
+        "origin": "page",
+        "value": "3D viewer"
+      },
+      "tier": "T4",
+      "reason": "opaque-canvas",
+      "note": {
+        "origin": "surface",
+        "value": "Canvas viewer is described, not operated."
+      }
+    }
+  ],
+  "hash": "sha256:26b04c5e9d1a326f048f125cd89bb978f87ac8fb09a819e752e92385b0bb845b"
+}

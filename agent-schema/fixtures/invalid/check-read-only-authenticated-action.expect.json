@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "auth"
+      ],
+      "code": "read_only_requires_auth"
+    }
+  ],
+  "why": "read-only surfaces carry no authenticated actions"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "per_call_cap_minor"
+      ],
+      "code": "cap_order"
+    }
+  ],
+  "why": "the per-call cap cannot exceed the spend cap"
+}

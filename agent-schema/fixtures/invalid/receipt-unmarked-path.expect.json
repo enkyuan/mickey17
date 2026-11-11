@@ -1,0 +1,14 @@
+{
+  "schema": "receipt",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "request",
+        "path"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "receipt request class is marked and carries a path template only"
+}

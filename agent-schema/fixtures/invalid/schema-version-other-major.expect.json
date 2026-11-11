@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "schema_version"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "the wire format pins major 1"
+}

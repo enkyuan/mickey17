@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "effect"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "effect must be one of the D5 classes"
+}

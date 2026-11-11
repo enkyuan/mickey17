@@ -1,0 +1,22 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "edge"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "a derived value must name the dependency edge that sources it (D11)"
+}

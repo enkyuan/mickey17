@@ -1,0 +1,3166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent surface",
+  "$comment": "Generated from the Zod schemas in agent-schema/src (schema_version 1.0.0). Do not edit; run `bun run generate`.",
+  "$ref": "#/$defs/AgentSurface",
+  "$defs": {
+    "Action": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NavigateAction"
+        },
+        {
+          "$ref": "#/$defs/StateAction"
+        },
+        {
+          "$ref": "#/$defs/SubmitAction"
+        },
+        {
+          "$ref": "#/$defs/FetchAction"
+        },
+        {
+          "$ref": "#/$defs/DownloadAction"
+        }
+      ]
+    },
+    "ActionId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Action id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "ActionState": {
+      "type": "string",
+      "enum": [
+        "enabled",
+        "stale",
+        "disabled"
+      ]
+    },
+    "AgentSurface": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "agent-surface"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "capture": {
+          "$ref": "#/$defs/Capture"
+        },
+        "mode": {
+          "$ref": "#/$defs/Mode"
+        },
+        "site": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "$ref": "#/$defs/Host"
+            },
+            "scheme": {
+              "type": "string",
+              "enum": [
+                "https",
+                "http"
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "scheme"
+          ],
+          "additionalProperties": false
+        },
+        "gates": {
+          "$ref": "#/$defs/Gates"
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "include_hidden": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "include_hidden"
+          ],
+          "additionalProperties": false
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "routes": {
+          "maxItems": 100000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Route"
+          }
+        },
+        "actions": {
+          "maxItems": 100000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          }
+        },
+        "flows": {
+          "maxItems": 10000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Flow"
+          }
+        },
+        "unsupported": {
+          "maxItems": 100000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnsupportedItem"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "schema_version",
+        "hash",
+        "capture",
+        "mode",
+        "site",
+        "gates",
+        "options",
+        "coverage",
+        "routes",
+        "actions",
+        "flows",
+        "unsupported"
+      ],
+      "additionalProperties": false,
+      "description": "Agent surface document, schema v1."
+    },
+    "AriaRole": {
+      "type": "string",
+      "enum": [
+        "alert",
+        "alertdialog",
+        "application",
+        "article",
+        "banner",
+        "blockquote",
+        "button",
+        "caption",
+        "cell",
+        "checkbox",
+        "code",
+        "columnheader",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "definition",
+        "deletion",
+        "dialog",
+        "directory",
+        "document",
+        "emphasis",
+        "feed",
+        "figure",
+        "form",
+        "generic",
+        "grid",
+        "gridcell",
+        "group",
+        "heading",
+        "img",
+        "insertion",
+        "link",
+        "list",
+        "listbox",
+        "listitem",
+        "log",
+        "main",
+        "marquee",
+        "math",
+        "menu",
+        "menubar",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "meter",
+        "navigation",
+        "none",
+        "note",
+        "option",
+        "paragraph",
+        "presentation",
+        "progressbar",
+        "radio",
+        "radiogroup",
+        "region",
+        "row",
+        "rowgroup",
+        "rowheader",
+        "scrollbar",
+        "search",
+        "searchbox",
+        "separator",
+        "slider",
+        "spinbutton",
+        "status",
+        "strong",
+        "subscript",
+        "superscript",
+        "switch",
+        "tab",
+        "table",
+        "tablist",
+        "tabpanel",
+        "term",
+        "textbox",
+        "time",
+        "timer",
+        "toolbar",
+        "tooltip",
+        "tree",
+        "treegrid",
+        "treeitem"
+      ]
+    },
+    "AuthRequirement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "session-cookie"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "oauth"
+            },
+            "scopes": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Name"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "scopes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "api-key"
+            },
+            "header": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "kind",
+            "header"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "BlockedFlow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/FlowId"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "steps": {
+          "minItems": 1,
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FlowStep"
+          }
+        },
+        "recorded": {
+          "$ref": "#/$defs/Recording"
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "const": "blocked"
+        },
+        "unclassified": {
+          "minItems": 1,
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnclassifiedValue"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "effect",
+        "steps",
+        "recorded",
+        "evidence",
+        "status",
+        "unclassified"
+      ],
+      "additionalProperties": false
+    },
+    "BlockedReason": {
+      "type": "string",
+      "enum": [
+        "challenge",
+        "robots",
+        "rate_limit",
+        "host_not_allowed",
+        "private_address",
+        "redirect_off_host",
+        "mode_forbids_tier",
+        "mode_forbids_effect",
+        "mandate_expired",
+        "mandate_cap_exceeded",
+        "mandate_scope",
+        "confirmation_mismatch",
+        "preconditions_unmet",
+        "signature_changed"
+      ]
+    },
+    "BrowserReason": {
+      "type": "string",
+      "enum": [
+        "signature",
+        "timestamp",
+        "nonce",
+        "fingerprint",
+        "anti-bot",
+        "tokenization",
+        "unknown"
+      ]
+    },
+    "Capture": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "captured_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "tool": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/Code"
+            },
+            "version": {
+              "$ref": "#/$defs/SemVer"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "hash",
+        "captured_at",
+        "tool"
+      ],
+      "additionalProperties": false
+    },
+    "Code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+    },
+    "ConfirmationId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Confirmation id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "ConfirmationRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/ConfirmationId"
+            },
+            "subject": {
+              "$ref": "#/$defs/Subject"
+            },
+            "request_digest": {
+              "$ref": "#/$defs/Sha256"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/IdempotencyKey"
+            },
+            "issued_at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "effect": {
+              "type": "string",
+              "const": "financial"
+            },
+            "items": {
+              "minItems": 1,
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/PageTextNonEmpty"
+                  },
+                  "quantity": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000
+                  },
+                  "amount": {
+                    "$ref": "#/$defs/Money"
+                  }
+                },
+                "required": [
+                  "name",
+                  "quantity",
+                  "amount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "total": {
+              "$ref": "#/$defs/Money"
+            },
+            "payee": {
+              "$ref": "#/$defs/PageTextNonEmpty"
+            },
+            "mandate": {
+              "$ref": "#/$defs/MandateId"
+            }
+          },
+          "required": [
+            "id",
+            "subject",
+            "request_digest",
+            "idempotency_key",
+            "issued_at",
+            "expires_at",
+            "effect",
+            "items",
+            "total",
+            "payee",
+            "mandate"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/ConfirmationId"
+            },
+            "subject": {
+              "$ref": "#/$defs/Subject"
+            },
+            "request_digest": {
+              "$ref": "#/$defs/Sha256"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/IdempotencyKey"
+            },
+            "issued_at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "effect": {
+              "type": "string",
+              "enum": [
+                "write-irreversible",
+                "account-control"
+              ]
+            },
+            "summary": {
+              "$ref": "#/$defs/SurfaceTextNonEmpty"
+            },
+            "page_context": {
+              "$ref": "#/$defs/PageText"
+            }
+          },
+          "required": [
+            "id",
+            "subject",
+            "request_digest",
+            "idempotency_key",
+            "issued_at",
+            "expires_at",
+            "effect",
+            "summary"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ConfirmationToken": {
+      "type": "object",
+      "properties": {
+        "confirmation": {
+          "$ref": "#/$defs/ConfirmationId"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/IdempotencyKey"
+        },
+        "granted_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "confirmation",
+        "request_digest",
+        "idempotency_key",
+        "granted_at"
+      ],
+      "additionalProperties": false
+    },
+    "Coverage": {
+      "type": "object",
+      "properties": {
+        "tiers": {
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TierCoverage"
+          }
+        },
+        "unsupported_reasons": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/UnsupportedReason"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "reason",
+              "count"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "tiers",
+        "unsupported_reasons"
+      ],
+      "additionalProperties": false
+    },
+    "Currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "ISO 4217 alphabetic code"
+    },
+    "DependencyEdge": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/DependencySource"
+        },
+        "match": {
+          "$ref": "#/$defs/MatchKind"
+        }
+      },
+      "required": [
+        "source",
+        "match"
+      ],
+      "additionalProperties": false
+    },
+    "DependencySource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "response"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "at": {
+              "$ref": "#/$defs/ResponseLocation"
+            }
+          },
+          "required": [
+            "kind",
+            "step",
+            "request",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "dom"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "node": {
+              "$ref": "#/$defs/NodeId"
+            },
+            "attribute": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cookie"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "name": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "storage"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "area": {
+              "type": "string",
+              "enum": [
+                "local",
+                "session"
+              ]
+            },
+            "key": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "kind",
+            "area",
+            "key"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DownloadAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "state": {
+          "$ref": "#/$defs/ActionState"
+        },
+        "kind": {
+          "type": "string",
+          "const": "download"
+        },
+        "tier": {
+          "type": "string",
+          "const": "T2"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
+        "request": {
+          "$ref": "#/$defs/RequestSpec"
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "state",
+        "kind",
+        "tier",
+        "effect",
+        "request",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "Effect": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write-reversible",
+        "write-irreversible",
+        "financial",
+        "account-control"
+      ]
+    },
+    "ErrorClass": {
+      "type": "string",
+      "enum": [
+        "network",
+        "timeout",
+        "http",
+        "validation",
+        "postcondition_failed",
+        "runtime",
+        "internal"
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        },
+        "type": {
+          "$ref": "#/$defs/Code"
+        },
+        "ref": {
+          "$ref": "#/$defs/Name"
+        },
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "source",
+        "type",
+        "ref",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "EvidenceSource": {
+      "type": "string",
+      "enum": [
+        "declared",
+        "observed",
+        "derived",
+        "inferred"
+      ]
+    },
+    "FetchAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "state": {
+          "$ref": "#/$defs/ActionState"
+        },
+        "kind": {
+          "type": "string",
+          "const": "fetch"
+        },
+        "tier": {
+          "type": "string",
+          "const": "T2"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
+        "request": {
+          "$ref": "#/$defs/RequestSpec"
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "state",
+        "kind",
+        "tier",
+        "effect",
+        "request",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "Flow": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ReadyFlow"
+        },
+        {
+          "$ref": "#/$defs/BlockedFlow"
+        }
+      ]
+    },
+    "FlowId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Flow id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "FlowStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/StepId"
+        },
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "requests": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestSpec"
+          }
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
+        "human_gates": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HumanReason"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "effect",
+        "requests",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "human_gates"
+      ],
+      "additionalProperties": false
+    },
+    "Gates": {
+      "type": "object",
+      "properties": {
+        "robots_txt": {
+          "type": "string",
+          "enum": [
+            "allowed",
+            "disallowed",
+            "absent",
+            "not-checked"
+          ]
+        },
+        "llms_txt": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent",
+            "not-checked"
+          ]
+        },
+        "tos": {
+          "type": "string",
+          "enum": [
+            "permitted",
+            "restricted",
+            "not-checked"
+          ]
+        }
+      },
+      "required": [
+        "robots_txt",
+        "llms_txt",
+        "tos"
+      ],
+      "additionalProperties": false
+    },
+    "Host": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$"
+    },
+    "HttpMethod": {
+      "type": "string",
+      "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ]
+    },
+    "HumanReason": {
+      "type": "string",
+      "enum": [
+        "3ds",
+        "sca",
+        "fraud_challenge",
+        "device_check",
+        "hosted_checkout",
+        "approval",
+        "captcha"
+      ]
+    },
+    "Idempotency": {
+      "type": "object",
+      "properties": {
+        "idempotent": {
+          "type": "boolean"
+        },
+        "key": {
+          "$ref": "#/$defs/RequestLocation"
+        }
+      },
+      "required": [
+        "idempotent"
+      ],
+      "additionalProperties": false
+    },
+    "IdempotencyKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "Input": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/InputName"
+        },
+        "type": {
+          "$ref": "#/$defs/InputType"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/Sensitivity"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "options": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/PageText"
+              },
+              "label": {
+                "$ref": "#/$defs/PageText"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "min_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pattern": {
+          "$ref": "#/$defs/PageText"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required",
+        "sensitivity"
+      ],
+      "additionalProperties": false
+    },
+    "InputName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    },
+    "InputType": {
+      "type": "string",
+      "enum": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "enum",
+        "email",
+        "tel",
+        "url",
+        "date",
+        "password",
+        "file"
+      ]
+    },
+    "Mandate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/MandateId"
+        },
+        "grantor": {
+          "$ref": "#/$defs/Name"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "delegated"
+          ]
+        },
+        "merchants": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Host"
+          }
+        },
+        "currency": {
+          "$ref": "#/$defs/Currency"
+        },
+        "spend_cap_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "per_call_cap_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "scope": {
+          "minItems": 1,
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "action"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/ActionId"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "flow"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/FlowId"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "issued_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "id",
+        "grantor",
+        "mode",
+        "merchants",
+        "currency",
+        "spend_cap_minor",
+        "scope",
+        "issued_at",
+        "expires_at",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "MandateId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Mandate id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "MarkedText": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "page"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "surface"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "MarkedValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "page"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16384
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "const": "surface"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16384
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          },
+          "required": [
+            "origin",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "MatchKind": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "json-path",
+        "form-field",
+        "url-segment",
+        "header"
+      ]
+    },
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "owner",
+        "delegated",
+        "read-only"
+      ]
+    },
+    "Money": {
+      "type": "object",
+      "properties": {
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "currency": {
+          "$ref": "#/$defs/Currency"
+        }
+      },
+      "required": [
+        "amount_minor",
+        "currency"
+      ],
+      "additionalProperties": false
+    },
+    "Name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~@$%+-]{1,128}$",
+      "description": "Token characters only; no whitespace or quoting."
+    },
+    "NavigateAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "state": {
+          "$ref": "#/$defs/ActionState"
+        },
+        "kind": {
+          "type": "string",
+          "const": "navigate"
+        },
+        "tier": {
+          "type": "string",
+          "const": "T1"
+        },
+        "effect": {
+          "type": "string",
+          "const": "read"
+        },
+        "target": {
+          "$ref": "#/$defs/PageText"
+        },
+        "route": {
+          "$ref": "#/$defs/RouteId"
+        },
+        "evidence": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "confidence": {
+          "$ref": "#/$defs/Percent"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "state",
+        "kind",
+        "tier",
+        "effect",
+        "target",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "NodeId": {
+      "type": "string",
+      "pattern": "^n_[0-9a-f]{16}$",
+      "description": "n_ + 16 lowercase hex"
+    },
+    "OperationResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "ok"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "tier": {
+              "type": "string",
+              "enum": [
+                "T0",
+                "T1",
+                "T2",
+                "T3"
+              ]
+            },
+            "fields": {
+              "maxItems": 1024,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/MarkedText"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/MarkedValue"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "receipt": {
+              "$ref": "#/$defs/ReceiptId"
+            }
+          },
+          "required": [
+            "status",
+            "tier",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "stale"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "reason": {
+              "$ref": "#/$defs/SurfaceText"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "unsupported"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "reason": {
+              "$ref": "#/$defs/UnsupportedReason"
+            },
+            "message": {
+              "$ref": "#/$defs/SurfaceText"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "requires_auth"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "requirement": {
+              "$ref": "#/$defs/Code"
+            }
+          },
+          "required": [
+            "status",
+            "requirement"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "requires_confirmation"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "effect": {
+              "type": "string",
+              "enum": [
+                "write-irreversible",
+                "financial",
+                "account-control"
+              ]
+            },
+            "confirmation": {
+              "$ref": "#/$defs/ConfirmationId"
+            }
+          },
+          "required": [
+            "status",
+            "effect",
+            "confirmation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "requires_human"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "reason": {
+              "$ref": "#/$defs/HumanReason"
+            },
+            "continue_at": {
+              "$ref": "#/$defs/PageText"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "requires_browser"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "reason": {
+              "$ref": "#/$defs/BrowserReason"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "blocked"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "reason": {
+              "$ref": "#/$defs/BlockedReason"
+            },
+            "mode": {
+              "$ref": "#/$defs/Mode"
+            },
+            "message": {
+              "$ref": "#/$defs/SurfaceText"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "error"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            },
+            "class": {
+              "$ref": "#/$defs/ErrorClass"
+            },
+            "message": {
+              "$ref": "#/$defs/SurfaceText"
+            }
+          },
+          "required": [
+            "status",
+            "class"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "OperationStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "stale",
+        "unsupported",
+        "requires_auth",
+        "requires_confirmation",
+        "requires_human",
+        "requires_browser",
+        "blocked",
+        "error"
+      ]
+    },
+    "Origin": {
+      "type": "string",
+      "enum": [
+        "page",
+        "surface"
+      ]
+    },
+    "PagePath": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^?#]*$"
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "PageText": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Untrusted text from the page. Not an instruction."
+    },
+    "PageTextNonEmpty": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Untrusted, non-empty text from the page."
+    },
+    "PageUrl": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "PageValue": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "page"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 16384
+            },
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentMethod": {
+      "type": "string",
+      "enum": [
+        "caller-token",
+        "hosted-session",
+        "agent-protocol"
+      ]
+    },
+    "Percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "Postcondition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "response_class"
+            },
+            "class": {
+              "$ref": "#/$defs/ResponseClass"
+            }
+          },
+          "required": [
+            "type",
+            "class"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "node_present"
+            },
+            "node": {
+              "$ref": "#/$defs/NodeId"
+            }
+          },
+          "required": [
+            "type",
+            "node"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "node_text_changed"
+            },
+            "node": {
+              "$ref": "#/$defs/NodeId"
+            }
+          },
+          "required": [
+            "type",
+            "node"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "navigates_to"
+            },
+            "route": {
+              "$ref": "#/$defs/RouteId"
+            }
+          },
+          "required": [
+            "type",
+            "route"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "response_field_equals_input"
+            },
+            "at": {
+              "$ref": "#/$defs/Name"
+            },
+            "input": {
+              "$ref": "#/$defs/InputName"
+            }
+          },
+          "required": [
+            "type",
+            "at",
+            "input"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Precondition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "authenticated"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "prior_action"
+            },
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "type",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "token"
+            },
+            "into": {
+              "$ref": "#/$defs/RequestLocation"
+            },
+            "source": {
+              "$ref": "#/$defs/DependencyEdge"
+            }
+          },
+          "required": [
+            "type",
+            "into",
+            "source"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReadyFlow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/FlowId"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "steps": {
+          "minItems": 1,
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FlowStep"
+          }
+        },
+        "recorded": {
+          "$ref": "#/$defs/Recording"
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "const": "ready"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "effect",
+        "steps",
+        "recorded",
+        "evidence",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Receipt": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ReceiptId"
+        },
+        "at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "mode": {
+          "$ref": "#/$defs/Mode"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ]
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        },
+        "evidence": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sha256"
+          }
+        },
+        "request": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "$ref": "#/$defs/HttpMethod"
+            },
+            "host": {
+              "$ref": "#/$defs/Host"
+            },
+            "path": {
+              "$ref": "#/$defs/PagePath"
+            }
+          },
+          "required": [
+            "method",
+            "host",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "$ref": "#/$defs/OperationStatus"
+        },
+        "response_class": {
+          "$ref": "#/$defs/ResponseClass"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "mandate": {
+          "$ref": "#/$defs/MandateId"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/ConfirmationId"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/IdempotencyKey"
+        },
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "redactions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "required": [
+        "id",
+        "at",
+        "mode",
+        "tier",
+        "effect",
+        "subject",
+        "evidence",
+        "request",
+        "result",
+        "duration_ms",
+        "redactions"
+      ],
+      "additionalProperties": false
+    },
+    "ReceiptId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Receipt id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "Recording": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "string",
+          "enum": [
+            "owner-local",
+            "staging",
+            "payment-test-mode"
+          ]
+        },
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "environment",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "RequestId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Request id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "RequestLocation": {
+      "type": "object",
+      "properties": {
+        "in": {
+          "type": "string",
+          "enum": [
+            "header",
+            "query",
+            "path",
+            "cookie",
+            "body-json",
+            "body-form"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        }
+      },
+      "required": [
+        "in",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "RequestSpec": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "method": {
+          "$ref": "#/$defs/HttpMethod"
+        },
+        "url": {
+          "$ref": "#/$defs/PageUrl"
+        },
+        "body": {
+          "type": "string",
+          "enum": [
+            "none",
+            "json",
+            "form",
+            "multipart"
+          ]
+        },
+        "values": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestValue"
+          }
+        },
+        "expect": {
+          "$ref": "#/$defs/ResponseClass"
+        },
+        "recorded": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "url",
+        "body",
+        "values",
+        "expect",
+        "recorded"
+      ],
+      "additionalProperties": false
+    },
+    "RequestValue": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/RequestLocation"
+        },
+        "value": {
+          "$ref": "#/$defs/ValueClass"
+        }
+      },
+      "required": [
+        "at",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ResponseClass": {
+      "type": "string",
+      "enum": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+      ]
+    },
+    "ResponseLocation": {
+      "type": "object",
+      "properties": {
+        "in": {
+          "type": "string",
+          "enum": [
+            "header",
+            "set-cookie",
+            "body-json",
+            "body-form",
+            "redirect-location"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        }
+      },
+      "required": [
+        "in",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "Route": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RouteId"
+        },
+        "url": {
+          "$ref": "#/$defs/PageText"
+        },
+        "canonical": {
+          "$ref": "#/$defs/PageText"
+        },
+        "title": {
+          "$ref": "#/$defs/PageText"
+        },
+        "tiers": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RouteTier"
+          }
+        },
+        "nodes": {
+          "maxItems": 100000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SurfaceNode"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "tiers",
+        "nodes"
+      ],
+      "additionalProperties": false
+    },
+    "RouteId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Route id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "RouteTier": {
+      "type": "string",
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3"
+      ]
+    },
+    "SchemaVersion": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "1.MINOR.PATCH; see checkSchemaVersion"
+    },
+    "SemVer": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "Sensitivity": {
+      "type": "string",
+      "enum": [
+        "none",
+        "personal",
+        "credential",
+        "payment-token"
+      ]
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256:<64 lowercase hex>"
+    },
+    "StateAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "state": {
+          "$ref": "#/$defs/ActionState"
+        },
+        "kind": {
+          "type": "string",
+          "const": "state"
+        },
+        "tier": {
+          "type": "string",
+          "const": "T3"
+        },
+        "effect": {
+          "type": "string",
+          "const": "read"
+        },
+        "affects": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "state",
+        "kind",
+        "tier",
+        "effect",
+        "affects",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "StepId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "Step id: lowercase slug, unique within the document. Derive it from structure (kind, hash), never from page text."
+    },
+    "StrongEvidence": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "declared",
+            "observed"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/Code"
+        },
+        "ref": {
+          "$ref": "#/$defs/Name"
+        },
+        "hash": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "source",
+        "type",
+        "ref",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "Subject": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flow": {
+              "$ref": "#/$defs/FlowId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            }
+          },
+          "required": [
+            "flow",
+            "step"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SubmitAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "description": {
+          "$ref": "#/$defs/SurfaceText"
+        },
+        "inputs": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthRequirement"
+        },
+        "preconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "state": {
+          "$ref": "#/$defs/ActionState"
+        },
+        "kind": {
+          "type": "string",
+          "const": "submit"
+        },
+        "tier": {
+          "type": "string",
+          "const": "T2"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "payment": {
+          "$ref": "#/$defs/PaymentMethod"
+        },
+        "request": {
+          "$ref": "#/$defs/RequestSpec"
+        },
+        "evidence": {
+          "allOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "inputs",
+        "auth",
+        "preconditions",
+        "postconditions",
+        "idempotency",
+        "state",
+        "kind",
+        "tier",
+        "effect",
+        "request",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "SurfaceNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "parent": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "role": {
+          "$ref": "#/$defs/AriaRole"
+        },
+        "name": {
+          "$ref": "#/$defs/PageText"
+        },
+        "text": {
+          "$ref": "#/$defs/PageText"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "href": {
+          "$ref": "#/$defs/PageText"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Percent"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "visibility"
+      ],
+      "additionalProperties": false
+    },
+    "SurfaceText": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "surface"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Text authored by the surface."
+    },
+    "SurfaceTextNonEmpty": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "surface"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "origin",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "Tier": {
+      "type": "string",
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ]
+    },
+    "TierCoverage": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        },
+        "routes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "unsupported": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "tier",
+        "routes",
+        "actions",
+        "unsupported"
+      ],
+      "additionalProperties": false
+    },
+    "Timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "description": "RFC 3339 UTC, second precision, e.g. 2026-11-10T12:00:00Z"
+    },
+    "UnclassifiedValue": {
+      "type": "object",
+      "properties": {
+        "step": {
+          "$ref": "#/$defs/StepId"
+        },
+        "request": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "at": {
+          "$ref": "#/$defs/RequestLocation"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "no-source",
+            "ambiguous-source",
+            "multiple-sources"
+          ]
+        }
+      },
+      "required": [
+        "step",
+        "request",
+        "at",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "UnsupportedItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "label": {
+          "$ref": "#/$defs/PageText"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        },
+        "reason": {
+          "$ref": "#/$defs/UnsupportedReason"
+        },
+        "note": {
+          "$ref": "#/$defs/SurfaceText"
+        }
+      },
+      "required": [
+        "id",
+        "tier",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "UnsupportedReason": {
+      "type": "string",
+      "enum": [
+        "opaque-canvas",
+        "opaque-webgl",
+        "drag-only",
+        "video",
+        "no-evidence",
+        "unclassified-value",
+        "unmodeled-handler",
+        "payment-tokenization",
+        "other"
+      ]
+    },
+    "ValueClass": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "class": {
+              "type": "string",
+              "const": "constant"
+            },
+            "value": {
+              "$ref": "#/$defs/PageValue"
+            }
+          },
+          "required": [
+            "class",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "class": {
+              "type": "string",
+              "const": "input"
+            },
+            "input": {
+              "$ref": "#/$defs/InputName"
+            }
+          },
+          "required": [
+            "class",
+            "input"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "class": {
+              "type": "string",
+              "const": "derived"
+            },
+            "edge": {
+              "$ref": "#/$defs/DependencyEdge"
+            }
+          },
+          "required": [
+            "class",
+            "edge"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "class": {
+              "type": "string",
+              "const": "client-computed"
+            },
+            "resolution": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "lift"
+                    },
+                    "spec": {
+                      "$ref": "#/$defs/Sha256"
+                    },
+                    "args": {
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/DependencyEdge"
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "spec",
+                    "args"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "requires_browser"
+                    },
+                    "reason": {
+                      "$ref": "#/$defs/BrowserReason"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "class",
+            "resolution"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Visibility": {
+      "type": "string",
+      "enum": [
+        "visible",
+        "hidden",
+        "inert"
+      ]
+    }
+  }
+}

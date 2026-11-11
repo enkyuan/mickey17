@@ -1,0 +1,13 @@
+{
+  "schema": "result",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "reason"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "requires_human names the challenge"
+}

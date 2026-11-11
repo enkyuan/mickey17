@@ -1,0 +1,22 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        0,
+        "requests",
+        0,
+        "values",
+        2,
+        "value",
+        "input"
+      ],
+      "code": "undeclared_input"
+    }
+  ],
+  "why": "an input value refers to a declared input"
+}

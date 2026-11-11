@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "tier"
+      ],
+      "code": "receipt_tier_effect"
+    }
+  ],
+  "why": "a write is a T2 network call"
+}

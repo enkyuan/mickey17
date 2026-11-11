@@ -1,0 +1,19 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "preconditions",
+        1,
+        "source",
+        "source",
+        "step"
+      ],
+      "code": "dangling_reference"
+    }
+  ],
+  "why": "a standalone action has no steps to name"
+}

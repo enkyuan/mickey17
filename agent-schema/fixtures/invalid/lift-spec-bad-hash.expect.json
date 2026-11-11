@@ -1,0 +1,23 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        2,
+        "requests",
+        0,
+        "values",
+        1,
+        "value",
+        "resolution",
+        "spec"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "a lift spec is pinned by a sha256 hash"
+}

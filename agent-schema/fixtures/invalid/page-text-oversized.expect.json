@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "title",
+        "value"
+      ],
+      "code": "too_big"
+    }
+  ],
+  "why": "oversized page text is rejected, not truncated"
+}

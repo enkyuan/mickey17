@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "tier"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "a navigate action is T1"
+}

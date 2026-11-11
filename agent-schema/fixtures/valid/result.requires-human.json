@@ -1,0 +1,10 @@
+{
+  "status": "requires_human",
+  "action": "add-to-cart",
+  "step": "pay",
+  "reason": "3ds",
+  "continue_at": {
+    "origin": "page",
+    "value": "https://pay.example.test/3ds/abc"
+  }
+}

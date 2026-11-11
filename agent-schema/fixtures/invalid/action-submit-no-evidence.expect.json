@@ -1,0 +1,16 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "evidence",
+        0
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "every non-navigate action lists at least one declared or observed evidence"
+}

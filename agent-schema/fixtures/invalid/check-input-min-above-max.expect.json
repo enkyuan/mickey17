@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "inputs",
+        0,
+        "min"
+      ],
+      "code": "constraint_order"
+    }
+  ],
+  "why": "constraints are satisfiable"
+}

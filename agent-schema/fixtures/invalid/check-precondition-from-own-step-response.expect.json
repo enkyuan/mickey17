@@ -1,0 +1,21 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "preconditions",
+        0,
+        "source",
+        "source",
+        "request"
+      ],
+      "code": "dependency_not_earlier"
+    }
+  ],
+  "why": "a precondition cannot wait for the response of the step it guards"
+}

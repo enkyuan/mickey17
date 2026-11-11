@@ -1,0 +1,8 @@
+{
+  "status": "stale",
+  "action": "add-to-cart",
+  "reason": {
+    "origin": "surface",
+    "value": "Signature changed since capture; action disabled until re-verified."
+  }
+}

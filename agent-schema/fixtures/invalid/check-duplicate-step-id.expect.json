@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "id"
+      ],
+      "code": "duplicate_id"
+    }
+  ],
+  "why": "step ids are unique within a flow"
+}
