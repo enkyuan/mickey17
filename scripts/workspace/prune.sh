@@ -12,7 +12,7 @@
 #   empties         cli-release, cli-final (empty directories): `rmdir`, fails if not empty
 #   gates           reference.json + candidate.json (6 files) inside 3 parity gate directories: `rm -f`.
 #                   The gate's check-parity-report.json, contract.json and log stay: the committed
-#                   docs/parity-reports/2026-11-10-first-scoped-report.md says the reports are retained.
+#                   docs/reports/2026-11-10-parity-first-scoped.md says the reports are retained.
 #   dup-exports     3 duplicate exports (same input_sha256 as a kept export): `rm -r`
 #   trial-projects  29 generated project directories inside evidence/trials: `rm -r`
 #   node-modules    node_modules of the exports: `mochi clean --deps --apply` (descriptor based)
@@ -76,7 +76,7 @@ DUP_EXPORTS=(
 )
 # Generated TanStack projects (no node_modules, no captures, no clone-log entries) inside the
 # trials. NOT included, because tracked docs cite them: 20261108-microsoft-ai/microsoft-ai
-# (VALIDATION.md, docs/REAL_WORLD_TRIALS.md) and 20261108-client-recovery/{natural-final,
+# (VALIDATION.md, docs/real-world-trials.md) and 20261108-client-recovery/{natural-final,
 # infinitegarden-final} ("final projects", same two files).
 TRIAL_PROJECTS=(
   "evidence/trials/20261108-client-recovery/natural"
@@ -190,7 +190,7 @@ check_path() {
       link="$(find "$p" -path '*/node_modules' -prune -o -type l -print -quit)"
       if [ -n "$link" ]; then problem "contains a symlink ($link): $rel"; return 0; fi
     fi
-    # Evidence rules (docs/WORKSPACE.md): evidence-named entries or a capture layout inside.
+    # Evidence rules (docs/workspace.md): evidence-named entries or a capture layout inside.
     ev="$(find "$p" -path '*/node_modules' -prune -o \( -iname provenance -o -iname source-packs -o -iname semantic-conversion -o -iname 'capture*' -o -iname reconstruction -o -iname previous-projects -o -name .git -o -iname handoff -o -iname references -o -iname qualification -o -iname 'verification*' -o -iname evidence \) -print -quit)"
     if [ -n "$ev" ]; then problem "contains evidence ($ev): $rel"; return 0; fi
     if [ "$kind" != nodemodules ]; then

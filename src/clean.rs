@@ -40,7 +40,7 @@ const EVIDENCE_NAMES: &[&str] = &[
 /// where third-party packages may legitimately ship directories with these names.
 ///
 /// `evidence` is the directory the workspace layout keeps every irreplaceable item in
-/// (`evidence/trials`, `evidence/source-packs`, ...; see `docs/WORKSPACE.md`). Protecting
+/// (`evidence/trials`, `evidence/source-packs`, ...; see `docs/workspace.md`). Protecting
 /// the name as a whole means that nothing below it is ever planned, whatever it is called.
 const WORKSPACE_EVIDENCE_NAMES: &[&str] = &["handoff", "references", "qualification", "evidence"];
 const PROTECTED: &str = "protected evidence, not scanned: ";

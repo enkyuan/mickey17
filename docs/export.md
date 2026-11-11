@@ -167,7 +167,7 @@ regenerates the router tree on build. Index files preserve literal paths without
 parent layouts; reserved filename syntax is escaped. Reusable candidates expose mechanical
 typed props, but semantic names and component ownership remain unreconstructed. Captured
 client programs live in the explicit compatibility boundary. No empty hooks or backend
-scaffolding is created. See [authored-source decisions](designs/AUTHORED_SOURCE.md).
+scaffolding is created. See [authored-source decisions](designs/authored-source.md).
 
 Captured query order, repeated keys
 and encoding spellings are preserved through an opaque query adapter. Because Start also
@@ -243,7 +243,7 @@ is still excluded.
 
 ## Authored source mode
 
-For named typed components and direct Base UI compositions without recovered controllers, use [`--authored-spec`](AUTHORED_EXPORT.md). This separate path consumes a reviewed semantic specification; it does not automatically infer one or use the Jev classifier as a code generator. The compatibility behavior and limits below apply to the default export path.
+For named typed components and direct Base UI compositions without recovered controllers, use [`--authored-spec`](authored-export.md). This separate path consumes a reviewed semantic specification; it does not automatically infer one or use the Jev classifier as a code generator. The compatibility behavior and limits below apply to the default export path.
 
 ## Refusals and bounds
 
@@ -267,7 +267,7 @@ For named typed components and direct Base UI compositions without recovered con
   currently refused by the final publication step. This is not filesystem isolation against
   a process concurrently swapping local source entries.
 
-`--interpretation` explicitly attaches a validated saved [semantic report](INTERPRETATION.md)
+`--interpretation` explicitly attaches a validated saved [semantic report](semantic-interpretation.md)
 as review-required comments on component source and metadata in the export report. It makes
 no model calls and does not change generated names, props, routes, CSS or control mappings.
 Exports without this flag ignore interpretation artifacts, including invalid ones.

@@ -72,7 +72,7 @@ harness = false
 #   debug = 0 everywhere                         2.48 GB  clean 233 s  rebuild 14 s
 # Incremental stays on: turning it off saves another ~0.35 GB but made rebuilds ~3x slower.
 # Backtraces keep file:line for mochi-web frames; dependency frames show function names only.
-# split-debuginfo is left at the macOS default (unpacked). To reclaim space: see docs/WORKSPACE.md
+# split-debuginfo is left at the macOS default (unpacked). To reclaim space: see docs/workspace.md
 # (`cargo clean -p mochi-web`, `mochi clean --cargo`).
 [profile.dev]
 debug = "line-tables-only"

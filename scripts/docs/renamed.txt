@@ -1,0 +1,24 @@
+# Retired documentation names (see docs/README.md). `bun scripts/docs/check-links.ts` fails when any file
+# other than this one still mentions an old name. Format: `old -> new`, one per line.
+
+docs/AUTHORED_EXPORT.md -> docs/authored-export.md
+docs/DETERMINISTIC_RECONSTRUCTION.md -> docs/deterministic-reconstruction.md
+docs/EXPORT.md -> docs/export.md
+docs/INTERPRETATION.md -> docs/semantic-interpretation.md
+docs/LIFT.md -> docs/lift.md
+docs/PARITY.md -> docs/parity.md
+docs/PROJECT_MODEL.md -> docs/project-model.md
+docs/REAL_WORLD_TRIALS.md -> docs/real-world-trials.md
+docs/RELEASING.md -> docs/releasing.md
+docs/SEMANTIC.md -> docs/semantic-conversion.md
+docs/SOURCE_PROJECTS.md -> docs/source-projects.md
+docs/TOKENS.md -> docs/tokens.md
+docs/WORKSPACE.md -> docs/workspace.md
+docs/designs/AUTHORED_SOURCE.md -> docs/designs/authored-source.md
+docs/designs/SOURCE_EXPORTER.md -> docs/designs/source-reconstruction.md
+docs/parity-reports/named-equivalences.md -> docs/parity-named-equivalences.md
+docs/parity-reports/2026-11-10-default-recovery-and-semantic-assemble.md -> docs/reports/2026-11-10-parity-default-recovery-and-semantic-assemble.md
+docs/parity-reports/2026-11-10-first-scoped-report.md -> docs/reports/2026-11-10-parity-first-scoped.md
+docs/parity-reports/2026-11-10-semantic-final-outputs.md -> docs/reports/2026-11-10-parity-semantic-final-outputs.md
+docs/workspace-audit-2026-11-11.md -> docs/reports/2026-11-11-workspace-audit.md
+docs/parity-reports/ -> docs/reports/

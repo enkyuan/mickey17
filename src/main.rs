@@ -168,7 +168,7 @@ enum Command {
         /// Protect this project root (repeatable), e.g. the canonical build of a site.
         #[arg(long, value_name = "PATH")]
         keep: Vec<PathBuf>,
-        /// Keep only the newest built project per site family; see docs/WORKSPACE.md.
+        /// Keep only the newest built project per site family; see docs/workspace.md.
         #[arg(long)]
         keep_latest: bool,
         /// Also prune old run output (`generated/parity-runs`, `runs/logs`), keeping the newest groups.

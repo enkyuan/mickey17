@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Re-home the top level of a `.mochi/` workspace into the layout of docs/WORKSPACE.md:
+# Re-home the top level of a `.mochi/` workspace into the layout of docs/workspace.md:
 #
 #   evidence/   generated/   runs/   cache/   projects/ (unchanged)
 #
@@ -200,7 +200,7 @@ write_readme() {
     cat > "$M/README.md" <<EOF
 # Local Mochi workspace
 
-Git-ignored, excluded from crate packages. Layout version: $STAMP. Rules: docs/WORKSPACE.md.
+Git-ignored, excluded from crate packages. Layout version: $STAMP. Rules: docs/workspace.md.
 
 - \`evidence/\`: never deleted automatically (captures in \`trials/\`, \`source-packs/\`, \`previous-projects/\`,
   \`semantic-conversion/\`, \`references/\`, \`qualification/\`, \`handoff/\`).

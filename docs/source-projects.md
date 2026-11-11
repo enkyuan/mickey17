@@ -1,6 +1,6 @@
 # Editable source projects
 
-Current source-quality decisions: [Authored source architecture](designs/AUTHORED_SOURCE.md). Current exports are compatibility reconstructions with physical TanStack routes and Bun; semantic components, Base UI interaction conversion and token reconstruction remain pending. Earlier design choices below are historical where they conflict.
+Current source-quality decisions: [Authored source architecture](designs/authored-source.md). Current exports are compatibility reconstructions with physical TanStack routes and Bun; semantic components, Base UI interaction conversion and token reconstruction remain pending. Earlier design choices below are historical where they conflict.
 
 Status: the first bounded TanStack Start source exporter is implemented locally, alongside
 capture, structural analysis and the project model. Additional framework/styling adapters
@@ -14,7 +14,7 @@ computed styles, font declarations, viewport screenshots, and explicit completen
 These are source observations; capture completeness alone does not establish reconstructed
 application behavior or visual parity.
 
-`model-project <clone>` now adds a deterministic [project model](PROJECT_MODEL.md): literal
+`model-project <clone>` now adds a deterministic [project model](project-model.md): literal
 routes, full observations, exact style pooling, structural candidates with prop bindings,
 shared-shell candidates, navigation references, and an asset registry. This remains data;
 it does not itself emit framework files or recover application behavior.
@@ -22,10 +22,10 @@ it does not itself emit framework files or recover application behavior.
 `export <clone> -o <new-project> --framework tanstack-start` now consumes that saved model
 and emits editable JSX, prop bindings, shared layouts, explicit literal route files, captured
 CSS Modules and local candidate assets. It provides a Base UI native-button wrapper and
-preserves other supported native control defaults. See [the export contract](EXPORT.md)
+preserves other supported native control defaults. See [the export contract](export.md)
 for qualified scope, refusal conditions, the pinned toolchain and runtime checks.
 
-The [source-exporter decision map](designs/SOURCE_EXPORTER.md) records the proposed next
+The [source-exporter decision map](designs/source-reconstruction.md) records the proposed next
 milestone, including TypeSafe Jev's bounded interpretation role, model-independent code
 generation, adapter choices, and acceptance checks. The first mechanical exporter and bounded
 interpretation pipeline are implemented locally; broader adapters remain planned.
@@ -85,7 +85,7 @@ comments and metadata without changing neutral names, routes, content or primiti
 
 Controlled local tests verify transport, replay, reservations, recovery and export annotations.
 No live Jev access, accuracy, calibration or billing is established. See the
-[interpretation contract](INTERPRETATION.md) for payload limits, accounting assumptions and
+[interpretation contract](semantic-interpretation.md) for payload limits, accounting assumptions and
 qualification gaps. Approximate template matching and adaptive crawl selection remain future
 work; the current pipeline analyzes the pages already visited.
 

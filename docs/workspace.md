@@ -48,7 +48,7 @@ Two things depend on the layout and must move together:
 
 | Path | What it is |
 | --- | --- |
-| `evidence/` (everything below it) | The whole evidence tree, protected by name: `mochi clean` never scans, plans or removes anything inside it, whatever it holds (projects, `.output`, `node_modules`). Removing historical generated projects from `evidence/trials` is a separate, deliberate act: `scripts/workspace/prune.sh` deletes only an explicit allowlist of exact paths (see `docs/workspace-audit-2026-11-11.md`), never captures. |
+| `evidence/` (everything below it) | The whole evidence tree, protected by name: `mochi clean` never scans, plans or removes anything inside it, whatever it holds (projects, `.output`, `node_modules`). Removing historical generated projects from `evidence/trials` is a separate, deliberate act: `scripts/workspace/prune.sh` deletes only an explicit allowlist of exact paths (see `docs/reports/2026-11-11-workspace-audit.md`), never captures. |
 | `evidence/trials/*/**/capture*/` (a `manifest.json` beside a `site/` directory) | Original captures of live sites. Cannot be re-captured identically. |
 | `evidence/source-packs/`, `evidence/semantic-conversion/` | Reviewed source specifications, reference measurements, benchmark results. |
 | `evidence/previous-projects/` | Frozen copies of earlier projects, including recovered original controllers. |
@@ -64,9 +64,9 @@ Two things depend on the layout and must move together:
 | --- | --- |
 | `<project>/.output`, `<project>/.tanstack`, `<project>/.mochi/dist`, `<project>/node_modules/.vite`, `.nitro`, `.vite-temp` | `bun install --frozen-lockfile && bun run build` in the project |
 | `<project>/node_modules` | `bun install --frozen-lockfile` |
-| `generated/exports/*`, `generated/authored/*`, other generated projects | `mochi export <capture-or-site> --out <new-dir> ...` (see [EXPORT.md](EXPORT.md); `--out`/`-o` must not exist). Output depends on the generator version, so regenerating does not reproduce older, newer or hand-edited trees byte for byte. |
+| `generated/exports/*`, `generated/authored/*`, other generated projects | `mochi export <capture-or-site> --out <new-dir> ...` (see [export.md](export.md); `--out`/`-o` must not exist). Output depends on the generator version, so regenerating does not reproduce older, newer or hand-edited trees byte for byte. |
 | `cache/target/` (Cargo build cache, set by `.cargo/config.toml`) | `cargo build` / `cargo test` |
-| `generated/parity-runs/*`, `runs/logs/*` | Not rebuilt byte for byte: a re-run gives new results. Pruned by age with `--runs` (below); a `*-gate` directory is derived from its run (`bun benchmarks/src/parity/cli.ts gate <run>`). Reports in `docs/parity-reports/` cite runs by name: pin those. |
+| `generated/parity-runs/*`, `runs/logs/*` | Not rebuilt byte for byte: a re-run gives new results. Pruned by age with `--runs` (below); a `*-gate` directory is derived from its run (`bun benchmarks/src/parity/cli.ts gate <run>`). Reports in `docs/reports/` cite runs by name: pin those. |
 
 `.mochi/dist` is the build directory only for projects whose Vite config sets
 `build.outDir: '.mochi/dist'` (the exported template does). Other `.mochi/*` files of a

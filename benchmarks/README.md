@@ -199,7 +199,7 @@ capture (served by `mochi serve`) with a generated app at identical scripted sta
 reuses this package's conventions (new output directories only, retained raw evidence,
 calibration with injected regressions, no blended score) and feeds `mochi check-parity`.
 The method, schema, matching rules, the Browser-pane + sink driver and what it can and
-cannot detect are documented in [docs/PARITY.md](../docs/PARITY.md#whole-page-element-pipeline).
+cannot detect are documented in [docs/parity.md](../docs/parity.md#whole-page-element-pipeline).
 
 ```sh
 bun test --cwd benchmarks tests/parity-diff.test.ts tests/parity-sink.test.ts   # pure logic, no browser

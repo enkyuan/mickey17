@@ -1217,7 +1217,7 @@ fn workspace_containing_repositories_warns() {
     assert!(String::from_utf8(out).unwrap().contains("WARNING"));
 }
 
-// ---- the `.mochi` layout of docs/WORKSPACE.md -----------------------------------------------
+// ---- the `.mochi` layout of docs/workspace.md -----------------------------------------------
 
 /// Every evidence directory of the layout; each holds a built project so that a missed
 /// name would show up as a `remove` row.

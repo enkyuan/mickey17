@@ -130,6 +130,6 @@ Every run's `REPORT.md` and gap list apply. For these runs: the other 262 Natura
 click-driven menus, which time out; most scroll and breakpoint states; most entrance times); Garden `/articles` interactions
 beyond hover/popup; touch/mobile emulation, light scheme, pointer-driven effects, forms, font bytes; WebGL beyond one frame per
 state; Microsoft AI; the Rust gate (`check-parity`) was not run on these split runs because each pass alone does not meet its
-minimum state matrix. The pipeline's own limitations are in `docs/PARITY.md` ("Known limitations of the pipeline itself");
+minimum state matrix. The pipeline's own limitations are in `docs/parity.md` ("Known limitations of the pipeline itself");
 notably scroll-linked totals are not reproducible between runs on a loaded machine and `unsettled` states are not passes. Re-run
 on a quiet machine before relying on any single-state number here.

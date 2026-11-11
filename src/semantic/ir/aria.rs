@@ -1,6 +1,6 @@
 //! Effective role and accessible name, following the HTML-AAM / accname
 //! algorithms closely enough for pattern recognition. Departures are listed in
-//! `docs/SEMANTIC.md` ("Known gaps"): no CSS generated content, no `aria-describedby`,
+//! `docs/semantic-conversion.md` ("Known gaps"): no CSS generated content, no `aria-describedby`,
 //! name-from-content is flattened text.
 use super::{Doc, NameSource, NodeId, RoleSource};
 

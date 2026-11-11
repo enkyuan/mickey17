@@ -133,7 +133,7 @@ explicit role are never covered), `added-component-attributes` (the candidate on
 (the candidate only *adds* `aria-expanded="false"` / `aria-disabled="false"` / `aria-haspopup` to an element whose role is
 `button` (a plain button or summary) or an `<a>` link, or its implicit `aria-live` / `aria-atomic` values to a
 `status` / `alert` / `log` region that had neither; tabs, comboboxes, menu items and switches never qualify; see
-`docs/parity-reports/named-equivalences.md`). The Rust gate sees the
+`docs/parity-named-equivalences.md`). The Rust gate sees the
 same equivalences: style/href values are canonicalised on both sides, and tag / role / data /
 tabindex / aria facts of a pair are set to the reference value (aria: only the equivalent
 additions are dropped from the candidate) only when the pair carries that minor item. `tests/parity-diff.test.ts` asserts, over a catalogue of mutations, that the gate's facts
