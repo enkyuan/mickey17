@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (123 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (129 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -300,12 +300,23 @@ M3 same-id events that differ only in inputs depended on file order (full hash a
 Known and kept: a card in Arabic-Indic digits, with a letter between groups, or split across fields is not detected; a numeric id of 12+ digits is token-grade and redacted; a server-issued
 value that reads as a name (`action=confirm`) and differs between runs blocks alignment.
 
-**Round 9:** re-review of the round-8 delta only — see below once it has run.
+**Round 9 (Opus, high; round-8 delta only): 4 HIGH, 2 MEDIUM regressions of the round-8 delta (all verified against 35b9542).** Fixed and pinned ("round 9"), with a change of policy
+rather than another heuristic: H1 `nameLike` made swapped requests resolve when the operation value was not name-like. Alignment now (a) blocks any *permutation*
+of operations (the runs issue the same operation values in a different order) whatever their shape, and (b) for values that differ without being a permutation, blocks unless
+a run parameter explains them or the value is an id/nonce (token-grade, or a 12+ character mixed token with a digit); H2 the card-network table missed Maestro, Mir, RuPay, Elo, Troy,
+Verve and test cards (network rule removed: Luhn over groups; numeric ids of 14+ digits are redacted by the token rule anyway, so the network rule only added leaks); H3 the epoch
+fold hid 16-digit cards used as keys (now only epoch-like numbers starting with `1`, i.e. 2001-2033, are folded); H4 URL constants leaked via any dotted "host" and via one extra word segment
+(only real hosts with an alphabetic TLD are skipped; a readable path means *every* segment is a word, a slug or a number); M1 comma-separated cards (groups with `,`/`, ` separators; a card is
+a span of 2 to 7 whole digit groups, optionally with the first group cut to its last 4 or 6 digits and the last cut to its first 3, 4 or 5, so glued prefixes and expiry dates do not hide it);
+M2 `CALLS` length cap (a look-behind keeps it linear instead). Low: event tie-break order is hash without inputs, then input names, then values (value-independent unless events are otherwise identical);
+`p.slice(2)` on scheme URLs fixed. Known and kept: with same-id events only the winning event's inputs apply.
+
+**Round 10:** re-review of the round-9 delta only — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 123 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 129 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -323,5 +334,5 @@ value that reads as a name (`action=confirm`) and differs between runs blocks al
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (123 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (129 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

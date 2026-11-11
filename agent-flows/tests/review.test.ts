@@ -1085,3 +1085,74 @@ describe("round 8", () => {
         expect(t("li:nth-child(2n+1) > a")).toContain("nth-child(2n+1)");
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 9
+
+describe("round 9", () => {
+    const note = (n: string, loc = "note") => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ [loc]: n }) })])]);
+
+    test("swapped requests block whatever the shape of the operation value", () => {
+        const cases: [string, string, string][] = [
+            ["action", "syncAll", "refreshCart"], ["action", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"],
+            ["method", "cart/get", "order/create"], ["method", "cart:get", "order:create"], ["method", "rpc", "sync"], ["op", "q_8f2Kq9ZxLm41", "q_Zq81mXk9L2f8"],
+            ["operationName", "getCartV123", "getUserV123"], ["operationName", "1234567", "7654321"], ["operationName", "550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"],
+            ["operationName", "getPDP", "getPLP"], ["operationName", "textDocument/didOpen", "textDocument/didClose"], ["operationName", "HTTPGet", "HTTPPost"],
+        ];
+        for (const [field, a, b] of cases) {
+            const mk = (n: string) => req(0, "POST", `${B}/rpc`, { body: jsonBody({ [field]: n, variables: { id: "x" } }) });
+            const g = graphOf([doc("a", [mk(a), { ...mk(b), id: "q9", tMs: 1100 }]), doc("b", [mk(b), { ...mk(a), id: "q9", tMs: 1100 }])]);
+            expect(g.status, `${field}: ${a} / ${b}`).toBe("blocked");
+        }
+    });
+
+    test("a parameter-driven operation, and ids that differ in every run, still align", () => {
+        const mk = (run: string, op: string) => doc(run, [req(0, "POST", `${B}/rpc`, { body: jsonBody({ action: op }) })], [["action", op]]);
+        expect(graphOf([mk("a", "GetCart"), mk("b", "getPDP")]).status).toBe("resolved");
+    });
+
+    test("cards of any network and in any separator style are withheld", () => {
+        for (const n of ["6759 6498 2643 8453", "2200 7012 3456 7896", "6073 8492 0175 6342", "6363 6812 0948 5726", "9792 1048 3756 2910", "6771798021000008", "4539, 1488, 0343, 6467", "4539,1488,0343,6467,1227", "1227,4539,1488,0343,6467", "3782,822463,10005", "4539,148803,436467"]) {
+            const text = toJson(note(n));
+            expect(text, n).not.toMatch(/6759|2200 7012|6073 8492|6363 6812|9792 1048|6771798021|4539|3782/);
+        }
+    });
+
+    test("a card used as a key is redacted; epoch keys are not", () => {
+        for (const k of ["4012888888881881", "4000056655665556", "2223003122003222", "3530111333300000", "4000000000006"]) {
+            const g = graphOf([doc("a", [req(0, "POST", `${B}/x?${k}=1`, { body: jsonBody({ cards: { [k]: 1 } }) })]), doc("b", [req(0, "POST", `${B}/x?${k}=1`, { body: jsonBody({ cards: { [k]: 1 } }) })])]);
+            expect(toJson(g), k).not.toContain(k);
+        }
+    });
+
+    test("secrets in URL constants (dotted hosts, dotted or tilde path blobs) are redacted; readable URLs are kept", () => {
+        for (const v of ["//k9QmZ2x.Lp8Rt4v.N7wXyQ", "https://k9QmZ2x.Lp8Rt4v.N7wXyQ/", "https://s.test/api/files/k9QmZ2x.Lp8Rt4v.N7wXyQ", "https://cdn.x.com/media/a1B2.c3D4+e5F6g7h", "https://s.test/reset/confirm/Ab3~Xy9~Qw7~Lm2"]) {
+            expect(toJson(note(v)), v).not.toMatch(/k9QmZ2x|a1B2\.c3D4|Ab3~Xy9/);
+        }
+        for (const v of ["https://s.test/api/v2/cart", "https://s.test/orders/2024/summary"]) expect(toJson(note(v, "returnUrl"))).toContain(v);
+    });
+
+    test("event tie-break does not depend on input values; very long call names are scrubbed", () => {
+        const mk = (run: string, q: string, zip: string) => {
+            const reqs = [req(0, "POST", `${B}/x`, { body: jsonBody({ query: q, zip }) })];
+            const t = traceOf(run, [], reqs);
+            t.events = [{ id: "e0", t: "2026-11-09T10:00:01.000Z", type: "fill", target: "#a", inputs: { query: q }, requests: ["q0"] }, { id: "e0", t: "2026-11-09T10:00:01.000Z", type: "fill", target: "#a", inputs: { zip }, requests: ["q0"] }];
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        // Only one of two events that share an id can win; which one must not depend on the typed values.
+        const outcome = (qa: string, za: string, qb: string, zb: string) => {
+            const g = graphOf([mk("a", qa, za), mk("b", qb, zb)]);
+            return [valueOf(g, 0, "json:$.query")!.class, valueOf(g, 0, "json:$.zip")!.class];
+        };
+        const first = outcome("red", "94110", "blue", "10001");
+        expect(first.sort()).toEqual(["client-computed", "input"]);
+        expect(outcome("navy", "73301", "teal", "02139")).toEqual(outcome("red", "94110", "blue", "10001"));
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mkT = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = `${"x".repeat(70)}("hunter2")`;
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        expect(toJson(graphOf([mkT("a"), mkT("b")]))).not.toContain("hunter2");
+    });
+});

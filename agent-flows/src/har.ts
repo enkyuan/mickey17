@@ -45,8 +45,9 @@ export interface TraceEvent {
     /** What the user supplied at this event, flattened to dotted names. */
     inputs: Map<string, string>;
     requests: string[];
-    /** Hash of the event without its per-run inputs, then with them: the last sort tie-breaks (recorders may reuse ids). */
+    /** Hashes without the per-run inputs, with only their names, and with their values: sort tie-breaks in that order (recorders may reuse ids). */
     key: string;
+    nameKey: string;
     fullKey: string;
 }
 
@@ -104,7 +105,7 @@ export function parseRecording(har: string, trace: string, cookies?: string | nu
     const entries = parseEntries(harV, skipped);
     entries.sort((a, b) => a.startedUs - b.startedUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key));
     const events = parseEvents(t);
-    events.sort((a, b) => a.tUs - b.tUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key) || cmp(a.fullKey, b.fullKey));
+    events.sort((a, b) => a.tUs - b.tUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key) || cmp(a.nameKey, b.nameKey) || cmp(a.fullKey, b.fullKey));
     const jar = cookies ? parseCookieJar(cookies) : [];
     jar.sort((a, b) => cmp(a.name, b.name) || cmp(a.value, b.value));
     return { id, params, entries, events, initialCookies: jar, skipped };
@@ -211,6 +212,15 @@ function withoutInputs(e: JVal): JVal {
     if (e.t !== "obj") return e;
     const entries = new Map(e.entries);
     entries.delete("inputs");
+    return { t: "obj", entries };
+}
+
+/** An event whose `inputs` keep their names but not their values. */
+function withInputNames(e: JVal): JVal {
+    if (e.t !== "obj") return e;
+    const entries = new Map(e.entries);
+    const inputs = entries.get("inputs");
+    if (inputs?.t === "obj") entries.set("inputs", { t: "obj", entries: new Map([...inputs.entries.keys()].map((k) => [k, { t: "null" } as JVal])) });
     return { t: "obj", entries };
 }
 
@@ -378,6 +388,7 @@ function parseEvents(t: Map<string, JVal>): TraceEvent[] {
         }
         out.push({
             key: sha256Hex(stable(withoutInputs(e))),
+            nameKey: sha256Hex(stable(withInputNames(e))),
             fullKey: sha256Hex(stable(e)),
             id,
             tUs,

@@ -113,22 +113,11 @@ export function shape(v: string): string {
     return "opaque";
 }
 
-/** Card networks by number prefix and length (Visa, Mastercard, Amex, Discover, Diners, JCB, UnionPay). */
-const CARD_NETWORKS = [
-    /^4(?:\d{12}|\d{15}|\d{18})$/,
-    /^(?:5[1-5]\d{14}|2(?:2[2-9]\d|[3-6]\d\d|7[01]\d|720)\d{12})$/,
-    /^3[47]\d{13}$/,
-    /^(?:6011\d{12,15}|65\d{14,17}|64[4-9]\d{13,16})$/,
-    /^3(?:0[0-5]|[68]\d)\d{11,16}$/,
-    /^35(?:2[89]|[3-8]\d)\d{12,15}$/,
-    /^62\d{14,17}$/,
-];
-
-/** A card number: a known network's prefix and length, and a valid Luhn checksum. */
+/** A card number: 13 to 19 digits (spaces and dashes allowed) with a valid Luhn checksum. */
 export function looksLikeCard(v: string): boolean {
     if (!/^[0-9 -]+$/.test(v)) return false;
     const str = v.replace(/\D/g, "");
-    if (str.length < 13 || str.length > 19 || !CARD_NETWORKS.some((re) => re.test(str))) return false;
+    if (str.length < 13 || str.length > 19) return false;
     return luhn([...str].map(Number), 0, str.length);
 }
 
@@ -159,45 +148,64 @@ export function sensitiveLocation(loc: string): boolean {
 }
 
 /**
- * A card number anywhere in the text: a window of 13 to 19 digits of a digit run (digits with single
- * separators: space, `.`, `_`, `/`, `-`, NBSP; full-width digits are normalised) that has a card network's prefix and
- * length and a valid Luhn checksum, or four 4-digit groups joined by commas. Windows are tried where a group of
- * digits starts or ends, so digits glued in front of or behind the number (an expiry date) do not hide it.
- * Work is bounded and the bounds fail closed: a huge value is withheld rather than scanned.
+ * A card number anywhere in the text. Digits form groups separated by single separators (space, `,`, `.`, `_`, `/`, `-`, NBSP;
+ * full-width digits are normalised). A window is the whole groups of a span of 2 to 7 groups, 13 to 19 digits long and Luhn-valid,
+ * or the same with the first group cut to its last 4 or 6 digits and the last group cut to its first 3, 4 or 5, so digits glued in
+ * front of the number or an expiry date behind it do not hide it. A single unseparated run is tested whole. Any card network
+ * qualifies (Maestro, Mir, RuPay, ... as well as Visa and Mastercard); values that are not cards but pass by chance are
+ * withheld, the safe direction. Work is bounded and the bounds fail closed.
  */
 function cardIn(text: string): boolean {
     if (text.length > 1_048_576) return true;
     const t = text.normalize("NFKC");
-    for (const m of t.matchAll(/(?<!\d)\d{4}(?:,\d{4}){3,4}(?!\d)/g)) if (looksLikeCard(m[0].replace(/,/g, ""))) return true;
     let runs = 0;
     let work = 0;
-    for (const m of t.matchAll(/\d(?:[ \u00a0._/-]{0,2}\d)*/g)) {
+    for (const m of t.matchAll(/\d(?:[ \u00a0,._/-]{0,2}\d)*/g)) {
         if (m[0].length < 13) continue;
         if (++runs > 4096) return true;
-        const run = m[0];
-        const digits: number[] = [];
-        const starts: number[] = [];
-        const ends: number[] = [];
-        for (let i = 0; i < run.length; i++) {
-            const c = run.charCodeAt(i);
-            if (c < 48 || c > 57) continue;
-            if (digits.length >= 4096) return true;
-            if (i === 0 || run.charCodeAt(i - 1) < 48 || run.charCodeAt(i - 1) > 57) starts.push(digits.length);
-            digits.push(c - 48);
-            const next = run.charCodeAt(i + 1);
-            if (i + 1 >= run.length || next < 48 || next > 57) ends.push(digits.length);
-        }
-        const tryWindow = (s0: number, l: number): boolean => {
-            if (s0 < 0 || s0 + l > digits.length) return false;
-            work += l;
-            const str = digits.slice(s0, s0 + l).join("");
-            return CARD_NETWORKS.some((re) => re.test(str)) && luhn(digits, s0, l);
+        const groups = m[0].split(/[^0-9]+/).filter(Boolean);
+        const total = groups.reduce((n, g) => n + g.length, 0);
+        if (total > 4096) return true;
+        const test = (digits: string): boolean => {
+            work += digits.length;
+            return digits.length >= 13 && digits.length <= 19 && luhnStr(digits);
         };
-        for (const s0 of starts) for (let l = 13; l <= 19; l++) if (tryWindow(s0, l)) return true;
-        for (const e0 of ends) for (let l = 13; l <= 19; l++) if (tryWindow(e0 - l, l)) return true;
-        if (work > 20_000_000) return true;
+        if (groups.length === 1) {
+            if (test(groups[0]!)) return true;
+            continue;
+        }
+        for (let i = 0; i < groups.length; i++) {
+            let mid = "";
+            for (let j = i; j < groups.length && j < i + 7; j++) {
+                const first = groups[i]!;
+                const last = groups[j]!;
+                if (j > i) {
+                    const body = mid; // groups i+1..j-1, whole
+                    const full = first + body + last;
+                    if (full.length > 19 + 12) break;
+                    const firsts = [first, ...[4, 6].filter((k) => k < first.length).map((k) => first.slice(-k))];
+                    const lasts = [last, ...[3, 4, 5].filter((k) => k < last.length).map((k) => last.slice(0, k))];
+                    for (const f of firsts) for (const l of lasts) if (test(f + body + l)) return true;
+                    mid += last;
+                }
+            }
+            if (work > 20_000_000) return true;
+        }
     }
     return false;
+}
+
+function luhnStr(d: string): boolean {
+    let sum = 0;
+    for (let i = 0; i < d.length; i++) {
+        let x = d.charCodeAt(d.length - 1 - i) - 48;
+        if (i % 2 === 1) {
+            x *= 2;
+            if (x > 9) x -= 9;
+        }
+        sum += x;
+    }
+    return sum % 10 === 0;
 }
 
 function luhn(d: number[], start: number, len: number): boolean {
@@ -268,12 +276,12 @@ function rawTokenish(p: string, slugOk = false, pathOk = false): boolean {
     if (p.includes("://") || p.startsWith("//")) {
         // A URL: the scheme and a real host are not secrets; the rest (its path, or a host that is not one) is checked, once.
         const m = /^(?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\/([^/?#]*)/.exec(p);
-        if (m) p = HOST.test(m[1]!) || /^[A-Za-z0-9.-]+(?::\d+)?$/.test(m[1]!) ? p.slice(m[0].length) : p.slice(2);
+        if (m) p = HOST.test(m[1]!) ? p.slice(m[0].length) : p.slice(m[0].length - m[1]!.length);
         if (p.length < 2) return false;
     }
     const segs = p.split("/").filter(Boolean);
-    // A readable path (`/api/v2/carts/`): mostly words, slugs and version tokens.
-    if ((slugOk || pathOk) && segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || /^[a-z]{1,3}\d{1,3}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false;
+    // A readable path (`/api/v2/carts/`): every segment is a word, a slug, a number or a version token.
+    if ((slugOk || pathOk) && segs.length >= 2 && segs.every((s) => /^[A-Za-z]{3,}$/.test(s) || /^[a-z]{0,3}\d{1,6}$/.test(s) || slugLike(s))) return false;
     return p.length >= 12 && distinctCount(p) >= 6 && entropyBitsPerChar(p) >= 3.0 && /\d/.test(p);
 }
 
@@ -364,7 +372,7 @@ export function redactConstant(loc: string, value: string): boolean {
     return !benignValue(loc, value) && secretish(value, slugOkLocation(loc), slugOkLocation(loc) || urlish);
 }
 
-const CALLS = /\b[A-Za-z_][\w-]{0,63}\s*\(/g;
+const CALLS = /(?<![\w-])[A-Za-z_][\w-]*\s*\(/g;
 /** CSS structural pseudo-classes whose short argument is kept (`:nth-child(2)`). */
 const KEEP_PSEUDO = /:(?:nth-child|nth-of-type|nth-last-child|nth-last-of-type|not|is|where)$/;
 
@@ -417,5 +425,5 @@ export function safeText(text: string): string {
 
 /** A location that embeds a token-grade key (a session id used as a JSON key or query name). */
 export function safeLocation(loc: string): string {
-    return piiish(loc) || cardIn(loc.replace(/\d+/g, (d) => (looksEpoch(d) ? "x" : d))) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
+    return piiish(loc) || cardIn(loc.replace(/\d+/g, (d) => (d.startsWith("1") && looksEpoch(d) ? "x" : d))) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
 }

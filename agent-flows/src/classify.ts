@@ -1,6 +1,6 @@
 // Alignment, cross-request matching and value classing.
 
-import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
+import { hasTokenPiece, isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
@@ -275,11 +275,13 @@ function jarSlots(rec: Recording): Slot[] {
 const TOP_OPERATION = /^(?:json:\$|json:\$\[\d+\])\.(?:operationName|operation|op|action|method|mutation|cmd)$|^(?:url\.query|form):(?:operationName|operation|op|action|method|mutation|cmd)$|^json:\$\[\d+\]\.operationName$/i;
 const GRAPHQL_DOCUMENT = /^(?:json:\$|json:\$\[\d+\])\.query$|^(?:url\.query|form):query$/;
 /**
- * The operation a request value names, or null when it is not an operation name. A value that looks
- * like an id (server-issued) is not an operation name either: it is a derived value, not an endpoint.
+ * The operation a request value names, or null when the field is not an operation field. Whatever the shape of the
+ * value, a difference between runs blocks alignment unless a run parameter explains it: the shape of a value says nothing
+ * about whether two requests are the same request (a hash can be a persisted-query id, a name can be a server nonce). A flow
+ * whose operation field carries a server-issued value that varies per run is not alignable by position and blocks.
  */
 function operationOf(loc: string, value: string): string | null {
-    if (TOP_OPERATION.test(loc)) return nameLike(value) ? value : null;
+    if (TOP_OPERATION.test(loc)) return value;
     if (GRAPHQL_DOCUMENT.test(loc)) {
         const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
         return m ? `gql:${m[1]}` : null;
@@ -287,27 +289,27 @@ function operationOf(loc: string, value: string): string | null {
     return null;
 }
 
-/**
- * Whether a value reads as the name of an operation (`GetCart`, `cart.v1.get`, `update`, `GetCartV2Checkout`) rather than an
- * id or nonce: words (camelCase, `.`, `_`, `-` separated) of real letters, with at most short version numbers. Only names
- * are compared across runs; an id-like value is a data value and is classified like any other. This does not depend on where
- * the value came from, so a listing of names in a page, bundle or response cannot make swapped requests look alignable.
- */
-function nameLike(value: string): boolean {
-    if (value.length === 0 || value.length > 96 || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(value)) return false;
-    const parts = value.split(/[._-]|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=\D)(?=\d)|(?<=\d)(?=\D)/).filter(Boolean);
-    const word = (w: string) => /^(?:[a-z]{1,15}|[A-Z][a-z]{1,14}|[A-Z]{1,6})$/.test(w) && (w.length <= 2 || /[aeiouAEIOU]/.test(w));
-    const alpha = parts.filter((w) => !/^\d+$/.test(w));
-    const short = alpha.filter((w) => w.length <= 2).length;
-    // Mostly real words: junk fragments (`8f2Kq9ZxLm41` splits into `f`, `Kq`, `Zx`, `Lm`) mean an id, not a name.
-    return parts.every((w) => /^\d{1,2}$/.test(w) || word(w)) && parts.length <= 12 && short <= 2 && short * 2 <= alpha.length;
-}
+/** A value that is an identifier or nonce rather than a name: token-grade, or a long mixed token with a digit. */
+const idLikeOperation = (v: string): boolean => hasTokenPiece(v) || (isWeakEvidence(v) && /\d/.test(v) && v.length >= 12);
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
     const n = runs[0]!.entries.length;
     for (const r of runs) {
         if (r.entries.length !== n) {
             return `runs are not alignable: they recorded ${n} and ${r.entries.length} requests (filter ambient traffic with ignoreHosts or onlyTraced, or re-record)`;
+        }
+    }
+    // Reordering: the runs issue the same operations (same multiset) in a different order. Whatever the shape of the values
+    // (names, hashes, ids), that is a permutation of requests to one endpoint and cannot be aligned by position.
+    const tuples = runs.map((r) => r.reqMap.map((m) => [...m].map(([loc, v]) => [loc, operationOf(loc, v)] as const).filter(([, o]) => o !== null).map(([loc, o]) => `${loc}=${o}`).sort(cmp).join("\u0001")));
+    for (let x = 0; x < tuples.length; x++) {
+        for (let y = x + 1; y < tuples.length; y++) {
+            const tx = tuples[x]!;
+            const ty = tuples[y]!;
+            const same = [...tx].sort(cmp).join("\u0002") === [...ty].sort(cmp).join("\u0002");
+            if (same && tx.some((t, i) => t !== "" && t !== ty[i])) {
+                return "runs are not alignable: they issue the same operations in a different order (the requests were reordered)";
+            }
         }
     }
     for (let i = 0; i < n; i++) {
@@ -332,8 +334,9 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
             });
             if (vals.every((v) => v === null || v === undefined)) continue;
             if (vals.every((v) => v === vals[0])) continue;
-            // Explained by a run parameter.
-            if (vals.every((v, r) => v !== null && v !== undefined && params[r]!.has(v))) continue;
+            // Explained by a run parameter, or an id/nonce that is different in every run (data, not an operation name; a swap of
+            // such values was already caught as a reordering above).
+            if (vals.every((v, r) => v !== null && v !== undefined && (params[r]!.has(v) || idLikeOperation(v)))) continue;
             return `runs are not alignable at step ${i}: the operation (${safeLocation(key)}) differs between runs (the requests may have been reordered)`;
         }
         // A path segment that differs between runs must be an id (token-grade in every run) or
