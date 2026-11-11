@@ -1,0 +1,8 @@
+{
+    "name": "mochi-agent-fixture-shops",
+    "private": true,
+    "type": "module",
+    "description": "Build-time dependencies for the React and Svelte fixture shops. The built bundles are committed; install only to rebuild.",
+    "scripts": { "build": "bun build.ts" },
+    "devDependencies": { "react": "19.2.3", "react-dom": "19.2.3", "svelte": "5.34.1" }
+}

@@ -1,0 +1,466 @@
+{
+    "schema": "mochi.agent.flow-truth/0.1",
+    "mapping": "Plain JSON following docs/AGENT_SURFACE.md D5/D11 until the agent-schema package merges; field mapping is in docs/agent-surface/log/agent-fixtures.md. Authored by hand from react/app.jsx, shared/core.ts and shared/http.ts. Never produced by running an extractor.",
+    "stack": "react",
+    "origin": "http://shop.test",
+    "authoredFrom": ["react/app.jsx", "react/server.ts", "shared/http.ts", "shared/core.ts", "shared/sign.js"],
+    "ignoredRequests": [{"method": "GET", "pathPrefix": "/static/", "reason": "script assets, not flow steps"}],
+    "locators": "<requestId>:<location>. Request side: header.<name>, cookie.<name>, url.path[<n>] (0-based, '/'-split, empty segments dropped), url.query.<k>, body.json.<path>, body.form.<field>. Response side: res.json.<path>, res.cookie.<name>, res.header.<name>, res.html.<css>@<attr>.",
+    "classes": {
+        "constant": "same in every run",
+        "input": "varies with caller intent; role 'idempotency-key' marks a caller-minted unique key that needs no site code",
+        "derived": "taken from an earlier response, cookie or the page",
+        "client-computed": "no source in any recording; produced by site JS (exactly one per stack)"
+    },
+    "steps": [
+        {
+            "id": "bootstrap",
+            "title": "Open the shop (document + session)",
+            "effect": "read",
+            "scenarios": ["success", "validation-error", "out-of-stock", "declined"],
+            "requests": [
+                {
+                    "id": "bootstrap",
+                    "method": "GET",
+                    "path": "/",
+                    "values": [],
+                    "responses": [{"status": 200, "class": "document"}],
+                    "sets": [
+                        {"at": "res.cookie.sid", "httpOnly": true, "note": "session id"},
+                        {
+                            "at": "res.html.meta[name=csrf-token]@content",
+                            "note": "CSRF token, read by client JS from the page"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "catalog",
+            "title": "Load products",
+            "effect": "read",
+            "scenarios": ["success", "validation-error", "out-of-stock", "declined"],
+            "requests": [
+                {
+                    "id": "catalog",
+                    "method": "GET",
+                    "path": "/api/products",
+                    "values": [{"at": "cookie.sid", "class": "derived", "automatic": true}],
+                    "responses": [
+                        {
+                            "status": 200,
+                            "class": "ok",
+                            "shape": "{products:[{sku,name,priceCents,stock,currency}]}"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "create-cart",
+            "title": "Start a cart",
+            "effect": "write-reversible",
+            "scenarios": ["success", "validation-error", "out-of-stock", "declined"],
+            "requests": [
+                {
+                    "id": "create-cart",
+                    "method": "POST",
+                    "path": "/api/carts",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "header.x-csrf-token", "class": "derived"},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {"at": "body.json", "class": "constant", "value": {}}
+                    ],
+                    "responses": [
+                        {
+                            "status": 201,
+                            "class": "ok",
+                            "shape": "{cart:{id,status,items,address,shippingRate,subtotalCents,shippingCents,taxCents,totalCents,currency}}"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "add-item",
+            "title": "Add a product to the cart",
+            "effect": "write-reversible",
+            "scenarios": ["success", "validation-error", "out-of-stock", "declined"],
+            "requests": [
+                {
+                    "id": "add-item",
+                    "method": "POST",
+                    "path": "/api/carts/{cartId}/items",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "cartId"},
+                        {"at": "header.x-csrf-token", "class": "derived"},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {
+                            "at": "body.json.sku",
+                            "class": "input",
+                            "name": "sku",
+                            "type": "enum",
+                            "domainFrom": "catalog:res.json.products[].sku"
+                        },
+                        {
+                            "at": "body.json.quantity",
+                            "class": "input",
+                            "name": "quantity",
+                            "type": "integer",
+                            "constraints": {"min": 1, "max": 10},
+                            "encoding": "JSON string, sent as typed; the server parses it strictly (whole decimal integer text)"
+                        }
+                    ],
+                    "responses": [
+                        {
+                            "status": 200,
+                            "class": "ok",
+                            "scenarios": ["success", "validation-error", "declined"]
+                        },
+                        {
+                            "status": 422,
+                            "class": "validation",
+                            "code": "validation_failed",
+                            "scenarios": ["validation-error"],
+                            "fieldsKeys": ["quantity"]
+                        },
+                        {
+                            "status": 409,
+                            "class": "conflict",
+                            "code": "out_of_stock",
+                            "scenarios": ["out-of-stock"]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "set-address",
+            "title": "Save the shipping address",
+            "effect": "write-reversible",
+            "scenarios": ["success", "validation-error", "declined"],
+            "requests": [
+                {
+                    "id": "set-address",
+                    "method": "PUT",
+                    "path": "/api/carts/{cartId}/address",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "cartId"},
+                        {"at": "header.x-csrf-token", "class": "derived"},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {
+                            "at": "body.json.name",
+                            "class": "input",
+                            "name": "name",
+                            "type": "string",
+                            "constraints": {"required": true, "maxLength": 80}
+                        },
+                        {
+                            "at": "body.json.line1",
+                            "class": "input",
+                            "name": "line1",
+                            "type": "string",
+                            "constraints": {"required": true}
+                        },
+                        {
+                            "at": "body.json.city",
+                            "class": "input",
+                            "name": "city",
+                            "type": "string",
+                            "constraints": {"required": true}
+                        },
+                        {
+                            "at": "body.json.region",
+                            "class": "input",
+                            "name": "region",
+                            "type": "string",
+                            "constraints": {"pattern": "^[A-Za-z]{2}$"}
+                        },
+                        {
+                            "at": "body.json.postalCode",
+                            "class": "input",
+                            "name": "postalCode",
+                            "type": "string",
+                            "constraints": {"pattern": "^\\d{5}$"}
+                        },
+                        {
+                            "at": "body.json.country",
+                            "class": "input",
+                            "name": "country",
+                            "type": "string",
+                            "constraints": {"enum": ["US"]},
+                            "default": "US"
+                        }
+                    ],
+                    "responses": [
+                        {
+                            "status": 200,
+                            "class": "ok",
+                            "scenarios": ["success", "validation-error", "declined"]
+                        },
+                        {
+                            "status": 422,
+                            "class": "validation",
+                            "code": "validation_failed",
+                            "scenarios": ["validation-error"],
+                            "fieldsKeys": ["name", "region", "postalCode"]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "shipping-rates",
+            "title": "Fetch shipping rates (client issues this right after the address is saved)",
+            "effect": "read",
+            "scenarios": ["success", "validation-error", "declined"],
+            "requests": [
+                {
+                    "id": "shipping-rates",
+                    "method": "GET",
+                    "path": "/api/carts/{cartId}/shipping-rates",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "cartId"}
+                    ],
+                    "responses": [{"status": 200, "class": "ok", "shape": "{rates:[{id,label,amountCents,etaDays}]}"}]
+                }
+            ]
+        },
+        {
+            "id": "select-shipping",
+            "title": "Choose a shipping rate",
+            "effect": "write-reversible",
+            "scenarios": ["success", "validation-error", "declined"],
+            "requests": [
+                {
+                    "id": "select-shipping",
+                    "method": "PUT",
+                    "path": "/api/carts/{cartId}/shipping-rate",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "cartId"},
+                        {"at": "header.x-csrf-token", "class": "derived"},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {
+                            "at": "body.json.rateId",
+                            "class": "derived",
+                            "name": "rateId",
+                            "choice": "one of shipping-rates:res.json.rates[].id, picked by label (Standard|Express)"
+                        }
+                    ],
+                    "responses": [{"status": 200, "class": "ok"}]
+                }
+            ]
+        },
+        {
+            "id": "tokenize-payment",
+            "title": "Hosted-field-style tokenization (test stub; no card data)",
+            "effect": "write-reversible",
+            "scenarios": ["success", "validation-error", "declined"],
+            "requests": [
+                {
+                    "id": "tokenize-payment",
+                    "method": "POST",
+                    "path": "/payments-stub/v1/tokens",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {
+                            "at": "body.json.method",
+                            "class": "input",
+                            "name": "method",
+                            "type": "enum",
+                            "constraints": {"enum": ["test_ok", "test_declined"]}
+                        }
+                    ],
+                    "responses": [{"status": 201, "class": "ok", "shape": "{token}"}],
+                    "payment": {
+                        "hostedField": true,
+                        "tokenOnly": true,
+                        "note": "no card numbers exist anywhere in the fixture; the method id selects the outcome"
+                    }
+                }
+            ]
+        },
+        {
+            "id": "place-order",
+            "title": "Place the order (payment)",
+            "effect": "financial",
+            "idempotent": true,
+            "scenarios": ["success", "validation-error", "declined"],
+            "requests": [
+                {
+                    "id": "place-order",
+                    "method": "POST",
+                    "path": "/api/carts/{cartId}/orders",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "cartId"},
+                        {"at": "header.x-csrf-token", "class": "derived"},
+                        {"at": "header.content-type", "class": "constant", "value": "application/json"},
+                        {
+                            "at": "header.idempotency-key",
+                            "class": "input",
+                            "role": "idempotency-key",
+                            "generator": "uuid-v4",
+                            "origin": "client-generated",
+                            "note": "minted by crypto.randomUUID() when the shipping rate is chosen and kept for the attempt; the executor may mint its own"
+                        },
+                        {
+                            "at": "header.x-signature",
+                            "class": "client-computed",
+                            "function": "sign(timestampMs, rawBody)",
+                            "producer": "shared/sign.js",
+                            "inputs": ["Date.now()", "body.json (the exact serialized body)"],
+                            "format": "v1.<timestamp ms>.<14 hex>",
+                            "serverCheck": "recomputed over the raw body; timestamp within 5 min of the server clock"
+                        },
+                        {"at": "body.json.paymentToken", "class": "derived", "name": "paymentToken"}
+                    ],
+                    "responses": [
+                        {
+                            "status": 201,
+                            "class": "ok",
+                            "scenarios": ["success", "validation-error"],
+                            "shape": "{order:{id,status,cartId,items,address,shipping,subtotalCents,taxCents,totalCents,currency,placedAt}}"
+                        },
+                        {
+                            "status": 402,
+                            "class": "payment-declined",
+                            "code": "card_declined",
+                            "scenarios": ["declined"]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "order-status",
+            "title": "Read the order (confirmation screen)",
+            "effect": "read",
+            "scenarios": ["success", "validation-error"],
+            "requests": [
+                {
+                    "id": "order-status",
+                    "method": "GET",
+                    "path": "/api/orders/{orderId}",
+                    "values": [
+                        {"at": "cookie.sid", "class": "derived", "automatic": true},
+                        {"at": "url.path[2]", "class": "derived", "name": "orderId"}
+                    ],
+                    "responses": [{"status": 200, "class": "ok", "shape": "{order:{...}}"}]
+                }
+            ]
+        }
+    ],
+    "edges": [
+        {
+            "from": "bootstrap:res.cookie.sid",
+            "to": [
+                "catalog:cookie.sid",
+                "create-cart:cookie.sid",
+                "add-item:cookie.sid",
+                "set-address:cookie.sid",
+                "shipping-rates:cookie.sid",
+                "select-shipping:cookie.sid",
+                "tokenize-payment:cookie.sid",
+                "place-order:cookie.sid",
+                "order-status:cookie.sid"
+            ],
+            "via": "cookie jar"
+        },
+        {
+            "from": "bootstrap:res.html.meta[name=csrf-token]@content",
+            "to": [
+                "create-cart:header.x-csrf-token",
+                "add-item:header.x-csrf-token",
+                "set-address:header.x-csrf-token",
+                "select-shipping:header.x-csrf-token",
+                "place-order:header.x-csrf-token"
+            ],
+            "via": "page meta tag -> header (client JS)"
+        },
+        {
+            "from": "create-cart:res.json.cart.id",
+            "to": [
+                "add-item:url.path[2]",
+                "set-address:url.path[2]",
+                "shipping-rates:url.path[2]",
+                "select-shipping:url.path[2]",
+                "place-order:url.path[2]"
+            ],
+            "via": "response JSON -> URL segment"
+        },
+        {
+            "from": "shipping-rates:res.json.rates[].id",
+            "to": "select-shipping:body.json.rateId",
+            "via": "response JSON (chosen element) -> body JSON"
+        },
+        {
+            "from": "tokenize-payment:res.json.token",
+            "to": "place-order:body.json.paymentToken",
+            "via": "response JSON -> body JSON"
+        },
+        {
+            "from": "place-order:res.json.order.id",
+            "to": "order-status:url.path[2]",
+            "via": "response JSON -> URL segment"
+        }
+    ],
+    "stateDependencies": [
+        {
+            "step": "set-address",
+            "requires": ["add-item"],
+            "reason": "address form only appears once the cart has an item"
+        },
+        {"step": "shipping-rates", "requires": ["set-address"], "server": "409 address_required otherwise"},
+        {
+            "step": "select-shipping",
+            "requires": ["shipping-rates"],
+            "server": "422 unless rateId is in the latest quote"
+        },
+        {
+            "step": "place-order",
+            "requires": ["select-shipping", "tokenize-payment"],
+            "server": "409 cart_incomplete without address or rate"
+        }
+    ],
+    "controls": [
+        {
+            "mutate": "omit or alter x-csrf-token on any POST/PUT under /api",
+            "expect": {"status": 403, "code": "csrf_invalid"}
+        },
+        {
+            "mutate": "alter x-signature, or sign a different body",
+            "expect": {"status": 401, "code": "invalid_signature"}
+        },
+        {
+            "mutate": "x-signature timestamp more than 5 minutes from the server clock",
+            "expect": {"status": 401, "code": "signature_expired"}
+        },
+        {"mutate": "omit idempotency-key", "expect": {"status": 400, "code": "idempotency_key_required"}},
+        {
+            "mutate": "replay a place-order that returned 201 with the same key and body",
+            "expect": {"status": 201, "header": "idempotent-replayed: true", "sameOrderId": true},
+            "note": "after a 402 the token is spent and failures are not cached, so an identical retry returns 422 invalid_payment_token, not a replay"
+        },
+        {
+            "mutate": "reuse the key with a different payment token",
+            "expect": {"status": 422, "code": "idempotency_key_reuse"}
+        },
+        {"mutate": "stale or foreign cartId in the URL", "expect": {"status": 404, "code": "cart_not_found"}},
+        {"mutate": "reuse a payment token", "expect": {"status": 422, "code": "invalid_payment_token"}},
+        {
+            "mutate": "quantity text that is not a plain decimal integer (2.0, 1e1, 0x2, +2)",
+            "expect": {"status": 422, "code": "validation_failed"}
+        }
+    ],
+    "clientComputedCount": 1,
+    "notes": [
+        "The idempotency key is class input with role idempotency-key and is executor-supplied (the executor mints it; no site code runs). Inference should report it via the step's idempotency location (agent-schema FlowStep.idempotency), not as a client-computed value; the signature is the only client-computed value."
+    ]
+}
