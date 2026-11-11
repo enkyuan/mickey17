@@ -51,15 +51,15 @@ export function createShop(opts: ShopOptions = optionsFromEnv()) {
         else if (m === "POST" && path === "/carts") op = "createCart";
         else if (seg[0] === "carts" && seg[1]) {
             cartId = seg[1];
-            if (m === "POST" && seg[2] === "items") (op = "addItem"), (input = { cartId, sku: form.get("sku"), quantity: form.get("quantity") });
-            else if (m === "POST" && seg[2] === "address") {
+            if (m === "POST" && seg[2] === "items" && !seg[3]) (op = "addItem"), (input = { cartId, sku: form.get("sku"), quantity: form.get("quantity") });
+            else if (m === "POST" && seg[2] === "address" && !seg[3]) {
                 const address: Record<string, string> = {};
                 for (const [k, v] of form) if (k !== "_csrf") address[k] = v;
                 (op = "setAddress"), (input = { cartId, address });
-            } else if (m === "GET" && seg[2] === "shipping-rates") (op = "rates"), (input = { cartId });
-            else if (m === "POST" && seg[2] === "shipping-rate") (op = "selectRate"), (input = { cartId, rateId: form.get("rate") });
-            else if (m === "POST" && seg[2] === "orders") (op = "placeOrder"), (input = { cartId, paymentToken: form.get("paymentToken") });
-        } else if (m === "GET" && seg[0] === "orders" && seg[1]) op = "order", (input = { orderId: seg[1] });
+            } else if (m === "GET" && seg[2] === "shipping-rates" && !seg[3]) (op = "rates"), (input = { cartId });
+            else if (m === "POST" && seg[2] === "shipping-rate" && !seg[3]) (op = "selectRate"), (input = { cartId, rateId: form.get("rate") });
+            else if (m === "POST" && seg[2] === "orders" && !seg[3]) (op = "placeOrder"), (input = { cartId, paymentToken: form.get("paymentToken") });
+        } else if (m === "GET" && seg[0] === "orders" && seg[1] && !seg[2]) op = "order", (input = { orderId: seg[1] });
         if (!op) return html(404, "<p>Not found.</p>");
 
         const result = shop.exec(op, ctx, input);

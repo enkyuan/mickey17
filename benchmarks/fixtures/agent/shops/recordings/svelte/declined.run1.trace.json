@@ -121,7 +121,9 @@
     "r10"
    ],
    "domChanges": {
-    "added": [],
+    "added": [
+     "[role=alert]"
+    ],
     "removed": []
    }
   }

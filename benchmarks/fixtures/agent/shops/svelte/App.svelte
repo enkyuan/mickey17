@@ -41,7 +41,7 @@
     }
     async function addItem(e, sku) {
         e.preventDefault();
-        const quantity = Number(new FormData(e.currentTarget).get("quantity"));
+        const quantity = new FormData(e.currentTarget).get("quantity"); // sent as typed
         const r = await call("POST", `/api/carts/${cart.id}/items`, { sku, quantity });
         if (!r.ok) return fail(r);
         error = null;

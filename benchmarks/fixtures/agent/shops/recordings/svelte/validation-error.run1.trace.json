@@ -67,7 +67,9 @@
     "r5"
    ],
    "domChanges": {
-    "added": [],
+    "added": [
+     "[role=alert]"
+    ],
     "removed": []
    }
   },
@@ -85,7 +87,9 @@
     "added": [
      "#address-form"
     ],
-    "removed": []
+    "removed": [
+     "[role=alert]"
+    ]
    }
   },
   {
@@ -104,7 +108,9 @@
     "r7"
    ],
    "domChanges": {
-    "added": [],
+    "added": [
+     "[role=alert]"
+    ],
     "removed": []
    }
   },
@@ -128,7 +134,9 @@
     "added": [
      "#rates"
     ],
-    "removed": []
+    "removed": [
+     "[role=alert]"
+    ]
    }
   },
   {

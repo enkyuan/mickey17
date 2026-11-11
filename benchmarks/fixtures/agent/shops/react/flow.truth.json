@@ -110,7 +110,7 @@
                             "name": "quantity",
                             "type": "integer",
                             "constraints": {"min": 1, "max": 10},
-                            "encoding": "JSON number (client converts the text field with Number())"
+                            "encoding": "JSON string, sent as typed; the server parses it strictly (whole decimal integer text)"
                         }
                     ],
                     "responses": [
@@ -444,15 +444,20 @@
         },
         {"mutate": "omit idempotency-key", "expect": {"status": 400, "code": "idempotency_key_required"}},
         {
-            "mutate": "replay place-order with the same key and body",
-            "expect": {"status": 201, "header": "idempotent-replayed: true", "sameOrderId": true}
+            "mutate": "replay a place-order that returned 201 with the same key and body",
+            "expect": {"status": 201, "header": "idempotent-replayed: true", "sameOrderId": true},
+            "note": "after a 402 the token is spent and failures are not cached, so an identical retry returns 422 invalid_payment_token, not a replay"
         },
         {
             "mutate": "reuse the key with a different payment token",
             "expect": {"status": 422, "code": "idempotency_key_reuse"}
         },
         {"mutate": "stale or foreign cartId in the URL", "expect": {"status": 404, "code": "cart_not_found"}},
-        {"mutate": "reuse a payment token", "expect": {"status": 422, "code": "invalid_payment_token"}}
+        {"mutate": "reuse a payment token", "expect": {"status": 422, "code": "invalid_payment_token"}},
+        {
+            "mutate": "quantity text that is not a plain decimal integer (2.0, 1e1, 0x2, +2)",
+            "expect": {"status": 422, "code": "validation_failed"}
+        }
     ],
     "clientComputedCount": 1
 }

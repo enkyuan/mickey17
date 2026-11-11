@@ -41,7 +41,12 @@ export function validateTruth(t: Truth): string[] {
     const reqs = requestsOf(t);
     const byId = new Map(reqs.map((r) => [r.id, r]));
     if (byId.size !== reqs.length) p.push("duplicate request ids");
-    for (const s of t.steps) if (!EFFECTS.includes(s.effect)) p.push(`step ${s.id}: bad effect ${s.effect}`);
+    for (const s of t.steps) {
+        if (!EFFECTS.includes(s.effect)) p.push(`step ${s.id}: bad effect ${s.effect}`);
+        if (s.effect === "read" && s.requests.some((r) => r.method !== "GET")) p.push(`step ${s.id}: effect read but a request is not GET`);
+        if (s.requests.some((r) => r.values.some((v) => v.role === "idempotency-key")) && s.effect !== "financial")
+            p.push(`step ${s.id}: carries an idempotency key but is not financial`);
+    }
     const inbound = new Set<string>();
     for (const e of t.edges) {
         const [fromReq] = e.from.split(":");
@@ -161,6 +166,15 @@ export function checkTruthAgainstHar(t: Truth, har: { log: { entries: HarEntry[]
             }
             if (v.class === "constant" && v.value !== undefined && v.at !== "body.json" && JSON.stringify(got) !== JSON.stringify(v.value)) p.push(`${r.id}: ${v.at} is ${got}, truth says constant ${JSON.stringify(v.value)}`);
             if (v.class === "constant" && v.at === "body.json" && JSON.stringify(JSON.parse(got)) !== JSON.stringify(v.value)) p.push(`${r.id}: ${v.at} differs from the labelled constant`);
+            // an input may be echoed by the page (re-rendered form values, option lists), but its value
+            // must not be one the server issued: exempt values the caller already sent earlier and
+            // enumerated domains
+            const enumerated = Array.isArray((v.constraints as { enum?: unknown[] } | undefined)?.enum);
+            if (v.class === "input" && !v.domainFrom && !enumerated && got.length >= 8) {
+                const earlier = entries.slice(0, entries.indexOf(e));
+                const sentBefore = earlier.some((o) => decodeURIComponent((o.request.postData?.text ?? "").replace(/\+/g, " ")).includes(got) || o.request.headers.some((h) => h.value === got));
+                if (!sentBefore && earlier.some((o) => responseText(o).includes(got))) p.push(`${r.id}: ${v.at} is labelled input but its value ${got.slice(0, 24)} appears in an earlier response`);
+            }
             if (v.class === "client-computed") {
                 const m = /^v1\.(\d+)\.[0-9a-f]{14}$/.exec(got);
                 const body = e.request.postData?.text ?? "";
@@ -172,8 +186,18 @@ export function checkTruthAgainstHar(t: Truth, har: { log: { entries: HarEntry[]
         const labelled = new Set(r.values.map((v) => v.at));
         for (const h of e.request.headers) {
             const n = h.name.toLowerCase();
-            if (["content-type", "x-csrf-token", "idempotency-key", "x-signature", "x-requested-with"].includes(n) && !labelled.has(`header.${n}`)) p.push(`${r.id}: header ${n} is not labelled`);
+            if (n !== "cookie" && !labelled.has(`header.${n}`)) p.push(`${r.id}: header ${n} is not labelled`);
         }
+        // every path segment that the template leaves open must be labelled
+        const tpl = r.path.split("/").filter(Boolean);
+        const seg = new URL(e.request.url).pathname.split("/").filter(Boolean);
+        tpl.forEach((t, i) => {
+            if (/^\{.+\}$/.test(t) && !labelled.has(`url.path[${i}]`)) p.push(`${r.id}: path segment ${i} is not labelled`);
+        });
+        if (tpl.length !== seg.length) p.push(`${r.id}: path has ${seg.length} segments, template ${tpl.length}`);
+        // the recorded status must be one the truth lists
+        const allowed = (r.responses as { status: number }[] | undefined)?.map((x) => x.status) ?? [];
+        if (!allowed.includes(e.response.status)) p.push(`${r.id}: recorded status ${e.response.status} not in the labelled responses ${JSON.stringify(allowed)}`);
         const text = e.request.postData?.text ?? "";
         const ct = e.request.headers.find((h) => h.name.toLowerCase() === "content-type")?.value ?? "";
         const fields = ct.includes("json") ? Object.keys(text && typeof JSON.parse(text) === "object" ? JSON.parse(text) : {}) : [...new URLSearchParams(text).keys()];
@@ -193,5 +217,46 @@ export function checkTruthAgainstHar(t: Truth, har: { log: { entries: HarEntry[]
                 if (!before.some((e) => responseText(e).includes(got))) p.push(`edge ${edge.from} -> ${to}: value ${got.slice(0, 24)} not found in an earlier ${fromReq} response`);
             }
         }
+    return p;
+}
+
+/**
+ * Checks across several recordings of the same stack (different seeds/inputs): constants never
+ * change, derived / client-computed / idempotency values never repeat across runs, and every
+ * labelled response status is observed at least once.
+ */
+export function checkTruthAcrossRuns(t: Truth, hars: { log: { entries: HarEntry[] } }[]): string[] {
+    const p: string[] = [];
+    const seen = new Map<string, Set<string>[]>(); // `${req}:${at}` -> per-HAR value sets
+    const statuses = new Map<string, Set<number>>();
+    for (const har of hars) {
+        const perHar = new Map<string, Set<string>>();
+        for (const e of har.log.entries) {
+            const r = matchRequest(t, e);
+            if (!r) continue;
+            (statuses.get(r.id) ?? statuses.set(r.id, new Set()).get(r.id)!).add(e.response.status);
+            for (const v of r.values) {
+                const got = readAt(e, v.at);
+                if (got === undefined) continue;
+                const key = `${r.id}:${v.at}`;
+                (perHar.get(key) ?? perHar.set(key, new Set()).get(key)!).add(got);
+            }
+        }
+        for (const [k, vals] of perHar) (seen.get(k) ?? seen.set(k, []).get(k)!).push(vals);
+    }
+    for (const r of requestsOf(t))
+        for (const v of r.values) {
+            const sets = seen.get(`${r.id}:${v.at}`) ?? [];
+            const all = new Set(sets.flatMap((s) => [...s]));
+            if (v.class === "constant" && !v.automatic && all.size > 1) p.push(`${r.id}:${v.at}: labelled constant but takes ${all.size} values`);
+            const fresh = v.class === "client-computed" || v.class === "derived" || v.role === "idempotency-key";
+            if (fresh && sets.length > 1) {
+                const total = sets.reduce((n, s) => n + s.size, 0);
+                if (new Set(sets.flatMap((s) => [...s])).size < total) p.push(`${r.id}:${v.at}: labelled ${v.class} but a value repeats across runs`);
+            }
+        }
+    for (const r of requestsOf(t))
+        for (const resp of (r.responses as { status: number }[] | undefined) ?? [])
+            if (!statuses.get(r.id)?.has(resp.status)) p.push(`${r.id}: labelled response ${resp.status} never observed in the recordings`);
     return p;
 }

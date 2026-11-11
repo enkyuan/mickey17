@@ -314,7 +314,7 @@ export class Shop {
         if ("body" in cart) return cart;
         if (!cart.items.length) return err(409, "cart_empty", "Add an item first.");
         if (!cart.address) return err(409, "address_required", "Enter a shipping address first.");
-        cart.quote = [
+        cart.quote ??= [
             { id: `rate_${this.hex(8)}`, label: "Standard", amountCents: 500, etaDays: 5 },
             { id: `rate_${this.hex(8)}`, label: "Express", amountCents: 1500, etaDays: 2 },
         ];

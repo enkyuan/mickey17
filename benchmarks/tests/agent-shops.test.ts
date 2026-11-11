@@ -12,7 +12,7 @@ import type { Handler } from "../fixtures/agent/shops/shared/http";
 import { JsonClient, SsrClient, runScenario, type ShopClient, type Step } from "../fixtures/agent/shops/shared/clients";
 import { SCENARIO_NAMES, SCENARIOS, STACKS, type ScenarioName, type Stack } from "../fixtures/agent/shops/shared/scenarios";
 import { sign } from "../fixtures/agent/shops/shared/sign.js";
-import { checkTruthAgainstHar, graphSignature, requestsOf, validateTruth, type Truth } from "../fixtures/agent/shops/shared/truth";
+import { checkTruthAcrossRuns, checkTruthAgainstHar, graphSignature, requestsOf, validateTruth, type Truth } from "../fixtures/agent/shops/shared/truth";
 import { createShop as createReact } from "../fixtures/agent/shops/react/server";
 import { createShop as createSsr } from "../fixtures/agent/shops/server-rendered/server";
 import { createShop as createSvelte } from "../fixtures/agent/shops/svelte/server";
@@ -106,16 +106,22 @@ describe("request value classes behave as labelled", () => {
 
     for (const stack of STACKS)
         describe(stack, () => {
+            const newClient = (handler: Handler): ShopClient =>
+                stack === "server-rendered" ? new SsrClient(handler) : new JsonClient(stack, stack === "react" ? "meta" : "cookie", handler);
+            /** A complete cart (item, address, rate) and a fresh token for `client`. */
+            async function prepare(client: ShopClient) {
+                await client.open();
+                const cartId = (await client.createCart()).view.cart.id as string;
+                await client.add(cartId, "mug", "1");
+                await client.address(cartId, SCENARIOS.success.runs[0].address);
+                const rates = (await client.rates(cartId)).view.rates as { id: string }[];
+                await client.chooseRate(cartId, rates[0].id);
+                const token = (await client.tokenize("test_ok")).view.token as string;
+                return { cartId, token };
+            }
             async function ready(seed = 5) {
                 const s = setup(stack, seed);
-                await s.client.open();
-                const cartId = (await s.client.createCart()).view.cart.id as string;
-                await s.client.add(cartId, "mug", "1");
-                await s.client.address(cartId, SCENARIOS.success.runs[0].address);
-                const rates = (await s.client.rates(cartId)).view.rates as { id: string }[];
-                await s.client.chooseRate(cartId, rates[0].id);
-                const token = (await s.client.tokenize("test_ok")).view.token as string;
-                return { ...s, cartId, token };
+                return { ...s, ...(await prepare(s.client)) };
             }
             const code = (o: { view: any }) => o.view.error?.code;
 
@@ -124,6 +130,67 @@ describe("request value classes behave as labelled", () => {
                 expect(code(await client.placeOrder(cartId, token, { csrf: null }))).toBe("csrf_invalid");
                 expect((await client.placeOrder(cartId, token, { csrf: null })).status).toBe(403);
                 expect((await client.placeOrder(cartId, token, { csrf: "csrf_wrong" })).status).toBe(403);
+            });
+            test("CSRF is enforced on every mutating endpoint, not just place-order", async () => {
+                const { client, cartId } = await ready();
+                const good = client.csrf;
+                for (const bad of [null, "csrf_wrong"]) {
+                    client.csrf = bad;
+                    const results = [await client.createCart(), await client.add(cartId, "mug", "1"), await client.address(cartId, SCENARIOS.success.runs[0].address), await client.chooseRate(cartId, "rate_x")];
+                    for (const r of results) expect([r.status, code(r)]).toEqual([403, "csrf_invalid"]);
+                }
+                client.csrf = good;
+                expect((await client.add(cartId, "mug", "1")).status).toBe(200);
+                // reads need no token
+                client.csrf = null;
+                expect((await client.rates(cartId)).status).toBe(200);
+            });
+            test("quantity text is parsed strictly and identically", async () => {
+                const { client, cartId } = await ready();
+                for (const q of ["2.0", "1e1", "0x2", "+2", " ", "", "11", "-1", "0", "abc", "１２"]) {
+                    const r = await client.add(cartId, "tote", q);
+                    expect([q, r.status, code(r)]).toEqual([q, 422, "validation_failed"]);
+                }
+                expect((await client.add(cartId, "tote", " 3 ")).status).toBe(200);
+            });
+            test("core edge cases: repeat quote, stale rate, name length, stock at order time, closed cart", async () => {
+                const s = setup(stack, 12);
+                await s.client.open();
+                const c = s.client;
+                const cartId = (await c.createCart()).view.cart.id as string;
+                await c.add(cartId, "kettle", "2");
+                expect(code(await c.address(cartId, { ...SCENARIOS.success.runs[0].address, name: "x".repeat(81) }))).toBe("validation_failed");
+                await c.address(cartId, SCENARIOS.success.runs[0].address);
+                const q1 = (await c.rates(cartId)).view.rates;
+                expect((await c.rates(cartId)).view.rates).toEqual(q1); // a repeated read returns the same quote
+                // changing the cart invalidates the quote
+                await c.add(cartId, "mug", "1");
+                expect(code(await c.chooseRate(cartId, q1[0].id))).toBe("validation_failed");
+                const q2 = (await c.rates(cartId)).view.rates;
+                expect(q2).not.toEqual(q1);
+                await c.chooseRate(cartId, q2[0].id);
+                // a second cart takes the same kettles: both fit at add time, only one can be ordered
+                const other = (await c.createCart()).view.cart.id as string;
+                expect((await c.add(other, "kettle", "2")).status).toBe(200);
+                await c.address(other, SCENARIOS.success.runs[1].address);
+                const q3 = (await c.rates(other)).view.rates;
+                await c.chooseRate(other, q3[0].id);
+                const t1 = (await c.tokenize("test_ok")).view.token as string;
+                const t2 = (await c.tokenize("test_ok")).view.token as string;
+                expect((await c.placeOrder(cartId, t1, { key: "s1" })).status).toBe(201);
+                const late = await c.placeOrder(other, t2, { key: "s2" });
+                expect([late.status, code(late)]).toEqual([409, "out_of_stock"]);
+                // an ordered cart cannot change its rate either
+                expect(code(await c.chooseRate(cartId, q2[0].id))).toBe("cart_closed");
+            });
+            test("idempotency keys are scoped to the session", async () => {
+                const a = await ready(21);
+                const bClient = newClient(a.handler); // a second session of the same shop
+                const b = await prepare(bClient);
+                expect((await a.client.placeOrder(a.cartId, a.token, { key: "same" })).status).toBe(201);
+                const r = await bClient.placeOrder(b.cartId, b.token, { key: "same" });
+                expect(r.status).toBe(201);
+                expect(r.headers["idempotent-replayed"]).toBeUndefined();
             });
             test("tampered, stale and missing signatures are rejected", async () => {
                 const { client, cartId, token } = await ready();
@@ -150,7 +217,7 @@ describe("request value classes behave as labelled", () => {
                 expect([reuse.status, code(reuse)]).toEqual([422, "idempotency_key_reuse"]);
             });
             test("stale or foreign cart ids and reused tokens fail", async () => {
-                const { client, cartId, token } = await ready();
+                const { client, cartId, token, handler } = await ready();
                 const ghost = await client.add("cart_deadbeef", "mug", "1");
                 expect([ghost.status, code(ghost)]).toEqual([404, "cart_not_found"]);
                 expect((await client.placeOrder(cartId, token, { key: "a" })).status).toBe(201);
@@ -164,10 +231,13 @@ describe("request value classes behave as labelled", () => {
                 await client.chooseRate(second, quote[0].id);
                 const reused = await client.placeOrder(second, token, { key: "b" });
                 expect([reused.status, code(reused)]).toEqual([422, "invalid_payment_token"]);
-                // a different session cannot read or touch this cart/order
-                const intruder = setup(stack, 6);
-                await intruder.client.open();
-                expect((await intruder.client.add(cartId, "mug", "1")).status).toBe(404);
+                // a different session of the SAME shop cannot touch this cart or read its order
+                const orderId = (await client.placeOrder(second, (await client.tokenize("test_ok")).view.token, { key: "c" })).view.order.id as string;
+                const intruder = newClient(handler);
+                await intruder.open();
+                for (const o of [await intruder.add(second, "mug", "1"), await intruder.address(second, SCENARIOS.success.runs[0].address), await intruder.rates(second), await intruder.order(orderId)])
+                    expect([o.status, code(o)]).toEqual([404, o.view.error.code === "order_not_found" ? "order_not_found" : "cart_not_found"]);
+                expect((await client.order(orderId)).status).toBe(200);
             });
             test("rate must come from the latest quote; the cart must be complete to order", async () => {
                 const s = setup(stack, 8);
@@ -184,7 +254,7 @@ describe("request value classes behave as labelled", () => {
             });
             test("payment stub rejects anything but a test method id", async () => {
                 const s = setup(stack, 9);
-                const r = await s.client.tokenize("4242424242424242");
+                const r = await s.client.tokenize("not_a_test_method");
                 expect([r.status, code(r)]).toEqual([422, "validation_failed"]);
             });
         });
@@ -295,6 +365,43 @@ describe("ground truth", () => {
                     expect(statuses(stack, "declined", run)).toContain(402);
                     expect(trace(stack, "success", run).finalDom.orderStatus).toBe("confirmed");
                     expect(trace(stack, "declined", run).finalDom.orderId).toBeNull();
+                }
+        });
+
+        test("recordings of each stack agree across runs (constants constant, derived/computed fresh, every labelled status observed)", () => {
+            for (const stack of STACKS) {
+                const hars = SCENARIO_NAMES.flatMap((sc) => [1, 2].map((r) => har(stack, sc, r)));
+                expect(checkTruthAcrossRuns(truths[stack], hars)).toEqual([]);
+            }
+        });
+
+        test("wrong truth is rejected by the combined checks (every stack, every mutation)", () => {
+            type Mut = [string, (t: Truth) => void];
+            const val = (t: Truth, req: string, at: string) => requestsOf(t).find((r) => r.id === req)!.values.find((v) => v.at === at)!;
+            const urlAt = (t: Truth, req: string) => requestsOf(t).find((r) => r.id === req)!.values.find((v) => v.at.startsWith("url.path"))!;
+            const bodyAt = (t: Truth, req: string, name: string) => requestsOf(t).find((r) => r.id === req)!.values.find((v) => v.at.endsWith(`.${name}`))!;
+            const muts: Mut[] = [
+                ["paymentToken derived->input", (t) => { bodyAt(t, "place-order", "paymentToken").class = "input"; t.edges = t.edges.filter((e) => !e.from.startsWith("tokenize-payment")); }],
+                ["rateId derived->input", (t) => { const v = requestsOf(t).find((r) => r.id === "select-shipping")!.values.find((x) => /rate/.test(x.at) && x.class === "derived")!; v.class = "input"; t.edges = t.edges.filter((e) => !e.from.startsWith("shipping-rates")); }],
+                ["cart id segment derived->input", (t) => { urlAt(t, "place-order").class = "input"; t.edges = t.edges.map((e) => ({ ...e, to: (Array.isArray(e.to) ? e.to : [e.to]).filter((x) => !x.startsWith("place-order:url")) })).filter((e) => e.to.length); }],
+                ["idempotency key -> constant", (t) => { const v = val(t, "place-order", "header.idempotency-key"); v.class = "constant"; v.value = "k"; delete v.role; }],
+                ["signature -> input", (t) => { val(t, "place-order", "header.x-signature").class = "input"; t.clientComputedCount = 0; }],
+                ["place-order 201 relabelled 200", (t) => { (requestsOf(t).find((r) => r.id === "place-order")!.responses as any[])[0].status = 200; }],
+                ["add-item 409 dropped", (t) => { const r = requestsOf(t).find((r) => r.id === "add-item")!; r.responses = (r.responses as any[]).filter((x) => x.status !== 409); }],
+                ["place-order effect -> read", (t) => { t.steps.find((s) => s.id === "place-order")!.effect = "read"; }],
+                ["a constant relabelled with another value", (t) => { val(t, "create-cart", "header.content-type").value = "text/plain"; }],
+                ["header label removed", (t) => { const r = requestsOf(t).find((r) => r.id === "place-order")!; r.values = r.values.filter((v) => v.at !== "header.x-signature"); t.clientComputedCount = 0; }],
+            ];
+            const problems = (t: Truth, stack: Stack) => [
+                ...validateTruth(t),
+                ...STACKS.length ? SCENARIO_NAMES.flatMap((sc) => [1, 2].flatMap((r) => checkTruthAgainstHar(t, har(stack, sc, r)))) : [],
+                ...checkTruthAcrossRuns(t, SCENARIO_NAMES.flatMap((sc) => [1, 2].map((r) => har(stack, sc, r)))),
+            ];
+            for (const stack of STACKS)
+                for (const [name, f] of muts) {
+                    const t = structuredClone(truths[stack]);
+                    f(t);
+                    expect({ stack, name, rejected: problems(t, stack).length > 0 }).toEqual({ stack, name, rejected: true });
                 }
         });
 

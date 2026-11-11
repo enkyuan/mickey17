@@ -20,6 +20,7 @@ export interface PlaceOpts {
 }
 export interface ShopClient {
     readonly stack: string;
+    csrf: string | null;
     open(): Promise<void>;
     catalog(): Promise<Obs>;
     createCart(): Promise<Obs>;
@@ -36,7 +37,8 @@ const BASE = "http://shop.test";
 
 abstract class Base {
     protected jar = new Map<string, string>();
-    protected csrf = "";
+    /** Token the client sends; tests set it to null/another value to exercise CSRF enforcement. */
+    csrf: string | null = "";
     constructor(protected send: Transport, protected base = BASE, protected now = FIXED_NOW) {}
 
     protected async http(method: string, path: string, init: { headers?: Record<string, string>; body?: string } = {}) {
@@ -81,7 +83,7 @@ export class JsonClient extends Base implements ShopClient {
     }
     catalog() { return this.api("GET", "/api/products"); }
     createCart() { return this.api("POST", "/api/carts", {}); }
-    add(cartId: string, sku: string, quantity: string) { return this.api("POST", `/api/carts/${cartId}/items`, { sku, quantity: Number(quantity) }); }
+    add(cartId: string, sku: string, quantity: string) { return this.api("POST", `/api/carts/${cartId}/items`, { sku, quantity }); }
     address(cartId: string, a: Partial<Address>) { return this.api("PUT", `/api/carts/${cartId}/address`, a); }
     rates(cartId: string) { return this.api("GET", `/api/carts/${cartId}/shipping-rates`); }
     chooseRate(cartId: string, rateId: string | null) { return this.api("PUT", `/api/carts/${cartId}/shipping-rate`, { rateId }); }

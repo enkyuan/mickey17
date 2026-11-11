@@ -63,7 +63,9 @@
     "r5"
    ],
    "domChanges": {
-    "added": [],
+    "added": [
+     "[role=alert]"
+    ],
     "removed": []
    }
   }

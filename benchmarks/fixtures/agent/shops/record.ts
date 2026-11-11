@@ -105,8 +105,9 @@ export async function recordRun(stack: Stack, scenario: ScenarioName, runIndex: 
             entry.statusText = res.statusText || (res.status < 400 ? "OK" : "Error");
             res.headers.forEach((v, k) => k !== "set-cookie" && entry.resHeaders.push([k, v]));
             entry.setCookies = res.headers.getSetCookie();
+            for (const c of entry.setCookies) entry.resHeaders.push(["set-cookie", c]);
             entry.resBody = storeBody ? text : null;
-            entry.resSize = text.length;
+            entry.resSize = Buffer.byteLength(text);
             entry.mime = (res.headers.get("content-type") ?? "").split(";")[0];
             for (const c of entry.setCookies) {
                 const [pair] = c.split(";");
@@ -124,7 +125,8 @@ export async function recordRun(stack: Stack, scenario: ScenarioName, runIndex: 
 
     const mutationLog = () => current.dom;
     const seen = (list: string[], v: string) => list.includes(v) || list.push(v);
-    const label = (n: any) => (n.nodeType === 1 ? (n.id ? `#${n.id}` : n.getAttribute?.("data-fragment") ? `[data-fragment=${n.getAttribute("data-fragment")}]` : null) : null);
+    const label = (n: any) =>
+        n.nodeType !== 1 ? null : n.id ? `#${n.id}` : n.getAttribute("data-fragment") ? `[data-fragment=${n.getAttribute("data-fragment")}]` : n.getAttribute("role") ? `[role=${n.getAttribute("role")}]` : null;
     new w.MutationObserver((recs: any[]) => {
         activity += recs.length;
         for (const r of recs) {
@@ -277,7 +279,7 @@ function buildHar(entries: Entry[], stack: Stack, scenario: ScenarioName, run: n
                         queryString: [...url.searchParams].map(([name, value]) => ({ name, value })),
                         ...(e.reqBody ? { postData: { mimeType: mime, text: e.reqBody } } : {}),
                         headersSize: -1,
-                        bodySize: e.reqBody.length,
+                        bodySize: Buffer.byteLength(e.reqBody),
                     },
                     response: {
                         status: e.status,
