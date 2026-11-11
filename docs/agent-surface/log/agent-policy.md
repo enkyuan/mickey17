@@ -613,3 +613,37 @@ Body:
   own the clock, and never expose `reconcile` to the agent.
 - **Review summary.** See log: round 7 fixes were verified by tests/mutants but not
   re-reviewed.
+
+## 13. Entry 2026-11-10: review round 8 (narrow, 8217f2b..4e73446) and install status
+
+Two MEDIUM confirmed and fixed; both were in the round-7 fixes:
+
+- A fixed scroller of any size reset the clip (a `position:fixed; overflow:auto` box 100 000 px
+  tall exposed everything in it). The fixed-scroller size check is back, with a bounded
+  tolerance: viewport + max(150 px, 15 %) per axis (covers 100vh with a URL bar and 100vw with
+  a scrollbar; pinned at the 150/151 px boundary and at the 15 % boundary).
+- Raw DOM `scrollTop`/`scrollLeft` of RTL and `column-reverse` panes are negative or zero and
+  pushed the region start past the box edge. `scrollLeftPx`/`scrollTopPx` are now defined as
+  the distance from the start position (>= 0); negative, NaN or infinite values mean
+  "unknown"; each axis is bounded only by its own valid offset, the other is unbounded.
+- Found while writing the tests: the unbounded axis origin was `-Infinity`, and
+  `-Infinity + Infinity` is NaN, so every clip comparison against an unbounded region was
+  false (content hidden). The unbounded origin is now a finite `-1e12` (a mutant pins it).
+- LOW: `MIN_WINDOW` (8 px) is now pinned by a 7 px / 8 px test.
+- Still open (stated): a scroller with an 8 px window still exposes its whole box (content in
+  the part of the box that the clip cuts off counts as visible); this predates round 7 and
+  needs scroll sizes from the capture.
+
+Results: `bun test` 414 pass; `tsc` clean; mutation run 241/241 non-equivalent killed
+(`r7-offsets-unbounded` is now an equivalent mutant, documented).
+
+**This round-8 delta has not been re-reviewed.** Nothing else is outstanding from the
+review rounds except the heuristic limits and capture requirements in sections 9-12.
+
+### Install status
+
+`bun install --frozen-lockfile` in `agent-policy/` on a clean copy (node_modules removed,
+isolated cache): succeeds, "7 packages installed", no change to `bun.lock`
+(`@types/bun` 1.3.10, `fast-check` 4.5.3, `typescript` 5.9.3, all exact-pinned). Note: the
+sandbox needed `BUN_INSTALL_CACHE_DIR` pointed at a writable directory because the default
+cache is not writable here; that is an environment detail, not a project requirement.

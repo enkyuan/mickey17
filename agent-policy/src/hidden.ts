@@ -41,9 +41,11 @@ export interface NodeStyle {
      */
     readonly containsFixed?: boolean;
     /**
-     * Scroll offsets of a scroll container at capture time. With them, the reachable region of
-     * its content starts at (rect.x - scrollLeft, rect.y - scrollTop) (also correct for scrolled
-     * carousels and reversed panes). Without them the content region is treated as unbounded.
+     * Distance scrolled from the container's START position (always >= 0), at capture time. With
+     * them the reachable region of its content starts at (rect.x - scrollLeft, rect.y - scrollTop).
+     * Raw DOM `scrollLeft`/`scrollTop` of RTL or reversed (`column-reverse`) panes can be negative:
+     * convert them to distance from the start, or leave them out. A negative, non-finite or
+     * missing value means "unknown", and that axis is then unbounded.
      */
     readonly scrollLeftPx?: number;
     readonly scrollTopPx?: number;
@@ -263,6 +265,9 @@ function intersectRect(a: Rect, b: Rect): Rect {
     return { x, y, width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x), height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y) };
 }
 
+/** Origin of an unbounded axis: finite, because -Infinity + Infinity is NaN and every comparison with it is false. */
+const UNBOUNDED = 1e12;
+
 const TAG_OK = /^[a-z][a-z0-9-]*$/;
 
 export function collectText(root: PageNode, opts: CollectOptions = {}): Collected {
@@ -307,14 +312,18 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         const TOL = 2;
         // the part of the container that is actually shown must be big enough to read (a sliver
         // that peeks into the clip does not expose its content); a fixed box is measured against
-        // the viewport, whose definition varies (100vh, scrollbars), so its size is not compared
+        // the viewport, whose definition varies (100vh with a URL bar, 100vw with a scrollbar), so
+        // it gets a bounded tolerance: the part of a fixed box far below the viewport is never seen
         const windowRect = clip !== null && n.rect !== undefined ? intersectRect(clip, n.rect) : null;
         const MIN_WINDOW = 8;
-        const looksLikeScroller = windowRect !== null && n.rect !== undefined && windowRect.width >= MIN_WINDOW && windowRect.height >= MIN_WINDOW && (escapes || (n.rect.width <= clip!.width + TOL && n.rect.height <= clip!.height + TOL));
+        const fixedTol = (dim: number) => Math.max(150, dim * 0.15);
+        const looksLikeScroller = windowRect !== null && n.rect !== undefined && windowRect.width >= MIN_WINDOW && windowRect.height >= MIN_WINDOW && (n.rect.width <= clip!.width + (escapes ? fixedTol(clip!.width) : TOL) && n.rect.height <= clip!.height + (escapes ? fixedTol(clip!.height) : TOL));
         const resets = scrolls && ((clip === null && !clippedAncestor) || looksLikeScroller);
         // Scrolling reaches content below and to the right of the container's origin, not above or left.
-        const hasOffsets = style.scrollLeftPx !== undefined || style.scrollTopPx !== undefined;
-        const childClip = resets ? (n.rect && hasOffsets ? { x: n.rect.x - (style.scrollLeftPx ?? 0), y: n.rect.y - (style.scrollTopPx ?? 0), width: Infinity, height: Infinity } : null) : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
+        // an offset is usable only if it is a finite distance from the start; otherwise that axis is unbounded
+        const okOffset = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v) && v >= 0;
+        const hasOffsets = okOffset(style.scrollLeftPx) || okOffset(style.scrollTopPx);
+        const childClip = resets ? (n.rect && hasOffsets ? { x: okOffset(style.scrollLeftPx) ? n.rect.x - style.scrollLeftPx : -UNBOUNDED, y: okOffset(style.scrollTopPx) ? n.rect.y - style.scrollTopPx : -UNBOUNDED, width: Infinity, height: Infinity } : null) : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
         const childClipped = resets ? false : clippedAncestor || overflowClips;
         const childSize = resets ? undefined : overflowClips ? { ...(style.widthPx !== undefined ? { width: style.widthPx } : {}), ...(style.heightPx !== undefined ? { height: style.heightPx } : {}) } : clipperSize;
         const vis = (n.style?.visibility ?? "").toLowerCase();
