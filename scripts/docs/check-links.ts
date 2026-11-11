@@ -22,7 +22,9 @@
 // case-insensitive filesystem too, and a git-ignored local file is not a valid target.
 //
 // Known limits (false negatives): HTML `<a href>`, setext (underlined) headings, links built at
-// run time, bare mentions of a doc name that was never renamed, and absolute URLs are not checked.
+// run time, bare mentions of a doc name that was never renamed, and absolute URLs are not checked;
+// a link through a (tracked) symlinked directory is reported as missing; indented (4-space) code
+// blocks without a fence are not masked.
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { posix } from "node:path";
@@ -38,6 +40,7 @@ const MAX_BYTES = 4 << 20;
 
 const listed = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
   encoding: "utf8",
+  maxBuffer: 256 << 20,
 })
   .split("\0")
   .filter(Boolean);
@@ -65,7 +68,22 @@ const read = (f: string) => contents.get(f) ?? readFileSync(f, "utf8");
 
 const problems = new Set<string>();
 const fail = (file: string, line: number, message: string) => problems.add(`${file}:${line}: ${message}`);
-const lineOf = (text: string, index: number) => text.slice(0, index).split("\n").length;
+/** 1-based line of a character index (binary search over line starts). */
+function lineStarts(text: string): number[] {
+  const starts = [0];
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  return starts;
+}
+function lineAt(starts: number[], index: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+}
 
 /** Blank out fenced code blocks, inline code and HTML comments, keeping every newline. */
 function mask(text: string): string {
@@ -73,16 +91,20 @@ function mask(text: string): string {
   const out: string[] = [];
   let fence: string | null = null;
   for (const line of text.split("\n")) {
-    const f = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    const f = line.match(/^\s*(`{3,}|~{3,})/);
     if (f) {
       if (fence === null) fence = f[1][0];
       else if (f[1][0] === fence) fence = null;
       out.push(blank(line));
       continue;
     }
-    out.push(fence ? blank(line) : line.replace(/`[^`]*`/g, blank));
+    out.push(fence ? blank(line) : line);
   }
-  return out.join("\n").replace(/<!--[\s\S]*?-->/g, blank);
+  // Inline code may span a line break but not a blank line.
+  return out
+    .join("\n")
+    .replace(/`[^`\n]*(?:\n[^`\n]+)*`/g, blank)
+    .replace(/<!--[\s\S]*?-->/g, blank);
 }
 
 /** GitHub-style heading slugs of an .md file (cached). */
@@ -99,15 +121,27 @@ function slugsOf(file: string): Set<string> {
     const h = original[i].match(/^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/);
     if (!h) return;
     const base = h[1]
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/!?\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])/g, "$1")
       .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
       .replace(/`/g, "")
+      .replace(/\*+/g, "")
+      .replace(/(?<![A-Za-z0-9])_{1,2}([^_]+?)_{1,2}(?![A-Za-z0-9])/g, "$1")
       .toLowerCase()
       .replace(/[^\p{L}\p{M}\p{N} _-]/gu, "")
       .replace(/ /g, "-");
+    // github-slugger: a repeated slug gets -1, -2, ... and the result is itself counted.
     let slug = base;
-    for (let n = seen.get(base) ?? 0; slugs.has(slug); n++) slug = `${base}-${n + 1}`;
-    seen.set(base, (seen.get(base) ?? 0) + 1);
+    while (seen.has(slug)) {
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      slug = `${base}-${n}`;
+    }
+    seen.set(slug, seen.get(slug) ?? 0);
     slugs.add(slug);
   });
   slugCache.set(file, slugs);
@@ -129,8 +163,8 @@ function checkTarget(file: string, line: number, targetPath: string, fragment: s
 }
 
 // ---- 1. markdown links ---------------------------------------------------------------------
-const INLINE = /(?<!\\)!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
-const REFDEF = /^\s{0,3}\[[^\]]+\]:\s+(<[^>]+>|\S+)/;
+const INLINE = /(?<!\\)!?\[(?:[^\[\]]|\[[^\[\]]{0,200}\]){0,500}\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
+const REFDEF = /^\s{0,3}\[(?!\^)[^\]]+\]:\s+(<[^>]+>|\S+)/;
 const isExternal = (t: string) => /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(t);
 function resolveLink(file: string, target: string): { path: string; fragment?: string } | null {
   const t = target.replace(/^<|>$/g, "");
@@ -160,24 +194,28 @@ for (const file of textFiles.filter((f) => f.endsWith(".md"))) {
   const text = read(file);
   const masked = mask(text);
   const ok = allowed(file);
-  const found: { index: number; target: string }[] = [];
-  for (const m of masked.matchAll(INLINE)) found.push({ index: m.index ?? 0, target: m[1] });
+  const starts = lineStarts(text);
+  const found: { index: number; end: number; target: string }[] = [];
+  for (const m of masked.matchAll(INLINE)) found.push({ index: m.index ?? 0, end: (m.index ?? 0) + m[0].length, target: m[1] });
   let offset = 0;
   for (const line of masked.split("\n")) {
     const d = line.match(REFDEF);
-    if (d) found.push({ index: offset, target: d[1] });
+    if (d) found.push({ index: offset, end: offset + line.length, target: d[1] });
     offset += line.length + 1;
   }
-  for (const { index, target } of found) {
-    const line = lineOf(text, index);
-    if (ok.has(line)) continue;
+  for (const { index, end, target } of found) {
+    const line = lineAt(starts, index);
+    // The allow marker may sit on any line of a multi-line link.
+    if ([...ok].some((l) => l >= line && l <= lineAt(starts, end))) continue;
     const r = resolveLink(file, target);
     if (r) checkTarget(file, line, r.path, r.fragment);
   }
 }
 
 // ---- 2. docs/<path>.md mentions in any text file ----------------------------------------------
-const MENTION = /(?<![A-Za-z0-9_-])(docs\/[A-Za-z0-9_./-]+?\.md)(?![A-Za-z0-9_])(?:#([A-Za-z0-9_%-]+))?/g;
+// `docs/x.md`, `./docs/x.md`, `../docs/x.md`; not `…/docs/x.md` of another tree or a URL.
+const MENTION =
+  /(?:(?<=(?:^|[^A-Za-z0-9_./-])(?:\.{1,2}\/)+)|(?<![A-Za-z0-9_./-]))(docs\/[A-Za-z0-9_./-]+?\.md)(?![A-Za-z0-9_])(?:#([\p{L}\p{N}_%-]+))?/gu;
 const SELF = new Set(["scripts/docs/check-links.ts", "scripts/docs/renamed.txt"]);
 for (const file of textFiles) {
   if (SELF.has(file)) continue;
@@ -199,23 +237,19 @@ if (fileSet.has(RENAMED)) {
     const m = line.match(/^(\S+)\s+->\s+(\S+)/);
     if (!m) continue;
     const [, old, neu] = m;
-    const forms = new Set<string>([old]);
-    if (old.startsWith("docs/")) {
-      const below = old.slice("docs/".length);
-      if (below.includes("/")) forms.add(below);
-    }
-    if (old.endsWith(".md")) {
+    const dir = old.endsWith("/");
+    // Full path: also caught behind `/`, `./`, `../`. Shorter forms must not follow a `/` or `.`.
+    const regexes = [
+      new RegExp(`(?<![A-Za-z0-9_-])${esc(dir ? old.slice(0, -1) : old)}(?![A-Za-z0-9_${dir ? "-" : ""}])`),
+    ];
+    if (!dir) {
+      const shorter = new Set<string>();
+      if (old.startsWith("docs/") && old.slice("docs/".length).includes("/")) shorter.add(old.slice("docs/".length));
       const base = posix.basename(old);
-      if (base !== posix.basename(neu)) forms.add(base);
+      if (old.endsWith(".md") && base !== posix.basename(neu)) shorter.add(base);
+      for (const f of shorter) regexes.push(new RegExp(`(?<![A-Za-z0-9_./-])${esc(f)}(?![A-Za-z0-9_])`));
     }
-    retired.push({
-      old,
-      neu,
-      regexes: [...forms].map((f) => {
-        const dir = f.endsWith("/");
-        return new RegExp(`(?<![A-Za-z0-9_-])${esc(dir ? f.slice(0, -1) : f)}(?![A-Za-z0-9_${dir ? "-" : ""}])`);
-      }),
-    });
+    retired.push({ old, neu, regexes });
   }
 }
 for (const file of textFiles) {
