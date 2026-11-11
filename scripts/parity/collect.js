@@ -1,7 +1,7 @@
 /* Mochi parity collector, schema 2. A superset of the hardened Natural collector.
  *
  * Evaluate this file in the page (Playwright evaluate, Browser pane javascript_tool,
- * or the sink-served loader described in docs/PARITY.md). It evaluates to the API
+ * or the sink-served loader described in docs/parity.md). It evaluates to the API
  * object and also installs it as globalThis.__mochiParity:
  *
  *   await __mochiParity.collect(options)   // one full-document capture (JSON-safe)

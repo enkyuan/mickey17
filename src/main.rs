@@ -168,9 +168,15 @@ enum Command {
         /// Protect this project root (repeatable), e.g. the canonical build of a site.
         #[arg(long, value_name = "PATH")]
         keep: Vec<PathBuf>,
-        /// Keep only the newest built project per site family; see docs/WORKSPACE.md.
+        /// Keep only the newest built project per site family; see docs/workspace.md.
         #[arg(long)]
         keep_latest: bool,
+        /// Also prune old run output (`generated/parity-runs`, `runs/logs`), keeping the newest groups.
+        #[arg(long)]
+        runs: bool,
+        /// With --runs: how many of the newest run groups to keep (default 20, at least 1).
+        #[arg(long, value_name = "N", requires = "runs", value_parser = clap::value_parser!(u64).range(1..))]
+        keep_runs: Option<u64>,
     },
     /// Recognize Base UI patterns and repeated components in one captured page; with --emit, write typed TSX.
     Semantic(mochi::semantic::cli::Args),
@@ -274,6 +280,8 @@ fn main() -> Result<()> {
             cargo,
             keep,
             keep_latest,
+            runs,
+            keep_runs,
         } => {
             let options = clean::Options {
                 apply,
@@ -281,6 +289,8 @@ fn main() -> Result<()> {
                 cargo,
                 keep,
                 keep_latest,
+                runs,
+                keep_runs: keep_runs.map(|n| usize::try_from(n).unwrap_or(usize::MAX)),
             };
             clean::run(&workspace, &options, &mut std::io::stdout().lock())?;
         }

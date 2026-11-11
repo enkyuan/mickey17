@@ -4,7 +4,7 @@ Produced 2026-11-09/10 with `benchmarks/src/parity` on a loaded development mach
 shell, Playwright 1.65, SwiftShader GL, DPR 1, UTC, en-US). **This is evidence about the declared states of
 the declared candidates only.** It is not a screenshot comparison, not a score, and says nothing about
 unobserved states, routes, browsers, GPUs, or any other site. Raw captures, per-state diffs, reports and
-the failed/superseded runs are retained under `.mochi/parity-runs/` (git-ignored).
+the failed/superseded runs are retained under `.mochi/generated/parity-runs/` (git-ignored).
 
 Pipeline revision: the working tree this report ships with (`run.json` of each run records the hashes of
 the collector and of every `benchmarks/src/parity/*.ts`; the `-rediff` directories recompute summaries from
@@ -14,8 +14,8 @@ the retained raw captures with the final comparison code, and the gate ran on th
 
 | Run | Original (served by `mochi serve`) | Candidate | Profile | States executed |
 |---|---|---|---|---|
-| `natural-compat-core-1` | Natural capture, 3 routes `/ /pay /request` | `.mochi/mochi-exports/natural-compat` (compat export, production build) | core | 82 of 308 scheduled |
-| `garden-recover-core-1` | Infinite Garden capture, 3 routes | `.mochi/mochi-exports/infinitegarden-recover` | core | 77 of 192 |
+| `natural-compat-core-1` | Natural capture, 3 routes `/ /pay /request` | `.mochi/generated/exports/natural-compat` (compat export, production build) | core | 82 of 308 scheduled |
+| `garden-recover-core-1` | Infinite Garden capture, 3 routes | `.mochi/generated/exports/infinitegarden-recover` | core | 77 of 192 |
 | `garden-hand-core-1` | same | hand-edited `.mochi/projects/infinitegarden` (built from a scratch copy; the workspace has no build) | core | 77 of 192 |
 | `garden-hand-bp-1` | same | same | breakpoint boundary 1022/1023/1024 | 9 |
 
@@ -164,4 +164,4 @@ states dropped from the gate/rediff; identically failing interaction steps repor
 container / touch queries); weak settle rule; calibration detection by item count / vacuous breakpoint shifts / unsound no-op proof /
 undisturbed-run proof; over-broad `container-retag`; collector coverage holes (+ truncation recorded); stale docs; an unpaused
 virtual clock; sink writes from any origin; gate/TS invariant gaps; html/body pseudo-elements; error-origin matching;
-rediff robustness. Deferred on purpose and documented in `docs/PARITY.md` ("Known limitations of the pipeline itself").
+rediff robustness. Deferred on purpose and documented in `docs/parity.md` ("Known limitations of the pipeline itself").

@@ -1,2 +1,2 @@
 [build]
-target-dir = ".mochi/target"
+target-dir = ".mochi/cache/target"

@@ -5,7 +5,7 @@
 // and nine VARIANTS of the reference, each with exactly one planted regression. A variant must be
 // rejected in the state that exposes it and must stay identical in a state that cannot see it
 // (a hover rule is invisible without hover; a 700px breakpoint is invisible at 1280px).
-// Needs Playwright + a Chromium binary (see docs/PARITY.md); otherwise it exits 3 and says why.
+// Needs Playwright + a Chromium binary (see docs/parity.md); otherwise it exits 3 and says why.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { launch, loadPlaywright, runState } from './driver';

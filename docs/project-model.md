@@ -2,7 +2,7 @@
 
 The development checkout implements `mochi model-project <clone>` after a source-evidence
 capture. It writes `reconstruction/project.json` without network or AI calls. This artifact
-is the shared input for the [first TanStack emitter](EXPORT.md), future adapters and semantic interpretation; it is not
+is the shared input for the [first TanStack emitter](export.md), future adapters and semantic interpretation; it is not
 an executable frontend or recovered original source.
 
 ```sh
@@ -54,7 +54,7 @@ lookup records; it does not remove any captured evidence. Geometry remains per o
 
 Prototype plus prop bindings reproduces instance **content**. Style, geometry and parent
 indices still come from that instance's evidence. Generated names such as `Component1` and
-`prop_1` are neutral fallbacks. The optional [interpretation stage](INTERPRETATION.md) can
+`prop_1` are neutral fallbacks. The optional [interpretation stage](semantic-interpretation.md) can
 propose fixed semantic roles over these candidates. It does not mutate this model or choose
 new source identifiers. Source generation belongs to the separate export stage.
 

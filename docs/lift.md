@@ -260,7 +260,7 @@ Each function is checked in its own closure and the module's top-level code neve
 `R()` with the supplied zone and replays a coherent controller, so a writer that
 breaks those invariants is caught by the lifter's static rules or not at all.
 
-The Garden hinge domain (`.mochi/source-packs/infinitegarden/lift/hero-hinge.domain.ts`)
+The Garden hinge domain (`.mochi/evidence/source-packs/infinitegarden/lift/hero-hinge.domain.ts`)
 checks the controller hash, that the rib data the controller imports equals the
 project's `flower-ribs.ts`, that `y.petalLength`/`y.finalCenterY` are read from
 the controller's frozen settings literal, and that the baseline
@@ -272,7 +272,7 @@ so a field hard-coded to today's value would show.
 ## Status on the Garden hero
 
 `B` (petal scale), `Y` (mirrored petal paths and memoized hinge) and `Q`
-(`hingeY`) lift (see `.mochi/source-packs/infinitegarden/lift/hero-hinge.lift.json`).
+(`hingeY`) lift (see `.mochi/evidence/source-packs/infinitegarden/lift/hero-hinge.lift.json`).
 The cache's guard, fill, resets and the `R`/`U` coupling are checked statically.
 Stability of the inputs is **proven only for `y`** (a frozen literal, conditional on
 an intact `Object.freeze`); for `I` (the imported ribs) and `m` (the object

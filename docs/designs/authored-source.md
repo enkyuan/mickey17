@@ -1,6 +1,6 @@
 # From reconstruction to maintainable application source
 
-Status: bounded semantic specification, validation and authored emission implemented; automated semantic inference and full-site controller replacement remain unfinished. See [authored export](../AUTHORED_EXPORT.md). A passing screenshot is not a source-quality qualification.
+Status: bounded semantic specification, validation and authored emission implemented; automated semantic inference and full-site controller replacement remain unfinished. See [authored export](../authored-export.md). A passing screenshot is not a source-quality qualification.
 
 ## What went wrong
 

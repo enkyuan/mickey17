@@ -1,7 +1,7 @@
 # Distribution plan
 
 Status: decisions only. Nothing here is published or implemented, and no channel
-below is released before qualification passes. [RELEASING.md](RELEASING.md) remains
+below is released before qualification passes. [releasing.md](releasing.md) remains
 the process for the `mochi-web` crate and GitHub release until it is updated for the
 new channels.
 
@@ -34,5 +34,5 @@ Channel priority: GitHub Releases, Homebrew tap, install script, then npm (when
   which `mochi` versions it works with.
 - Signing: Apple Developer account for signing and notarization (browser downloads
   otherwise trigger Gatekeeper), Windows SmartScreen reputation, npm provenance.
-- Update `RELEASING.md` and `AGENTS.md` for the added channels, and verify a fresh
+- Update `releasing.md` and `AGENTS.md` for the added channels, and verify a fresh
   install from each channel before reporting it available.

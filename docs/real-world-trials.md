@@ -10,16 +10,16 @@ The latest CLI-regenerated projects are under `/Users/enkyuan/Desktop/Projects/m
 | Infinite Garden | `infinitegarden/` | http://localhost:4185 |
 | Microsoft AI | `microsoft-ai/` | http://localhost:4186 |
 
-All use Bun 1.4.4 and physical TanStack routes. Route files delegate to `src/features/pages`; `src/compat/recovered` explicitly holds retained deployed programs. `EDITING.md` maps the files, and `.mochi/style-audit.json` records observed style values. Frozen installs, builds and typechecks pass. Compatibility source remains semantically unreconstructed: these are not fully authored Base UI applications or inferred design systems. Current checks are in `.mochi/examples-results.json` and `.mochi/verification/`.
+All use Bun 1.4.4 and physical TanStack routes. Route files delegate to `src/features/pages`; `src/compat/recovered` explicitly holds retained deployed programs. `EDITING.md` maps the files, and `.mochi/style-audit.json` records observed style values. Frozen installs, builds and typechecks pass. Compatibility source remains semantically unreconstructed: these are not fully authored Base UI applications or inferred design systems. Current checks are in `.mochi/runs/logs/examples-results.json` and `.mochi/runs/verification/`.
 
-Older trial/source directories below are historical, preserved under `.mochi/trials`. Their previous Node servers were stopped when the Bun previews replaced them.
+Older trial/source directories below are historical, preserved under `.mochi/evidence/trials`. Their previous Node servers were stopped when the Bun previews replaced them.
 
 
 ## Microsoft AI native-element trial, 2026-11-08
 
 The development Mochi CLI recreates three captured Microsoft AI routes: `/`, `/models/`
 and `/models/mai-cyber-1-1-flash/`. The final source project is
-`/Users/enkyuan/Desktop/Projects/mochi/.mochi/trials/20261108-microsoft-ai/microsoft-ai`, served
+`/Users/enkyuan/Desktop/Projects/mochi/.mochi/evidence/trials/20261108-microsoft-ai/microsoft-ai`, served
 locally on port 4186. Its TanStack routes host pristine server JSX plus 25 formatted native
 ESM modules. Original custom-element controllers run the hero shader, menus, chart drawing
 and accessibility behavior. This native path retains whole module initialization; it does
@@ -66,7 +66,7 @@ TanStack loader data and the original pathless marketing layout. These component
 their drawing algorithms and event code. They do not stretch saved canvas PNGs on those
 selected routes. Infinite Garden's two article routes still use the initial-state emitter.
 
-Artifacts are under `/Users/enkyuan/Desktop/Projects/mochi/.mochi/trials/20261108-client-recovery`.
+Artifacts are under `/Users/enkyuan/Desktop/Projects/mochi/.mochi/evidence/trials/20261108-client-recovery`.
 The original normalized captures were reused offline without changes. Both source projects
 were produced by `mochi export --recover-client-route ...`, then installed, built and
 typechecked. The export command itself leaves `verification: not_run`; independent browser
@@ -140,7 +140,7 @@ checks at intermediate scroll positions and viewport sizes.
 
 The development exporter now generates and runs editable TanStack Start projects for both
 sites. The original failed checkpoint is retained below; it describes the earlier build.
-Historical artifacts: `/Users/enkyuan/Desktop/Projects/mochi/.mochi/trials/20261108-normalized`.
+Historical artifacts: `/Users/enkyuan/Desktop/Projects/mochi/.mochi/evidence/trials/20261108-normalized`.
 `results.json` records the tested executable hash, dirty Git head, renderer profile, stage
 results, all six route HTTP checks, download diagnostics and four screenshot comparisons.
 This is a local development result; the published crate has not been updated by this step.
@@ -224,7 +224,7 @@ Checked locally on 2026-11-08 against the development checkout on
 `feat/tanstack-exporter`. These are observed failure cases, not fidelity qualifications.
 The existing local-only model constraint was retained: no real credentials or paid Jev calls.
 
-Trial artifacts: `/Users/enkyuan/Desktop/Projects/mochi/.mochi/trials/20261108-030806`.
+Trial artifacts: `/Users/enkyuan/Desktop/Projects/mochi/.mochi/evidence/trials/20261108-030806`.
 `results.json` includes the branch/head, dirty-state flag, tested executable hash, exact
 stage commands, exit codes and errors. Each site's `capture/` contains mirrored files,
 source observations, screenshots, manifests and completeness reports.

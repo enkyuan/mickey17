@@ -1,6 +1,6 @@
 //! Style translation end to end on a synthetic capture (no Tailwind needed: the equality
 //! check then runs against this crate's own model of the utilities; with a Tailwind package
-//! found by `MOCHI_TAILWIND_DIR` or below `.mochi/mochi-exports` it runs against the real one).
+//! found by `MOCHI_TAILWIND_DIR` or below `.mochi/generated/exports` it runs against the real one).
 
 use mochi::semantic::tokens::cli;
 use mochi::semantic::tokens::styles::run::{StyleOptions, translate};

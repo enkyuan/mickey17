@@ -1,5 +1,5 @@
 //! Declaration-to-class translation: per-element Tailwind utilities (with responsive and state
-//! variants) and shared recipes, with a cascade-based equality proof. See `docs/TOKENS.md`.
+//! variants) and shared recipes, with a cascade-based equality proof. See `docs/tokens.md`.
 pub mod align;
 pub mod classes;
 pub mod emit;

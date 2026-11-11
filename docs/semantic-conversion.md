@@ -5,7 +5,7 @@ pattern it can prove, and with `--emit` into typed TSX that uses direct Base UI
 primitives only under `src/components/ui/`. It does not change `mochi export`.
 
 ```sh
-mochi semantic .mochi/trials/<run>/natural/capture --out /new/dir --emit
+mochi semantic .mochi/evidence/trials/<run>/natural/capture --out /new/dir --emit
 #   report.json  report.md  project/src/{components,components/ui,data,types}/
 ```
 
@@ -128,7 +128,7 @@ mochi fingerprint-project /new/dir/project                                # prin
 mochi serve <capture> --port 8100 &
 (cd /new/dir/project && PORT=3101 bun .output/server/index.mjs) &         # or bun run dev (port 3000)
 bun benchmarks/src/parity/cli.ts run --inventory inv.json --reference http://127.0.0.1:8100 \
-  --candidate http://127.0.0.1:3101 --out .mochi/parity-runs/<new> --profile core --project /new/dir/project
+  --candidate http://127.0.0.1:3101 --out .mochi/generated/parity-runs/<new> --profile core --project /new/dir/project
 ```
 
 Expect the first comparison to differ broadly: styles are statically checked only, behavior and
@@ -162,7 +162,7 @@ comparison does not read.
 
 ## Findings from the browser parity run of 7917885 (what was fixed, found, deferred)
 
-Source: `docs/parity-reports/2026-11-10-semantic-final-outputs.md`. Causes below were found by reading the captures and the
+Source: `docs/reports/2026-11-10-parity-semantic-final-outputs.md`. Causes below were found by reading the captures and the
 original bundles, not by a browser run; the effect of each fix on the parity counts is not measured here.
 
 | # | Finding | Status |

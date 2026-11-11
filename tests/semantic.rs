@@ -1121,7 +1121,7 @@ fn a_structural_menu_popup_is_not_also_a_popover() {
 
 #[test]
 fn assembling_natural_gives_a_complete_project_without_a_recovered_bundle() {
-    let root = Path::new(".mochi/trials/20261108-normalized/natural/capture");
+    let root = Path::new(".mochi/evidence/trials/20261108-normalized/natural/capture");
     if !root.join("manifest.json").exists() {
         eprintln!("skipping: {} not present", root.display());
         return;
@@ -1570,7 +1570,7 @@ fn assembling_garden_and_microsoft_keeps_child_routes_apart_and_runs_nothing_fro
             3,
         ),
     ] {
-        let root = Path::new(".mochi/trials").join(dir);
+        let root = Path::new(".mochi/evidence/trials").join(dir);
         if !root.join("manifest.json").exists() {
             eprintln!("skipping: {} not present", root.display());
             continue;
@@ -1633,7 +1633,7 @@ fn percent_decode(s: &str) -> String {
 // ---- real captures (skipped when the workspace evidence is absent) ----------------------
 
 fn capture(dir: &str) -> Option<PageAnalysis> {
-    let root = Path::new(".mochi/trials").join(dir);
+    let root = Path::new(".mochi/evidence/trials").join(dir);
     if !root.join("manifest.json").exists() {
         eprintln!("skipping: {} not present", root.display());
         return None;

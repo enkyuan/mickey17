@@ -4,7 +4,7 @@ Measured 2026-11-10 with the pipeline of commit `02c1bfa` (unchanged; the record
 projects `/tmp/claude-501/final-{natural,garden,msai}/project` (production builds, `bun .output/server/index.mjs` on 3000) and
 the originals served by `mochi serve <capture>` on 8000 (Microsoft AI: `capture-modules`). Headless Chromium 158, SwiftShader GL.
 **Evidence for the declared states of these builds only**; not a screenshot comparison, not a score. Raw captures, diffs and
-reports are in `.mochi/parity-runs/` (git-ignored): `natural-sem-final-core-1`, `garden-sem-final-core-1`,
+reports are in `.mochi/generated/parity-runs/` (git-ignored): `natural-sem-final-core-1`, `garden-sem-final-core-1`,
 `msai-sem-final-core-1`, `natural-sem-final-rerun-1`.
 
 Load average (1/5/15 min) was read by hand when the Natural run started (5.6 / 12.2 / 13.0; 13.3 one minute in), when the Microsoft
@@ -177,6 +177,6 @@ The other 226 Natural, 115 Garden and 243 Microsoft AI scheduled states; Natural
 and 3 hover states: timeouts, some of them 30 s `scrollIntoViewIfNeeded` timeouts on the candidate); Garden's 1
 (`home.desktop1440.menu.cognitive-health13-brands.toggle-twice`); entrance and breakpoint
 boundary states; touch/mobile emulation, light scheme, pointer-driven effects, forms, font bytes; WebGL beyond one frame per
-state; the Rust gate (not run). See `docs/PARITY.md` for the pipeline's limits. Comparison caveats: the previous assemble numbers come from a separate 30-state run without control states, the current numbers are the
+state; the Rust gate (not run). See `docs/parity.md` for the pipeline's limits. Comparison caveats: the previous assemble numbers come from a separate 30-state run without control states, the current numbers are the
 same 30 states taken from an 82-state run, at different machine loads; and three of the four largest geometry deltas (9,575 px old Natural,
 9,975 px Garden, 24,529 px Microsoft AI) come from unsettled states.
