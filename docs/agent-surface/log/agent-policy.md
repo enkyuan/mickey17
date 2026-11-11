@@ -356,3 +356,55 @@ Differences to agree before migration:
 - ToS check result is a caller-supplied boolean-like input; its provenance is recorded
   in the manifest, not verified here.
 - Emoji ZWJ sequences are split by sanitization (documented cost).
+
+---
+
+## 7. Entry 2026-11-10: adversarial review round 1 and fixes (663b5e9)
+
+Done: Opus review (high effort) of 2de943e returned 17 findings; the ones below were
+reproduced or reasoned through and fixed in 663b5e9, each with a regression test in
+`tests/review-fixes.test.ts` (or the existing table/hidden tests) and, where a one-edit
+mutant is meaningful, a mutant in `scripts/mutations.ts`.
+
+Verdicts and decisions (each fills a gap in or tightens `docs/AGENT_SURFACE.md`):
+
+| # | Verdict | Fix and decision |
+| --- | --- | --- |
+| 1 HIGH | confirmed | The mandate allowlist did not constrain `payee`. Decision: for a financial action `payee` must equal `merchant` (`payee-merchant-mismatch`), and the mandate check requires *both* on the allowlist. New helper `hostMatchesMerchant(egressHost, merchant)`: the executor must assert the egress host equals the authorized merchant (D11 "tied to a merchant allowlist"). |
+| 2 MED-HIGH | confirmed | Ledger `settle("released")` deleted committed spend. Now only a `reserved` entry can be released or committed; `Authorization.settle` is one-shot. |
+| 3 MED | confirmed | D2: read-only has "no replay of private endpoints". Now `requiresAuth` or any credential on a read-only request is refused (`read-only-private-endpoint`). |
+| 4 MED | confirmed | An in-flight or unknown idempotency entry never expires into "new"; after its TTL it becomes `unknown-outcome` (needs human reconciliation). Completed entries still expire. |
+| 5 MED | confirmed | `redactDeep` now blanks byte arrays/ArrayBuffers wholesale and judges numbers/bigints by their decimal text; added form-encoded (`+`), lowercase `%xx` and `encodeURI` variants. |
+| 6 MED | confirmed | `Cookie`, `Set-Cookie`, `Authorization`, `Proxy-Authorization` header values are redacted to end of line (unquoted values only, so JSON structure survives). |
+| 7 MED | confirmed | Contrast is judged against the *effective* backdrop (ancestor backgrounds composited, white page by default); text alpha < 0.1 is hidden; `relative`/`sticky` and positive offsets count for off-screen; `clip` is normalized of spaces and commas; `clip-path: inset()` is parsed. |
+| 8 | confirmed | `visibleAttributeText` removed; `collectText` returns `attributes` (alt, aria-label) using the same inherited-hidden rules. |
+| 9 | confirmed | `PageText` is issued only by `pageText()` (module-private `WeakSet`, deep-frozen); `wrapPageText` and `describeTool` refuse anything else. |
+| 10 | confirmed | `paramLabels` keys must be declared parameter ids. |
+| 11 | confirmed | `evaluateRobots` resolves the target through the URL parser (dot-segments, `%2e%2e`); patterns are compared UTF-8 percent-encoded. |
+| 12 | confirmed | The consumed-token store prunes against the highest clock value seen plus a 24 h retention, so a backwards clock step cannot make a spent token spendable. A clock regression larger than 24 h is out of scope (clock honesty is an executor obligation). |
+| 13 | confirmed | All `Default_Ignorable_Code_Point` characters and U+2800 are stripped (FE0E/FE0F only kept directly after an emoji); mixed-script detection covers 15 script groups (CJK counts as one); truncation now happens before the per-token scan (bounded cost on 1M-char input). |
+| 14 | confirmed | `write-irreversible` and `account-control` require `item` (`item-missing`). The proposal to also bind a `request_digest` (section 5) stands. |
+| 15 | partly | Versioned UA lines, normalized pattern specificity, public-suffix wildcard guard (small list, not exhaustive) and "status must be 301/302/303/307/308" fixed. Not done: a side-effecting GET redirected cross-host is still decided by method only. |
+| 16 | partly | `decide` is documented as side-effect-free and not an entry point; digest widened to 128 bits. Not done: mandates are bearer tokens (`subject`/`issuer` are not bound to a credential); noted as a limitation. |
+| 17 | confirmed | Table test now asserts the exact refusal code of every denied cell and the evidence refusal code. |
+
+Equivalent mutants (documented, not tested): removing the `%` check in `parseIPv6`;
+removing the single-side `>= 100%` test in `insetHidesAll` (the opposite-sides sum covers it).
+
+Commands and results:
+
+```
+cd agent-policy && bun test            # 317 pass, 0 fail
+bunx tsc --noEmit                      # clean
+bun scripts/mutate.ts --jobs 6         # 150/155 first run; 5 survivors triaged:
+                                       #   3 real gaps -> tests added (uppercase %xx form,
+                                       #   bare Bearer, one-shot settle, alpha 0.05)
+                                       #   1 equivalent (inset) -> dropped; all killed after
+```
+
+Round 2: a second Opus review of the fix diff (663b5e9) was started; its verdicts are
+recorded in the next entry.
+
+Not run / limits: nothing here exercises a real network, DNS, a real browser or a real
+payment provider; every input is synthetic. `cargo check` (the repo's declared check) was
+not run because no Rust changed.
