@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "subject"
+      ],
+      "code": "invalid_union"
+    }
+  ],
+  "why": "a subject is an action, or a flow step, never both"
+}

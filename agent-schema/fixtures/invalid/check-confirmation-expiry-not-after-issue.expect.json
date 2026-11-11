@@ -1,0 +1,13 @@
+{
+  "schema": "confirmation-request",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "expires_at"
+      ],
+      "code": "time_order"
+    }
+  ],
+  "why": "a confirmation expires after it is issued"
+}

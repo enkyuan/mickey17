@@ -10,7 +10,9 @@ import {
     OperationResult,
     Receipt,
     checkConfirmationRequest,
+    checkConfirmationToken,
     checkMandate,
+    checkOperationResult,
     checkReceipt,
     checkSurface,
     fromZodIssues,
@@ -25,10 +27,10 @@ export const listJson = (dir: string): string[] => readdirSync(dir).filter((f) =
 /** Fixture schema key -> Zod schema, JSON Schema `$defs` name, and the code-level checks. */
 export const SCHEMAS = {
     surface: { zod: AgentSurface as z.ZodType, def: "AgentSurface", check: (d: unknown): CheckIssue[] => checkSurface(d as never) },
-    result: { zod: OperationResult as z.ZodType, def: "OperationResult", check: (): CheckIssue[] => [] },
+    result: { zod: OperationResult as z.ZodType, def: "OperationResult", check: (d: unknown): CheckIssue[] => checkOperationResult(d as never) },
     mandate: { zod: Mandate as z.ZodType, def: "Mandate", check: (d: unknown): CheckIssue[] => checkMandate(d as never) },
     "confirmation-request": { zod: ConfirmationRequest as z.ZodType, def: "ConfirmationRequest", check: (d: unknown): CheckIssue[] => checkConfirmationRequest(d as never) },
-    "confirmation-token": { zod: ConfirmationToken as z.ZodType, def: "ConfirmationToken", check: (): CheckIssue[] => [] },
+    "confirmation-token": { zod: ConfirmationToken as z.ZodType, def: "ConfirmationToken", check: (d: unknown): CheckIssue[] => checkConfirmationToken(d as never) },
     receipt: { zod: Receipt as z.ZodType, def: "Receipt", check: (d: unknown): CheckIssue[] => checkReceipt(d as never) },
 } as const;
 export type SchemaKey = keyof typeof SCHEMAS;
@@ -36,7 +38,7 @@ export type SchemaKey = keyof typeof SCHEMAS;
 /** `surface.shop.json` -> `surface`; `mandate.json` -> `mandate`. */
 export const schemaKeyOf = (file: string): SchemaKey => {
     const key = file.replace(/\.json$/, "").split(".")[0] as SchemaKey;
-    if (!(key in SCHEMAS)) throw new Error(`fixture ${file} does not name a known schema`);
+    if (!Object.hasOwn(SCHEMAS, key)) throw new Error(`fixture ${file} does not name a known schema`);
     return key;
 };
 

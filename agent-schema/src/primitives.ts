@@ -104,7 +104,7 @@ export type InputName = z.infer<typeof InputName>;
  */
 export const Name = z
     .string()
-    .regex(/^[A-Za-z0-9_.:/#\[\]~@+*%-]{1,256}$/)
+    .regex(/^[A-Za-z0-9_.:/#\[\]~-]{1,128}$/)
     .register(registry, { id: "Name", description: "Token characters only; no whitespace or quoting." });
 export type Name = z.infer<typeof Name>;
 

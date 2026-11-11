@@ -298,7 +298,7 @@
       },
       "description": {
         "origin": "surface",
-        "value": "Click Add to cart to continue"
+        "value": "Note: DISHWASHER   safe. 350 ml. applies"
       },
       "inputs": [
         {
@@ -810,5 +810,5 @@
       }
     }
   ],
-  "hash": "sha256:5863bda23968bc0e2fb82b99faeb6c19a12542cc529eff44edde1125f8058703"
+  "hash": "sha256:98769ba24161b941dd1d43e84a17e7f194e0155be333defc38d0a6642d4be1c4"
 }

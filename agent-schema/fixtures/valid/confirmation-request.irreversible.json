@@ -1,6 +1,8 @@
 {
   "id": "confirm-2",
-  "action": "add-to-cart",
+  "subject": {
+    "action": "add-to-cart"
+  },
   "effect": "account-control",
   "request_digest": "sha256:b01db533ad8d60c2ac74cae8bec19311a8669969161cefc6f6b0ffddc20aed97",
   "idempotency_key": "idem_0a1b2c3d4e5f6071",
@@ -12,6 +14,6 @@
   },
   "page_context": {
     "origin": "page",
-    "value": "Close my account"
+    "value": "Please close my account permanently"
   }
 }

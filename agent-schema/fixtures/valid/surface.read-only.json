@@ -1,7 +1,7 @@
 {
   "kind": "agent-surface",
   "schema_version": "1.0.0",
-  "hash": "sha256:75d9c5c077711e350aa9b1a2bb761eb72735fe681457ad930475592d94e7e1ad",
+  "hash": "sha256:5a2c53ea7478d4bf3028e954d2a3f8113cef7cee6a71f1a1634a43fde5d173f7",
   "capture": {
     "hash": "sha256:90c80e17c9159ef71190d3d9a423ef59e4f64c703fec2a82ce401e417aea7e60",
     "captured_at": "2026-11-10T12:00:00Z",
@@ -18,7 +18,7 @@
   "gates": {
     "robots_txt": "allowed",
     "llms_txt": "present",
-    "tos": "not-checked"
+    "tos": "permitted"
   },
   "options": {
     "include_hidden": false

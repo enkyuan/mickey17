@@ -1,0 +1,21 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "preconditions",
+        0,
+        "source",
+        "source",
+        "node"
+      ],
+      "code": "dangling_reference"
+    }
+  ],
+  "why": "flow token preconditions name nodes that exist"
+}

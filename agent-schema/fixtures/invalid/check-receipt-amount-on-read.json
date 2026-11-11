@@ -2,8 +2,12 @@
   "id": "receipt-1",
   "at": "2026-11-10T12:02:00Z",
   "mode": "delegated",
-  "tier": "T2",
-  "effect": "financial",
+  "tier": "T1",
+  "effect": "read",
+  "subject": {
+    "flow": "checkout",
+    "step": "pay"
+  },
   "evidence": [
     "sha256:ca704da46ae075d9f8ac77d46985b27ed1234543f4eade87657948c605ea2b41"
   ],

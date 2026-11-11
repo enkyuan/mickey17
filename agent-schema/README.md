@@ -46,8 +46,15 @@ bun run generate   # rewrite schema/agent-surface.schema.json
   `MarkedText`, `MarkedValue`, `SurfaceText`). Everything else is a grammar: ids are slugs, names and pointers
   (`Name`) are token characters with no whitespace, roles are the ARIA enum. A test walks the generated JSON Schema
   (properties, array items, record keys) and fails if a new bare string appears without review.
-- `check.ts` also scans for surface-authored text that repeats a page string of 8 or more characters verbatim.
-  That catches copying, not paraphrase; treat it as a tripwire, not a proof.
+- `check.ts` also scans for surface-authored text that repeats a page string verbatim after case, whitespace and
+  zero-width normalisation. Only page strings of 20+ characters and 3+ words count (so a heading like "Checkout"
+  does not trip it), and matching is by three-word shingle, so it is linear in the text. It catches copying, not
+  paraphrase or a copy starting mid-word; treat it as a tripwire, not a proof.
+- Money rules are keyed on what a request carries, not only on its label: a request with a `payment-token`
+  input, or a step that can raise 3-D Secure/SCA, must be `financial`, and a financial action or step names its
+  payment method and an idempotency key that is a caller input of the request.
+- Confirmations and receipts name a `subject`: `{action}` or `{flow, step}`, exclusively. Evidence lists are
+  bounded at 64 in the wire format.
 - Lengths are Unicode code points. A lone surrogate is rejected by `check.ts` and by `canonicalize`, because it
   cannot round-trip through UTF-8 JSON.
 

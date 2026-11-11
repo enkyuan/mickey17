@@ -59,16 +59,18 @@ export const Mandate = z
     .register(registry, { id: "Mandate" });
 export type Mandate = z.infer<typeof Mandate>;
 
-/** What the call is for: an action, or a step of a flow (checked in code: action, or flow and step). */
-const subject = {
-    action: ActionId.optional(),
-    flow: FlowId.optional(),
-    step: StepId.optional(),
-};
+/** What the call is for: an action, or one step of a flow. Exactly one of the two shapes. */
+export const Subject = z
+    .union([
+        z.strictObject({ action: ActionId }),
+        z.strictObject({ flow: FlowId, step: StepId }),
+    ])
+    .register(registry, { id: "Subject" });
+export type Subject = z.infer<typeof Subject>;
 
 const confirmationBase = {
     id: ConfirmationId,
-    ...subject,
+    subject: Subject,
     /** Binds the confirmation to one exact request: a tampered total or cart id changes it. */
     request_digest: Sha256,
     idempotency_key: IdempotencyKey,
@@ -90,7 +92,8 @@ export const ConfirmationRequest = z
                     z.strictObject({
                         name: PageText,
                         quantity: z.int().min(1).max(1_000_000),
-                        amount: Money.optional(),
+                        /** Unit price. The human sees every price, so it is never optional. */
+                        amount: Money,
                     }),
                 )
                 .min(1)
@@ -131,9 +134,10 @@ export const Receipt = z
         id: ReceiptId,
         at: Timestamp,
         mode: Mode,
-        tier: Tier,
+        /** T4 is unsupported and never executes. */
+        tier: z.enum(["T0", "T1", "T2", "T3"]),
         effect: Effect,
-        ...subject,
+        subject: Subject,
         /** Hashes of the evidence the action rested on. */
         evidence: z.array(Sha256).max(64),
         /** The request class: method, host and path template. No query values, no bodies. */

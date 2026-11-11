@@ -294,7 +294,7 @@ export const readOnly: AgentSurface = finish({
     capture: { hash: h("capture:docs"), captured_at: T, tool: { name: "mochi", version: "0.1.0" } },
     mode: "read-only",
     site: { host: "docs.example.test", scheme: "https" },
-    gates: { robots_txt: "allowed", llms_txt: "present", tos: "not-checked" },
+    gates: { robots_txt: "allowed", llms_txt: "present", tos: "permitted" },
     options: { include_hidden: false },
     coverage: { tiers: [], unsupported_reasons: [] },
     routes: [
@@ -347,8 +347,7 @@ const mandate: Mandate = withHash({
 
 const confirmationFinancial: ConfirmationRequest = {
     id: "confirm-1",
-    flow: "checkout",
-    step: "pay",
+    subject: { flow: "checkout", step: "pay" },
     effect: "financial",
     request_digest: h("req:pay"),
     idempotency_key: "idem_9f1c2b7a4d5e6f80",
@@ -362,14 +361,14 @@ const confirmationFinancial: ConfirmationRequest = {
 
 const confirmationIrreversible: ConfirmationRequest = {
     id: "confirm-2",
-    action: "add-to-cart",
+    subject: { action: "add-to-cart" },
     effect: "account-control",
     request_digest: h("req:delete-account"),
     idempotency_key: "idem_0a1b2c3d4e5f6071",
     issued_at: T,
     expires_at: "2026-11-10T12:05:00Z",
     summary: surf("Permanently close the account."),
-    page_context: page("Close my account"),
+    page_context: page("Please close my account permanently"),
 };
 
 const token: ConfirmationToken = {
@@ -385,8 +384,7 @@ const receipt: Receipt = {
     mode: "delegated",
     tier: "T2",
     effect: "financial",
-    flow: "checkout",
-    step: "pay",
+    subject: { flow: "checkout", step: "pay" },
     evidence: [h("ev:checkout")],
     request: { method: "POST", host: "shop.example.test", path: page("/api/payment-intents/{intent_id}/confirm") },
     result: "ok",
@@ -771,12 +769,11 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     { const d = s(); d.actions[1].inputs[0].type = "enum"; add("check-enum-input-without-options", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "inputs", 0, "options"], "enum_without_options")), why: "an enum input lists its options" }); }
 
     // ---- check phase: text, time, version, evidence, coverage, mode
-    { const d = s(); d.actions[1].description.value = "Click Add to cart to continue"; add("check-page-text-in-surface-text", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "description", "value"], "page_text_in_surface")), why: "page text never appears in a surface-origin field (section 6)" }); }
+    { const d = s(); d.actions[1].description.value = "Note: DISHWASHER   safe. 350 ml. applies"; add("check-page-text-in-surface-text", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "description", "value"], "page_text_in_surface")), why: "page text never appears in a surface-origin field (section 6)" }); }
     { const d = s(); d.capture.captured_at = "2026-02-31T10:00:00Z"; add("check-timestamp-not-a-date", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["capture", "captured_at"], "invalid_timestamp")), why: "a timestamp is a real instant" }); }
     { const d = s(); d.routes[0].title.value = "ab\ud800"; d.hash = h("unhashable"); add("check-lone-surrogate", d, { schema: SC, phase: CH, issues: issueList(at(["routes", 0, "title", "value"], "ill_formed_string")), why: "a lone surrogate cannot round-trip through UTF-8 JSON" }); }
     { const d = s(); d.schema_version = "1.7.0"; add("check-schema-version-newer-minor", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["schema_version"], "schema_version_newer")), why: "a reader refuses a minor newer than its own" }); }
     { const d = s(); d.actions[1].evidence = [d.actions[1].evidence[0], { source: "inferred", type: "heuristic", ref: "role:button", hash: h("e1") }, { source: "derived", type: "handler-analysis", ref: "js:x", hash: h("e2") }]; add("check-evidence-not-ordered", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "evidence", 2, "source"], "evidence_not_ordered")), why: "evidence is ordered by descending trust" }); }
-    { const d = s(); d.actions[1].evidence = Array.from({ length: 65 }, (_, i) => ({ source: "observed", type: "http-exchange", ref: `capture:net/${i}`, hash: h(`e${i}`) })); add("check-evidence-too-long", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "evidence"], "evidence_too_long")), why: "evidence lists are bounded" }); }
     { const d = ro(); d.coverage.tiers = [{ tier: "T1", routes: 1, actions: 1, unsupported: 0 }, { tier: "T0", routes: 1, actions: 0, unsupported: 0 }, { tier: "T3", routes: 0, actions: 0, unsupported: 0 }]; add("check-coverage-not-canonical", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["coverage"], "coverage_not_canonical")), why: "one document has one coverage encoding, so equal content hashes equal" }); }
     { const d = s(); d.coverage.unsupported_reasons.push({ reason: "opaque-canvas", count: 1 }); add("check-coverage-reason-twice", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["coverage", "unsupported_reasons", 1, "reason"], "duplicate_id")), why: "a reason is counted once" }); }
     { const d = s(); d.unsupported[0].tier = "T2"; d.coverage = deriveCoverage(d); add("check-opaque-unsupported-not-t4", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["unsupported", 0, "tier"], "unsupported_tier_mismatch")), why: "an opaque control is T4" }); }
@@ -791,10 +788,62 @@ export const invalidFixtures: Record<string, { doc: unknown; expect: Expect }> =
     { const d = clone(validFixtures["mandate"]); d.issued_at = "2026-02-30T10:00:00Z"; add("check-mandate-timestamp-impossible", rehash(d), { schema: "mandate", phase: CH, issues: issueList(at(["issued_at"], "invalid_timestamp")), why: "timestamps are real instants" }); }
     { const d = clone(validFixtures["confirmation-request.financial"]); d.total.amount_minor = 1; add("check-confirmation-total-mismatch", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["total", "amount_minor"], "total_mismatch")), why: "items sum to the total the human is shown" }); }
     { const d = clone(validFixtures["confirmation-request.financial"]); d.items[0].amount.currency = "EUR"; add("check-confirmation-item-currency", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["items", 0, "amount", "currency"], "currency_mismatch")), why: "one currency per confirmation" }); }
-    { const d = clone(validFixtures["confirmation-request.financial"]); delete d.flow; delete d.step; add("check-confirmation-no-subject", d, { schema: "confirmation-request", phase: CH, issues: issueList(at([], "subject_missing")), why: "a confirmation says what it is for" }); }
-    { const d = clone(validFixtures["confirmation-request.irreversible"]); d.summary.value = "Close my account now, permanently"; add("check-confirmation-page-text-in-summary", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["summary", "value"], "page_text_in_surface")), why: "the surface summary does not repeat page text" }); }
+    { const d = clone(validFixtures["confirmation-request.irreversible"]); d.summary.value = "Notice: Please close my account permanently."; add("check-confirmation-page-text-in-summary", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["summary", "value"], "page_text_in_surface")), why: "the surface summary does not repeat page text" }); }
     { const d = clone(validFixtures["receipt"]); delete d.confirmation; add("check-receipt-financial-no-confirmation", d, { schema: "receipt", phase: CH, issues: issueList(at(["confirmation"], "receipt_incomplete")), why: "a completed money-moving call records its confirmation" }); }
     { const d = clone(validFixtures["receipt"]); d.mode = "read-only"; add("check-receipt-read-only-financial", d, { schema: "receipt", phase: CH, issues: issueList(at(["effect"], "mode_forbids_effect"), at(["tier"], "mode_forbids_tier")), why: "read-only mode never records a write" }); }
-    { const d = clone(validFixtures["receipt"]); delete d.flow; delete d.step; add("check-receipt-no-subject", d, { schema: "receipt", phase: CH, issues: issueList(at([], "subject_missing")), why: "a receipt says what it records" }); }
+
+    // ======================= additions from review round 2 =======================
+    const R = () => clone(validFixtures["receipt"]);
+    const CF = () => clone(validFixtures["confirmation-request.financial"]);
+    const step = (d: Doc, i: number) => d.flows[0].steps[i];
+    const planted = (v: unknown, at_: { in: string; name: string }) => ({ at: at_, value: v });
+    const constant = (value: string | number) => ({ class: "constant", value: { origin: "page", value } });
+
+    // ---- schema phase
+    { const d = s(); d.actions[1].evidence = Array.from({ length: 65 }, (_, i) => ({ source: "observed", type: "http-exchange", ref: `capture:net/${i}`, hash: h(`e${i}`) })); add("evidence-too-long", d, { schema: SC, phase: SCH, issues: issueList(at(["actions", 1, "evidence"], "too_big")), why: "evidence lists are bounded in the wire format" }); }
+    { const d = CF(); delete d.subject; add("confirmation-no-subject", d, { schema: "confirmation-request", phase: SCH, issues: issueList(at(["subject"], "invalid_union")), why: "a confirmation says what it is for" }); }
+    { const d = R(); d.subject = { action: "add-to-cart", flow: "checkout", step: "pay" }; add("receipt-subject-both-shapes", d, { schema: "receipt", phase: SCH, issues: issueList(at(["subject"], "invalid_union")), why: "a subject is an action, or a flow step, never both" }); }
+    { const d = R(); d.tier = "T4"; add("receipt-tier-t4", d, { schema: "receipt", phase: SCH, issues: issueList(at(["tier"], "invalid_value")), why: "T4 never executes, so no receipt records it" }); }
+    { const d = CF(); delete d.items[0].amount; add("confirmation-financial-item-no-amount", d, { schema: "confirmation-request", phase: SCH, issues: issueList(at(["items", 0, "amount"], "invalid_type")), why: "the human sees every price" }); }
+
+    // ---- check phase: money
+    { const d = s(); step(d, 2).requests[0].values.push({ at: { in: "body-json", name: "/pt" }, value: { class: "input", input: "payment_token" } }); add("check-payment-token-in-nonfinancial-step", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 2, "requests", 0, "values", 2, "value", "input"], "payment_token_not_financial")), why: "a request that carries a payment token is financial, whatever the step is labelled" }); }
+    { const d = s(); const pay = step(d, 3); pay.effect = "account-control"; delete pay.payment; d.flows[0].effect = "account-control"; add("check-financial-step-relabelled", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 3, "human_gates"], "human_gate_not_financial"), at(["flows", 0, "steps", 3, "requests", 0, "values", 1, "value", "input"], "payment_token_not_financial")), why: "relabelling the paying step does not escape the money rules" }); }
+
+    // ---- check phase: secrets
+    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("hunter2hunter2"), { in: "body-json", name: "/user/password" })); add("check-secret-body-password", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "a password never appears as an embedded constant" }); }
+    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("anything"), { in: "query", name: "api_key" })); add("check-secret-query-api-key", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "an api key is supplied at run time" }); }
+    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("bearer abc.def"), { in: "header", name: "x-custom" })); add("check-secret-lowercase-bearer", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "bearer credentials are recognised in any case" }); }
+    { const d = s(); step(d, 0).requests[0].values.push(planted(constant("sid-1"), { in: "cookie", name: "session" })); add("check-secret-cookie-session", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "values", 3, "value", "value"], "secret_constant")), why: "a session cookie is supplied at run time" }); }
+    { const d = s(); step(d, 0).requests[0].url.value = "/api/cart/items?api_key=sk_live_abcdef123456"; add("check-secret-in-url", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "url", "value"], "secret_in_url")), why: "a URL template carries no credential" }); }
+    { const d = s(); step(d, 0).requests[0].url.value = "/api/cards/4111111111111111/charge"; add("check-card-number-in-url", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 0, "requests", 0, "url", "value"], "card_number_constant")), why: "a URL template carries no card number" }); }
+    { const d = s(); d.flows[0].inputs.push({ name: "creditCardNumber", type: "string", required: false, sensitivity: "none" }); add("check-card-input-camel-case", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "inputs", 4, "name"], "card_input_forbidden")), why: "card-named inputs are caught in camelCase" }); }
+    { const d = s(); d.flows[0].inputs.push({ name: "api_key", type: "string", required: false, sensitivity: "none" }); add("check-secret-named-input-not-credential", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "inputs", 4, "sensitivity"], "password_not_credential")), why: "a secret-named input is sensitivity credential" }); }
+    { const d = s(); d.flows[0].steps[3].requests[0].values[1].at = { in: "path", name: "tok" }; add("check-credential-in-path", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 3, "requests", 0, "values", 1, "at", "in"], "sensitive_in_url")), why: "a payment token never goes in the URL path" }); }
+
+    // ---- check phase: references
+    { const d = s(); d.actions[1].postconditions[1].input = "nonexistent"; add("check-response-field-input-undeclared", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "postconditions", 1, "input"], "undeclared_input")), why: "a postcondition names a declared input" }); }
+    { const d = s(); step(d, 1).preconditions = [{ type: "token", into: { in: "header", name: "x-t" }, source: { source: { kind: "response", step: "set-shipping", request: "shipping-req", at: { in: "body-json", name: "/t" } }, match: "exact" } }]; add("check-precondition-from-own-step-response", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 1, "preconditions", 0, "source", "source", "request"], "dependency_not_earlier")), why: "a precondition cannot wait for the response of the step it guards" }); }
+    { const d = s(); step(d, 1).preconditions = [{ type: "token", into: { in: "header", name: "x-t" }, source: { source: { kind: "dom", step: "add-item", node: "n_0000000000000000" }, match: "exact" } }]; add("check-flow-token-node-dangling", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["flows", 0, "steps", 1, "preconditions", 0, "source", "source", "node"], "dangling_reference")), why: "flow token preconditions name nodes that exist" }); }
+    { const d = s(); d.actions[1].inputs[0].min_length = 10; d.actions[1].inputs[0].max_length = 1; add("check-input-length-order", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 1, "inputs", 0, "min_length"], "constraint_order")), why: "length constraints are satisfiable" }); }
+    for (const reason of ["opaque-webgl", "drag-only", "video"]) {
+        const d = s(); d.unsupported[0].reason = reason; d.unsupported[0].tier = "T2"; d.coverage = deriveCoverage(d);
+        add(`check-${reason}-unsupported-not-t4`, rehash(d), { schema: SC, phase: CH, issues: issueList(at(["unsupported", 0, "tier"], "unsupported_tier_mismatch")), why: `${reason} is opaque: tier T4` });
+    }
+
+    // ---- check phase: read-only gates
+    { const d = ro(); d.gates.robots_txt = "not-checked"; add("check-read-only-robots-unchecked", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["gates", "robots_txt"], "gates_unchecked")), why: "a read-only surface requires robots.txt to have been checked" }); }
+    { const d = ro(); d.gates.tos = "not-checked"; add("check-read-only-tos-unchecked", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["gates", "tos"], "gates_unchecked")), why: "a read-only surface requires the terms to have been checked" }); }
+    { const d = ro(); d.actions[0].preconditions = [{ type: "authenticated" }]; add("check-read-only-authenticated-precondition", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["actions", 0, "preconditions", 0], "read_only_requires_auth")), why: "an authenticated precondition is authentication" }); }
+    { const d = ro(); d.routes[0].tiers = ["T0", "T1", "T2"]; d.coverage = deriveCoverage(d); add("check-read-only-route-tier", rehash(d), { schema: SC, phase: CH, issues: issueList(at(["routes", 0, "tiers", 2], "mode_forbids_tier")), why: "read-only routes are covered at T0/T1 only" }); }
+
+    // ---- check phase: authority and results
+    { const d = clone(validFixtures["confirmation-request.irreversible"]); d.expires_at = d.issued_at; add("check-confirmation-expiry-not-after-issue", d, { schema: "confirmation-request", phase: CH, issues: issueList(at(["expires_at"], "time_order")), why: "a confirmation expires after it is issued" }); }
+    { const d = R(); d.effect = "account-control"; delete d.amount; delete d.confirmation; add("check-receipt-irreversible-no-confirmation", d, { schema: "receipt", phase: CH, issues: issueList(at(["confirmation"], "receipt_incomplete")), why: "a completed account-control call records its confirmation" }); }
+    { const d = R(); d.result = "error"; delete d.idempotency_key; add("check-receipt-failed-payment-no-key", d, { schema: "receipt", phase: CH, issues: issueList(at(["idempotency_key"], "receipt_incomplete")), why: "a failed payment is reconciled by its key" }); }
+    { const d = R(); d.effect = "read"; d.tier = "T1"; add("check-receipt-amount-on-read", d, { schema: "receipt", phase: CH, issues: issueList(at(["amount"], "amount_not_financial")), why: "only a financial call records an amount" }); }
+    { const d = R(); d.tier = "T1"; add("check-receipt-write-not-t2", d, { schema: "receipt", phase: CH, issues: issueList(at(["tier"], "receipt_tier_effect")), why: "a write is a T2 network call" }); }
+    add("check-result-ill-formed-field-name", { status: "ok", tier: "T2", fields: [{ name: { origin: "page", value: "ab\ud800" }, value: { origin: "page", value: 1 } }] }, { schema: "result", phase: CH, issues: issueList(at(["fields", 0, "name", "value"], "ill_formed_string")), why: "result strings are well-formed" });
+    { const d = clone(validFixtures["confirmation-token"]); d.granted_at = "2026-02-30T12:01:00Z"; add("check-token-timestamp-impossible", d, { schema: "confirmation-token", phase: CH, issues: issueList(at(["granted_at"], "invalid_timestamp")), why: "token timestamps are real instants" }); }
     return out;
 })();

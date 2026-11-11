@@ -4,8 +4,10 @@
   "mode": "read-only",
   "tier": "T2",
   "effect": "financial",
-  "flow": "checkout",
-  "step": "pay",
+  "subject": {
+    "flow": "checkout",
+    "step": "pay"
+  },
   "evidence": [
     "sha256:ca704da46ae075d9f8ac77d46985b27ed1234543f4eade87657948c605ea2b41"
   ],

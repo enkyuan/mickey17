@@ -133,8 +133,12 @@ describe("JSON Schema agrees with Zod on every fixture", () => {
                 // missing key or an unrecognised key on the containing object).
                 const expectedPaths = (readJson(join(fixtureDir("invalid"), file.replace(/\.json$/, ".expect.json"))) as { issues: { path: (string | number)[] }[] }).issues.map((i) => i.path);
                 const ptr = (p: (string | number)[]) => p.map((x) => `/${x}`).join("");
-                const where = new Set((v.errors ?? []).map((e) => e.instancePath));
-                for (const p of expectedPaths) expect(where.has(ptr(p)) || where.has(ptr(p.slice(0, -1)))).toBe(true);
+                const errors = v.errors ?? [];
+                for (const p of expectedPaths) {
+                    // Exact path, except ajv reports a missing key, an unrecognised key, or a missing tuple element on the container.
+                    const hit = errors.some((e) => e.instancePath === ptr(p) || (["required", "additionalProperties", "minItems"].includes(e.keyword) && e.instancePath === ptr(p.slice(0, -1))));
+                    expect(hit).toBe(true);
+                }
             }
         });
     }

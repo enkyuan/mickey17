@@ -58,7 +58,7 @@ const flowBase = {
     steps: z.array(FlowStep).min(1).max(256),
     recorded: Recording,
     /** First element declared or observed (D5/D11); emitters order evidence strongest first. */
-    evidence: z.tuple([StrongEvidence], Evidence),
+    evidence: z.intersection(z.tuple([StrongEvidence], Evidence), z.array(Evidence).max(64)),
 };
 
 /** A flow every request value of which is classed. Executable. */

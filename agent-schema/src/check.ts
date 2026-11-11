@@ -4,7 +4,8 @@
 // reason, not the wording.
 import { z } from "zod";
 import type { Action, Input } from "./action";
-import type { ConfirmationRequest, Mandate, Receipt } from "./authority";
+import type { ConfirmationRequest, ConfirmationToken, Mandate, Receipt } from "./authority";
+import type { OperationResult } from "./result";
 import type { Flow, FlowStep } from "./flow";
 import { canonicalize, computeHash } from "./hash";
 import { EFFECT_ORDER, EVIDENCE_ORDER, effectRank, requiresConfirmation } from "./policy";
@@ -33,7 +34,6 @@ export const CHECK_CODES = [
     "gates_forbid_read_only",
     "read_only_requires_auth",
     "evidence_not_ordered",
-    "evidence_too_long",
     "coverage_mismatch",
     "coverage_not_canonical",
     "flow_effect_mismatch",
@@ -64,8 +64,13 @@ export const CHECK_CODES = [
     "enum_without_options",
     "schema_version_newer",
     "unsupported_tier_mismatch",
-    "subject_missing",
     "receipt_incomplete",
+    "receipt_tier_effect",
+    "amount_not_financial",
+    "payment_token_not_financial",
+    "human_gate_not_financial",
+    "secret_in_url",
+    "gates_unchecked",
 ] as const;
 export type CheckCode = (typeof CHECK_CODES)[number];
 
@@ -106,16 +111,23 @@ export function checkSchemaVersion(version: string): VersionCheck {
 // Generic scan: ill-formed strings, timestamps, page text copied into surface text
 // ---------------------------------------------------------------------------
 
-const MIN_PAGE_TEXT_COPY = 8;
+/** A page string must be at least this long (normalised) and have at least three words to count as copyable text. */
+const MIN_COPY_CHARS = 20;
+const SHINGLE = 3;
+
+const normalise = (t: string): string => t.normalize("NFKC").toLowerCase().replace(/[\u200b-\u200d\u2060\ufeff]/g, "").replace(/\s+/g, " ").trim();
 
 /**
  * Scans any document. Flags (1) ill-formed UTF-16 (a lone surrogate cannot round-trip through
- * UTF-8 JSON), (2) timestamps that are not real instants, and (3) surface-authored text that
- * contains a verbatim page string of at least 8 characters (D8 property: page text never appears
- * in a surface-origin field). Detection is verbatim only; paraphrase is out of reach.
+ * UTF-8 JSON), (2) timestamps that are not real instants (keys ending `_at`, and a top-level `at`),
+ * and (3) surface-authored text that repeats a page string verbatim after case, whitespace and
+ * zero-width normalisation (D8 property: page text never appears in a surface-origin field).
+ * Only page strings of 20+ characters and 3+ words count, so ordinary headings do not trip it, and
+ * matching is by three-word shingle, so cost is linear in the text. It catches copying, not
+ * paraphrase or a copy that starts mid-word: a tripwire, not a proof.
  */
 function scan(doc: unknown, add: Add) {
-    const page = new Set<string>();
+    const pageByKey = new Map<string, string[]>();
     const surface: { path: IssuePath; value: string }[] = [];
     const walk = (n: unknown, path: IssuePath) => {
         if (typeof n === "string") {
@@ -127,11 +139,18 @@ function scan(doc: unknown, add: Add) {
         const o = n as Record<string, unknown>;
         if (typeof o.value === "string" && (o.origin === "page" || o.origin === "surface")) {
             if (o.origin === "page") {
-                if (o.value.length >= MIN_PAGE_TEXT_COPY) page.add(o.value);
+                const t = normalise(o.value);
+                const words = t.split(" ");
+                if (t.length >= MIN_COPY_CHARS && words.length >= SHINGLE) {
+                    const key = words.slice(0, SHINGLE).join(" ");
+                    const list = pageByKey.get(key);
+                    if (list) list.push(t);
+                    else pageByKey.set(key, [t]);
+                }
             } else surface.push({ path: [...path, "value"], value: o.value });
         }
         for (const [k, v] of Object.entries(o)) {
-            if ((k === "at" || k.endsWith("_at")) && typeof v === "string" && /^[0-9]{4}-/.test(v)) {
+            if ((k.endsWith("_at") || (k === "at" && path.length === 0)) && typeof v === "string" && /^[0-9]{4}-/.test(v)) {
                 const t = new Date(v);
                 if (Number.isNaN(t.getTime()) || `${t.toISOString().slice(0, 19)}Z` !== v) {
                     add([...path, k], "invalid_timestamp", `${v} is not a real instant`);
@@ -141,13 +160,16 @@ function scan(doc: unknown, add: Add) {
         }
     };
     walk(doc, []);
+    if (pageByKey.size === 0) return;
     for (const s of surface) {
-        for (const p of page) {
-            if (s.value.includes(p)) {
-                add(s.path, "page_text_in_surface", "surface-authored text contains page text verbatim");
-                break;
-            }
+        const t = normalise(s.value);
+        const words = t.split(" ");
+        let hit = false;
+        for (let i = 0; i + SHINGLE <= words.length && !hit; i++) {
+            const cands = pageByKey.get(words.slice(i, i + SHINGLE).join(" "));
+            if (cands?.some((c) => t.includes(c))) hit = true;
         }
+        if (hit) add(s.path, "page_text_in_surface", "surface-authored text repeats page text");
     }
 }
 
@@ -155,9 +177,23 @@ function scan(doc: unknown, add: Add) {
 // Secrets and instruments (D7, D11)
 // ---------------------------------------------------------------------------
 
-const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|[a-z0-9-]*-api-key|[a-z0-9-]*-auth-token|x-auth-token)$/i;
-const SECRET_SHAPE = /^(Bearer|Basic)\s+\S+|\bsk_(live|test)_[A-Za-z0-9]+|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$|^AKIA[0-9A-Z]{16}$/;
-const CARD_INPUT = /(^|[_-])(card_?number|cardnumber|card_?no|pan|cvv|cvc|cvv2|card_?exp[a-z_]*)($|[_-])/i;
+/** Names that carry credentials. Applied to the last segment of a header, query, form, cookie or JSON-pointer name. */
+const SECRET_NAME = /(passw(or)?d|passcode|secret|token|api[-_]?key|access[-_]?key|auth|session|sid$|credential|bearer|jwt|private[-_]?key)/i;
+const SECRET_SHAPE =
+    /^(bearer|basic)\s+\S+|\bsk_(live|test)_[A-Za-z0-9]+|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$|^AKIA[0-9A-Z]{16}$|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/i;
+/** Card-ish input names, after splitting camelCase: card number/num/no, cc number, credit card, cvv/cvc, security code, expiry fields. */
+const CARD_INPUT =
+    /(^|_)(card_?(number|num|no|pan)|cardnumber|cc_?(num|number|no)|ccnum|credit_?card(_?(number|num))?|cvv2?|cvc2?|security_?code|expiry|expiration|exp_(month|year|date)|card_?exp[a-z_]*|primary_?account_?number)($|_)/;
+const PASSWORD_NAME = /(passw(or)?d|passcode|secret|api[-_]?key)/i;
+
+const lastSegment = (name: string): string => name.split("/").filter(Boolean).pop() ?? name;
+const snake = (name: string): string => name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().replace(/[-.]/g, "_");
+
+/** Issuer prefixes and lengths that make a Luhn-valid digit run plausibly a payment card (13-digit GTINs excluded). */
+function looksLikeCard(digits: string): boolean {
+    if (!/^[0-9]{15,19}$/.test(digits) || !luhn(digits)) return false;
+    return /^(4|5[1-5]|2[2-7]|3[47]|3[0689]|6011|65|35|62|81|50|56|57|58|6[0-9])/.test(digits);
+}
 
 function luhn(digits: string): boolean {
     let sum = 0;
@@ -178,8 +214,8 @@ function checkInputs(path: IssuePath, inputs: readonly Input[], add: Add) {
     duplicates(inputs, (i) => i.name).forEach((i) => add([...path, i, "name"], "duplicate_id", "duplicate input name"));
     inputs.forEach((inp, i) => {
         const p = [...path, i];
-        if (CARD_INPUT.test(inp.name)) add([...p, "name"], "card_input_forbidden", "card data never passes through the surface; use a payment-token input");
-        if (inp.type === "password" && inp.sensitivity !== "credential") add([...p, "sensitivity"], "password_not_credential", "a password input must be sensitivity credential");
+        if (CARD_INPUT.test(snake(inp.name))) add([...p, "name"], "card_input_forbidden", "card data never passes through the surface; use a payment-token input");
+        if ((inp.type === "password" || PASSWORD_NAME.test(inp.name)) && inp.sensitivity !== "credential") add([...p, "sensitivity"], "password_not_credential", "a password or secret input must be sensitivity credential");
         if (inp.min !== undefined && inp.max !== undefined && inp.min > inp.max) add([...p, "min"], "constraint_order", "min exceeds max");
         if (inp.min_length !== undefined && inp.max_length !== undefined && inp.min_length > inp.max_length) add([...p, "min_length"], "constraint_order", "min_length exceeds max_length");
         if (inp.type === "enum" && (!inp.options || inp.options.length === 0)) add([...p, "options"], "enum_without_options", "an enum input lists its options");
@@ -194,26 +230,41 @@ function edgesOf(value: ValueClass): { edge: DependencyEdge; sub: IssuePath }[] 
     return [];
 }
 
-/** Rules every request obeys, in or out of a flow. */
-function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly Input[], add: Add, onEdge: (edge: DependencyEdge, p: IssuePath) => void) {
+/** Rules every request obeys, in or out of a flow. `effect` is the effect of the action or step that sends it. */
+function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly Input[], effect: Effect, add: Add, onEdge: (edge: DependencyEdge, p: IssuePath) => void) {
     const byName = new Map(inputs.map((i) => [i.name, i]));
+    const url = request.url.value;
+    if (SECRET_SHAPE.test(url) || /[?&;][^=&]*(passw(or)?d|secret|token|api[-_]?key|access[-_]?key|auth|session)[^=&]*=/i.test(url)) {
+        add([...path, "url", "value"], "secret_in_url", "a credential must not appear in a URL");
+    }
+    for (const run of url.replace(/[ .-]/g, "").match(/[0-9]{13,19}/g) ?? []) {
+        if (looksLikeCard(run)) {
+            add([...path, "url", "value"], "card_number_constant", "URL contains what looks like a payment card number");
+            break;
+        }
+    }
     request.values.forEach((rv, i) => {
         const vp = [...path, "values", i, "value"];
         const v = rv.value;
         if (v.class === "input") {
             const inp = byName.get(v.input);
             if (!inp) add([...vp, "input"], "undeclared_input", `input ${v.input} is not declared`);
-            else if ((inp.sensitivity === "credential" || inp.sensitivity === "payment-token") && (rv.at.in === "query" || rv.at.in === "path")) {
-                add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential or payment token must not be placed in the URL");
+            else {
+                if ((inp.sensitivity === "credential" || inp.sensitivity === "payment-token") && (rv.at.in === "query" || rv.at.in === "path")) {
+                    add([...path, "values", i, "at", "in"], "sensitive_in_url", "a credential or payment token must not be placed in the URL");
+                }
+                if (inp.sensitivity === "payment-token" && effect !== "financial") {
+                    add([...vp, "input"], "payment_token_not_financial", "a request that carries a payment token is financial");
+                }
             }
         }
         if (v.class === "constant") {
             const raw = String(v.value.value);
-            if (rv.at.in === "cookie" || (rv.at.in === "header" && SECRET_HEADER.test(rv.at.name)) || SECRET_SHAPE.test(raw)) {
+            const name = lastSegment(rv.at.name);
+            if (SECRET_NAME.test(name) || SECRET_SHAPE.test(raw)) {
                 add([...vp, "value"], "secret_constant", "a credential or session value must be supplied at run time, not embedded");
             }
-            const digits = raw.replace(/[ -]/g, "");
-            if (/^[0-9]{13,19}$/.test(digits) && luhn(digits)) add([...vp, "value"], "card_number_constant", "constant looks like a payment card number");
+            if (looksLikeCard(raw.replace(/[ .-]/g, ""))) add([...vp, "value"], "card_number_constant", "constant looks like a payment card number");
         }
         edgesOf(v).forEach(({ edge, sub }) => onEdge(edge, [...vp, ...sub]));
     });
@@ -224,7 +275,6 @@ function checkRequest(path: IssuePath, request: RequestSpec, inputs: readonly In
 // ---------------------------------------------------------------------------
 
 function evidenceRules(path: IssuePath, evidence: readonly { source: string }[], add: Add) {
-    if (evidence.length > 64) add(path, "evidence_too_long", "at most 64 evidence entries");
     let last = -1;
     evidence.forEach((e, i) => {
         const rank = EVIDENCE_ORDER.indexOf(e.source as (typeof EVIDENCE_ORDER)[number]);
@@ -260,7 +310,8 @@ interface DocIndex {
     actions: ReadonlyMap<string, Action>;
 }
 
-function postconditionRefs(path: IssuePath, pc: Action["postconditions"][number], idx: DocIndex, add: Add) {
+function postconditionRefs(path: IssuePath, pc: Action["postconditions"][number], idx: DocIndex, add: Add, inputs: readonly Input[]) {
+    if (pc.type === "response_field_equals_input" && !inputs.some((i) => i.name === pc.input)) add([...path, "input"], "undeclared_input", `input ${pc.input} is not declared`);
     if ((pc.type === "node_present" || pc.type === "node_text_changed") && !idx.nodeIds.has(pc.node)) add([...path, "node"], "dangling_reference", `unknown node ${pc.node}`);
     if (pc.type === "navigates_to" && !idx.routeIds.has(pc.route)) add([...path, "route"], "dangling_reference", `unknown route ${pc.route}`);
 }
@@ -295,7 +346,7 @@ function checkFlow(flow: Flow, fi: number, idx: DocIndex, add: Add) {
             const reqs = requestsOf.get(src.step) ?? [];
             const target = reqs.findIndex((r) => r.id === src.request);
             if (target < 0) add([...ep, "source", "request"], "dangling_reference", `dependency refers to unknown request ${src.request} in step ${src.step}`);
-            else if (srcStep === si && ri !== null && target >= ri) add([...ep, "source", "request"], "dependency_not_earlier", "a request can only depend on an earlier request");
+            else if (srcStep === si && (ri === null || target >= ri)) add([...ep, "source", "request"], "dependency_not_earlier", "a request or precondition can only depend on an earlier request");
         }
         if (src.kind === "dom" && !idx.nodeIds.has(src.node)) add([...ep, "source", "node"], "dangling_reference", `dependency refers to unknown node ${src.node}`);
     };
@@ -313,12 +364,15 @@ function checkFlow(flow: Flow, fi: number, idx: DocIndex, add: Add) {
             add([...sp, step.payment !== undefined ? "payment" : "effect"], "payment_effect_mismatch", "exactly the financial step declares a payment method");
         }
         idempotencyRules(sp, step.effect, step.idempotency, step.requests, add);
+        if (step.effect !== "financial" && step.human_gates.some((g) => g === "3ds" || g === "sca")) {
+            add([...sp, "human_gates"], "human_gate_not_financial", "a 3-D Secure or SCA challenge belongs to a financial step");
+        }
         step.preconditions.forEach((pc, i) => {
             if (pc.type === "prior_action" && !idx.actions.has(pc.action)) add([...sp, "preconditions", i, "action"], "dangling_reference", `unknown action ${pc.action}`);
             if (pc.type === "token") edgeRule(si, null)(pc.source, [...sp, "preconditions", i, "source"]);
         });
-        step.postconditions.forEach((pc, i) => postconditionRefs([...sp, "postconditions", i], pc, idx, add));
-        step.requests.forEach((req, ri) => checkRequest([...sp, "requests", ri], req, flow.inputs, add, edgeRule(si, ri)));
+        step.postconditions.forEach((pc, i) => postconditionRefs([...sp, "postconditions", i], pc, idx, add, flow.inputs));
+        step.requests.forEach((req, ri) => checkRequest([...sp, "requests", ri], req, flow.inputs, step.effect, add, edgeRule(si, ri)));
     });
     if (flow.effect !== EFFECT_ORDER[top]) add([...p, "effect"], "flow_effect_mismatch", "flow effect must equal the most consequential step effect");
     evidenceRules([...p, "evidence"], flow.evidence, add);
@@ -353,9 +407,9 @@ function checkAction(action: Action, ai: number, idx: DocIndex, add: Add) {
         if (pc.type === "prior_action" && !idx.actions.has(pc.action)) add([...p, "preconditions", i, "action"], "dangling_reference", `unknown action ${pc.action}`);
         if (pc.type === "token") edgeRule(pc.source, [...p, "preconditions", i, "source"]);
     });
-    action.postconditions.forEach((pc, i) => postconditionRefs([...p, "postconditions", i], pc, idx, add));
+    action.postconditions.forEach((pc, i) => postconditionRefs([...p, "postconditions", i], pc, idx, add, action.inputs));
     if ("request" in action) {
-        checkRequest([...p, "request"], action.request, action.inputs, add, edgeRule);
+        checkRequest([...p, "request"], action.request, action.inputs, action.effect, add, edgeRule);
         if ((action.effect === "financial") !== (action.payment !== undefined)) {
             add([...p, action.payment !== undefined ? "payment" : "effect"], "payment_effect_mismatch", "exactly a financial action declares a payment method");
         }
@@ -462,9 +516,12 @@ export function checkSurface(doc: AgentSurface): CheckIssue[] {
         doc.actions.forEach((a, i) => {
             if (!allowed.has(a.tier)) add(["actions", i, "tier"], "mode_forbids_tier", "read-only surfaces carry T0/T1 only");
             else if (a.auth.kind !== "none") add(["actions", i, "auth"], "read_only_requires_auth", "read-only surfaces carry no authenticated actions");
+            a.preconditions.forEach((pc, pi) => { if (pc.type === "authenticated") add(["actions", i, "preconditions", pi], "read_only_requires_auth", "read-only surfaces carry no authenticated actions"); });
         });
         doc.routes.forEach((r, ri) => r.tiers.forEach((t, ti) => { if (!allowed.has(t)) add(["routes", ri, "tiers", ti], "mode_forbids_tier", "read-only surfaces carry T0/T1 only"); }));
         if (doc.flows.length > 0) add(["flows"], "mode_forbids_flows", "read-only surfaces carry no flows");
+        if (doc.gates.robots_txt === "not-checked") add(["gates", "robots_txt"], "gates_unchecked", "a read-only surface requires robots.txt to have been checked");
+        if (doc.gates.tos === "not-checked") add(["gates", "tos"], "gates_unchecked", "a read-only surface requires the terms of service to have been checked");
         if (doc.gates.robots_txt === "disallowed") add(["gates", "robots_txt"], "gates_forbid_read_only", "robots.txt disallows access");
         if (doc.gates.tos === "restricted") add(["gates", "tos"], "gates_forbid_read_only", "terms of service restrict automated access");
     }
@@ -506,12 +563,6 @@ export function checkSurface(doc: AgentSurface): CheckIssue[] {
 // Authority documents
 // ---------------------------------------------------------------------------
 
-function subjectRule(c: { action?: string | undefined; flow?: string | undefined; step?: string | undefined }, add: Add) {
-    const ok = c.action !== undefined || (c.flow !== undefined && c.step !== undefined);
-    const stray = (c.flow === undefined) !== (c.step === undefined);
-    if (!ok || stray) add([], "subject_missing", "name an action, or a flow together with a step");
-}
-
 /** Cross-field rules for a mandate. */
 export function checkMandate(m: Mandate): CheckIssue[] {
     const { list, add } = issues();
@@ -529,20 +580,29 @@ export function checkMandate(m: Mandate): CheckIssue[] {
 export function checkConfirmationRequest(c: ConfirmationRequest): CheckIssue[] {
     const { list, add } = issues();
     scan(c, add);
-    subjectRule(c, add);
     if (c.expires_at <= c.issued_at) add(["expires_at"], "time_order", "expires_at must be after issued_at");
     if (c.effect === "financial") {
         let sum = 0;
-        let complete = true;
         c.items.forEach((it, i) => {
-            if (it.amount === undefined) complete = false;
-            else {
-                if (it.amount.currency !== c.total.currency) add(["items", i, "amount", "currency"], "currency_mismatch", "item currency differs from total currency");
-                sum += it.amount.amount_minor * it.quantity;
-            }
+            if (it.amount.currency !== c.total.currency) add(["items", i, "amount", "currency"], "currency_mismatch", "item currency differs from total currency");
+            sum += it.amount.amount_minor * it.quantity;
         });
-        if (complete && sum !== c.total.amount_minor) add(["total", "amount_minor"], "total_mismatch", `items sum to ${sum} but the total is ${c.total.amount_minor}`);
+        if (sum !== c.total.amount_minor) add(["total", "amount_minor"], "total_mismatch", `items sum to ${sum} but the total is ${c.total.amount_minor}`);
     }
+    return list;
+}
+
+/** Cross-field rules for a confirmation token (timestamps and string well-formedness). */
+export function checkConfirmationToken(t: ConfirmationToken): CheckIssue[] {
+    const { list, add } = issues();
+    scan(t, add);
+    return list;
+}
+
+/** Cross-field rules for an operation result (string well-formedness, page text in surface fields). */
+export function checkOperationResult(r: OperationResult): CheckIssue[] {
+    const { list, add } = issues();
+    scan(r, add);
     return list;
 }
 
@@ -550,16 +610,19 @@ export function checkConfirmationRequest(c: ConfirmationRequest): CheckIssue[] {
 export function checkReceipt(r: Receipt): CheckIssue[] {
     const { list, add } = issues();
     scan(r, add);
-    subjectRule(r, add);
     if (r.mode === "read-only") {
         if (r.effect !== "read") add(["effect"], "mode_forbids_effect", "read-only mode records reads only");
         if (r.tier !== "T0" && r.tier !== "T1") add(["tier"], "mode_forbids_tier", "read-only mode records T0/T1 only");
     }
-    if (r.result === "ok") {
+    if (r.effect !== "read" && r.tier !== "T2") add(["tier"], "receipt_tier_effect", "a write is a T2 network call");
+    if (r.amount !== undefined && r.effect !== "financial") add(["amount"], "amount_not_financial", "only a financial call records an amount");
+    // A call that ran (ok) or failed after being sent (error) must be reconcilable: a timed-out payment is exactly
+    // the case that needs its key, mandate and confirmation. Refusals (blocked, requires_*) never reached the site.
+    if (r.result === "ok" || r.result === "error") {
         const need: ("amount" | "confirmation" | "mandate" | "idempotency_key")[] = [];
-        if (r.effect === "financial") need.push("amount", "confirmation", "mandate", "idempotency_key");
+        if (r.effect === "financial") need.push("confirmation", "mandate", "idempotency_key", ...(r.result === "ok" ? (["amount"] as const) : []));
         else if (requiresConfirmation(r.effect)) need.push("confirmation");
-        for (const f of need) if (r[f] === undefined) add([f], "receipt_incomplete", `a completed ${r.effect} call records ${f}`);
+        for (const f of need) if (r[f] === undefined) add([f], "receipt_incomplete", `a ${r.result} ${r.effect} call records ${f}`);
     }
     return list;
 }

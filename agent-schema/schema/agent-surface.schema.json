@@ -329,16 +329,27 @@
           "$ref": "#/$defs/Recording"
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         },
         "status": {
           "type": "string",
@@ -448,14 +459,8 @@
             "id": {
               "$ref": "#/$defs/ConfirmationId"
             },
-            "action": {
-              "$ref": "#/$defs/ActionId"
-            },
-            "flow": {
-              "$ref": "#/$defs/FlowId"
-            },
-            "step": {
-              "$ref": "#/$defs/StepId"
+            "subject": {
+              "$ref": "#/$defs/Subject"
             },
             "request_digest": {
               "$ref": "#/$defs/Sha256"
@@ -494,7 +499,8 @@
                 },
                 "required": [
                   "name",
-                  "quantity"
+                  "quantity",
+                  "amount"
                 ],
                 "additionalProperties": false
               }
@@ -511,6 +517,7 @@
           },
           "required": [
             "id",
+            "subject",
             "request_digest",
             "idempotency_key",
             "issued_at",
@@ -529,14 +536,8 @@
             "id": {
               "$ref": "#/$defs/ConfirmationId"
             },
-            "action": {
-              "$ref": "#/$defs/ActionId"
-            },
-            "flow": {
-              "$ref": "#/$defs/FlowId"
-            },
-            "step": {
-              "$ref": "#/$defs/StepId"
+            "subject": {
+              "$ref": "#/$defs/Subject"
             },
             "request_digest": {
               "$ref": "#/$defs/Sha256"
@@ -566,6 +567,7 @@
           },
           "required": [
             "id",
+            "subject",
             "request_digest",
             "idempotency_key",
             "issued_at",
@@ -824,16 +826,27 @@
           "$ref": "#/$defs/RequestSpec"
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         }
       },
       "required": [
@@ -971,16 +984,27 @@
           "$ref": "#/$defs/RequestSpec"
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         }
       },
       "required": [
@@ -1495,7 +1519,7 @@
     },
     "Name": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~@+*%-]{1,256}$",
+      "pattern": "^[A-Za-z0-9_.:/#\\[\\]~-]{1,128}$",
       "description": "Token characters only; no whitespace or quoting."
     },
     "NavigateAction": {
@@ -2164,16 +2188,27 @@
           "$ref": "#/$defs/Recording"
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         },
         "status": {
           "type": "string",
@@ -2206,19 +2241,19 @@
           "$ref": "#/$defs/Mode"
         },
         "tier": {
-          "$ref": "#/$defs/Tier"
+          "type": "string",
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ]
         },
         "effect": {
           "$ref": "#/$defs/Effect"
         },
-        "action": {
-          "$ref": "#/$defs/ActionId"
-        },
-        "flow": {
-          "$ref": "#/$defs/FlowId"
-        },
-        "step": {
-          "$ref": "#/$defs/StepId"
+        "subject": {
+          "$ref": "#/$defs/Subject"
         },
         "evidence": {
           "maxItems": 64,
@@ -2282,6 +2317,7 @@
         "mode",
         "tier",
         "effect",
+        "subject",
         "evidence",
         "request",
         "result",
@@ -2580,16 +2616,27 @@
           }
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         }
       },
       "required": [
@@ -2641,6 +2688,38 @@
         "hash"
       ],
       "additionalProperties": false
+    },
+    "Subject": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flow": {
+              "$ref": "#/$defs/FlowId"
+            },
+            "step": {
+              "$ref": "#/$defs/StepId"
+            }
+          },
+          "required": [
+            "flow",
+            "step"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "SubmitAction": {
       "type": "object",
@@ -2705,16 +2784,27 @@
           "$ref": "#/$defs/RequestSpec"
         },
         "evidence": {
-          "type": "array",
-          "prefixItems": [
+          "allOf": [
             {
-              "$ref": "#/$defs/StrongEvidence"
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/StrongEvidence"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "minItems": 1
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
             }
-          ],
-          "items": {
-            "$ref": "#/$defs/Evidence"
-          },
-          "minItems": 1
+          ]
         }
       },
       "required": [

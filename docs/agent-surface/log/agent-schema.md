@@ -65,3 +65,19 @@ PR #5 was opened against `main` before the review gate and closed; it is reopene
 ### Review verdicts
 
 Round 1: 15 findings, 15 confirmed and fixed. Round 2 (re-review of the fixes): recorded below.
+
+## 2026-11-10 Review round 2 (re-review of round-1 fixes) and fixes
+
+Re-reviewer confirmed 7 of the 15 round-1 defects fixed and found 12 further issues (4 major). All fixed except where noted.
+
+- **Money keyed on content, not label.** A request carrying a `payment-token` input, or a step with a 3ds/sca gate, must be financial (`payment_token_not_financial`, `human_gate_not_financial`). Relabelling the paying step no longer escapes the payment/idempotency rules.
+- **Secrets.** Constant secrets are detected by location name (password, token, secret, api key, auth, session, credential...) for headers, query, form, cookie and the last JSON-pointer segment, by case-insensitive shapes (bearer/basic, `sk_`, JWT, `ghp_`, `xox`, `AIza`, private-key header), and in URL templates (`secret_in_url`, card numbers in URLs). Cookies are judged by name, not wholesale. Card detection needs a plausible issuer prefix and 15-19 digits (13-digit GTINs are not cards); card input names are matched after splitting camelCase and no longer include a bare `pan`.
+- **Page-text tripwire** is now linear (three-word shingles), normalises case/whitespace/zero-width characters, and only counts page strings of 20+ characters with 3+ words. Accepted limit: paraphrase and mid-word copies are not detected; test covers 40k page strings in well under the budget.
+- **Subject is a wire-level union** (`{action}` | `{flow, step}`), so JSON-Schema-only consumers also reject receipts with no or two subjects. Financial confirmation items require a unit price. Receipt tier excludes T4; a write is T2; `amount` only for financial; a financial receipt that ran or failed after sending (`ok`/`error`) needs confirmation, mandate and idempotency key (`ok` also the amount); `blocked`/`requires_*` receipts need none.
+- **Evidence bound** is now in the wire format: strong-first tuple intersected with an array `max(64)`.
+- **Read-only gates** must have been checked (`not-checked` robots/ToS is refused); an `authenticated` precondition counts as authentication.
+- **Reference rules**: postcondition `input` must be declared; a flow `token` precondition cannot take its source from its own step's response.
+- **Timestamps** are checked by field (`*_at`, top-level `at`), not by value shape; `checkConfirmationToken` and `checkOperationResult` exist so every document type is scanned.
+- **validate.ts** uses `Object.hasOwn`, so `--schema toString` or a file named `constructor.json` is a usage error, not a crash.
+- **Tests**: every check code and every surviving-mutant branch from the review has a fixture (143 invalid fixtures); five targeted mutations of `check.ts` now fail the suite; ajv path agreement is exact (parent path only for required/additionalProperties/minItems); false-positive tests (content-type constant, consent cookie, GTIN, `frying_pan`, date-like pointer, short heading, odd ids).
+- **Not changed (accepted):** `Name` is a grammar, so a hyphen- or underscore-joined phrase can still pass (it cannot carry whitespace or quoting); a Luhn-valid 15-19 digit constant with an issuer prefix is treated as a card; the idempotency key input is not required to be `required: true`.

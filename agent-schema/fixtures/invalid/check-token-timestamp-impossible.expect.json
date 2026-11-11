@@ -1,0 +1,13 @@
+{
+  "schema": "confirmation-token",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "granted_at"
+      ],
+      "code": "invalid_timestamp"
+    }
+  ],
+  "why": "token timestamps are real instants"
+}

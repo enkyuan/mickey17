@@ -17,7 +17,9 @@ import {
     OperationResult,
     Receipt,
     checkConfirmationRequest,
+    checkConfirmationToken,
     checkMandate,
+    checkOperationResult,
     checkReceipt,
     checkSurface,
     fromZodIssues,
@@ -27,10 +29,10 @@ import type { z } from "zod";
 
 const SCHEMAS = {
     surface: { zod: AgentSurface as z.ZodType, check: (d: unknown) => checkSurface(d as never) },
-    result: { zod: OperationResult as z.ZodType, check: (): CheckIssue[] => [] },
+    result: { zod: OperationResult as z.ZodType, check: (d: unknown) => checkOperationResult(d as never) },
     mandate: { zod: Mandate as z.ZodType, check: (d: unknown) => checkMandate(d as never) },
     "confirmation-request": { zod: ConfirmationRequest as z.ZodType, check: (d: unknown) => checkConfirmationRequest(d as never) },
-    "confirmation-token": { zod: ConfirmationToken as z.ZodType, check: (): CheckIssue[] => [] },
+    "confirmation-token": { zod: ConfirmationToken as z.ZodType, check: (d: unknown) => checkConfirmationToken(d as never) },
     receipt: { zod: Receipt as z.ZodType, check: (d: unknown) => checkReceipt(d as never) },
 } as const;
 type Name = keyof typeof SCHEMAS;
@@ -42,7 +44,7 @@ for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--schema") {
         const n = args[++i] as Name | undefined;
-        if (!n || !(n in SCHEMAS)) {
+        if (!n || !Object.hasOwn(SCHEMAS, n)) {
             console.error(`--schema must be one of: ${Object.keys(SCHEMAS).join(", ")}`);
             process.exit(2);
         }
@@ -67,7 +69,7 @@ for (const file of files) {
     }
     const prefix = basename(file).replace(/\.json$/, "").split(".")[0] as Name;
     const name: Name | undefined =
-        forced ?? (prefix in SCHEMAS ? prefix : (doc as { kind?: string } | null)?.kind === "agent-surface" ? "surface" : undefined);
+        forced ?? (Object.hasOwn(SCHEMAS, prefix) ? prefix : (doc as { kind?: string } | null)?.kind === "agent-surface" ? "surface" : undefined);
     if (!name) {
         report.push(fail(file, "unknown", "usage", "cannot infer the schema; pass --schema"));
         continue;

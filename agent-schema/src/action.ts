@@ -132,7 +132,7 @@ const base = {
  * Evidence for anything that is not a plain navigation: the first element must be declared or
  * observed (D5), the rest may be any class. Emitters order evidence strongest first.
  */
-const strongFirst = z.tuple([StrongEvidence], Evidence);
+const strongFirst = z.intersection(z.tuple([StrongEvidence], Evidence), z.array(Evidence).max(64));
 
 /** T1. A read. May rest on inferred evidence, and is the only kind that carries `confidence`. */
 export const NavigateAction = z

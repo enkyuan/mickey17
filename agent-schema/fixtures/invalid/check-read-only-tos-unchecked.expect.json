@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "gates",
+        "tos"
+      ],
+      "code": "gates_unchecked"
+    }
+  ],
+  "why": "a read-only surface requires the terms to have been checked"
+}

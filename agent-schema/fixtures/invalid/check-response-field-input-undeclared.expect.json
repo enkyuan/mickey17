@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "postconditions",
+        1,
+        "input"
+      ],
+      "code": "undeclared_input"
+    }
+  ],
+  "why": "a postcondition names a declared input"
+}

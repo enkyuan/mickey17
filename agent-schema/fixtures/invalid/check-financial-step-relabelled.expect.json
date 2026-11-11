@@ -1,0 +1,32 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "human_gates"
+      ],
+      "code": "human_gate_not_financial"
+    },
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "requests",
+        0,
+        "values",
+        1,
+        "value",
+        "input"
+      ],
+      "code": "payment_token_not_financial"
+    }
+  ],
+  "why": "relabelling the paying step does not escape the money rules"
+}

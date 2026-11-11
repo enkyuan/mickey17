@@ -1,10 +1,12 @@
 {
   "schema": "confirmation-request",
-  "phase": "check",
+  "phase": "schema",
   "issues": [
     {
-      "path": [],
-      "code": "subject_missing"
+      "path": [
+        "subject"
+      ],
+      "code": "invalid_union"
     }
   ],
   "why": "a confirmation says what it is for"

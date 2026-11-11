@@ -1,0 +1,15 @@
+{
+  "schema": "confirmation-request",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "items",
+        0,
+        "amount"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "the human sees every price"
+}
