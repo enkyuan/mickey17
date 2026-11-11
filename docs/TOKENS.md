@@ -341,7 +341,10 @@ The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 *
   1. The captured computed `opacity`/`visibility`/`transform`/`translate`/`scale`/`rotate` differs
      (a GSAP/WAAPI reveal that ran before capture). Elements listed in the capture's
      `animation_states` may be mid-flight (infinite or unfinished animations are sampled too), so
-     for them only a clean end value is taken (opacity exactly 1, identity transform). A transform
+     for them only a clean end value is taken (opacity exactly 1, visibility visible, identity
+     transform) and they are never revealed by rule 2. The capture does not record an animation's
+     iteration count or play state, so an infinite Web Animation sampled at a clean value cannot be
+     told from a finished one. A transform
      that is identity only because a custom property is 0 at rest (`translateY(var(--y, 0px))`)
      is not a reveal.
   2. The element is still at `opacity: 0` and the sheets say it is a once-only reveal
@@ -351,16 +354,19 @@ The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 *
      (`.x.is-revealed`, `[data-revealed]`, `.in-view`), or its opacity is 1 under
      `prefers-reduced-motion`, or it carries a `reveal`/`in-view`/`fade-in` attribute or class
      token. The end values come from the reveal rule (`opacity: 1; translate: none`) or the
-     reduced-motion layer; an offset that neither clears is kept. Reduced motion alone counts as
-     evidence only when it also switches the motion off (`transition: none`). Rules are matched
-     with their toggling words removed in every compound, so `.logos.is-revealed .logo` is about
-     the logos under `.logos` only. Measured on the original Infinite Garden page (scrolling it in
+     reduced-motion layer (the cascade winner among reveal rules: importance, layer, specificity,
+     source order); an offset that neither clears is kept. Reduced motion alone counts as
+     evidence only when it switches off every kind of motion the element declares (`transition:
+     none` for a transition, `animation: none` for an animation; one it does not have proves
+     nothing). Rules are matched with their toggling words (hover, `.is-revealed`, `:not(.x)` ...)
+     removed in every compound, structural pseudo-classes kept, so `.logos.is-revealed .logo` is
+     about the logos under `.logos` only and `.menu :hover` is a toggle for what is inside `.menu`. Measured on the original Infinite Garden page (scrolling it in
      a browser): the story kickers and copy, index rows, logos and footer items reach opacity 1
      and stay there; the hover arrows, panels with `visibility: hidden` and pointer-less popovers
      are left hidden. Reveals driven only by a script (no reveal rule, no motion-skipping
      reduced-motion rule, no reveal-ish name), `.is-visible`-style popovers and class-toggled
-     slides stay hidden. Toggles are read at the captured width and applied to every width layer
-     that still carries the author value; the overlay layers of other captured viewports follow
+     slides stay hidden. The reveal is decided separately for each group of widths that activate the
+     same rules, so a reveal rule that exists only at some widths reveals only there; the overlay layers of other captured viewports follow
      the same rule but are not counted separately. On the Garden home page the footer items
      and index rows inside `visibility: hidden` roots (`.home-footer.is-finale`, pinned cards) are
      still hidden: only their opacity is fixed.

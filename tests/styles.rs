@@ -1122,3 +1122,298 @@ fn reveal_rules_apply_only_where_their_whole_selector_could_match() {
     );
     assert!(!shown(7), "{}", p.classes[&7]);
 }
+
+// ----- Sourcery review of PR #12: each of these failed before its fix --------------------------
+
+/// A base-state `opacity: 1` (`motion-reduce:opacity-100` and `hover:...` variants do not count).
+fn opacity_shown(p: &StylePlan, node: usize) -> bool {
+    p.classes[&node]
+        .split_whitespace()
+        .any(|c| c == "opacity-100" || c == "[opacity:1]")
+}
+
+fn reveal_page(
+    nodes: &[RawNode],
+    computed: &[(&str, &str)],
+    rules: &[&str],
+    extra: serde_json::Value,
+) -> StylePlan {
+    translate_raw(nodes, computed, rules, extra)
+}
+
+const A: fn(&'static str, &'static str) -> (&'static str, &'static str) = |k, v| (k, v);
+
+#[test]
+fn the_reveal_end_value_comes_from_the_cascade_winner_not_the_last_rule_scanned() {
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "p", vec![A("class", "story")]),
+        ],
+        &[
+            ("font-size", "16px"),
+            ("opacity", "0"),
+            ("translate", "0px 12px"),
+        ],
+        &[
+            ".story { opacity: 0; translate: 0 12px }",
+            // higher specificity, earlier in the source: it wins
+            ".story.is-revealed.is-revealed { opacity: 1; translate: none }",
+            ".story.is-revealed { opacity: 1; translate: 5px }",
+        ],
+        json!({}),
+    );
+    assert!(opacity_shown(&p, 2), "{}", p.classes[&2]);
+    let c = &p.classes[&2];
+    assert!(
+        c.contains("translate:none") || c.contains("translate-none"),
+        "{c}"
+    );
+}
+
+#[test]
+fn structural_pseudo_classes_of_a_reveal_rule_are_kept_when_matching() {
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "ul", vec![A("class", "")]),
+            (Some(2), "li", vec![A("class", "item")]),
+            (Some(2), "li", vec![A("class", "item")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".item { opacity: 0 } .item:first-child.is-revealed { opacity: 1 }"],
+        json!({}),
+    );
+    assert!(opacity_shown(&p, 3), "{}", p.classes[&3]);
+    assert!(
+        !opacity_shown(&p, 4),
+        "the second item is not :first-child: {}",
+        p.classes[&4]
+    );
+}
+
+#[test]
+fn a_pseudo_only_final_compound_is_still_a_toggle_for_its_ancestors_descendants() {
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "div", vec![A("class", "menu")]),
+            (
+                Some(2),
+                "span",
+                vec![A("class", "item"), A("data-reveal", "")],
+            ),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".menu .item { opacity: 0 } .menu .is-open { opacity: 1 }"],
+        json!({}),
+    );
+    assert!(!opacity_shown(&p, 3), "{}", p.classes[&3]);
+}
+
+#[test]
+fn zero_spelled_as_a_percentage_or_with_a_decimal_is_still_zero() {
+    for zero in ["0.0", "0%", ".0"] {
+        let p = reveal_page(
+            &[
+                (None, "html", vec![A("class", "")]),
+                (Some(0), "body", vec![A("class", "")]),
+                (
+                    Some(1),
+                    "p",
+                    vec![A("class", "story"), A("data-reveal", "")],
+                ),
+            ],
+            &[("font-size", "16px"), ("opacity", "0")],
+            &[&format!(".story {{ opacity: {zero} }}")],
+            json!({}),
+        );
+        assert!(opacity_shown(&p, 2), "opacity: {zero}: {}", p.classes[&2]);
+    }
+}
+
+#[test]
+fn reduced_motion_is_evidence_only_when_it_disables_the_motion_the_element_has() {
+    let make = |reduced: &str| {
+        reveal_page(
+            &[
+                (None, "html", vec![A("class", "")]),
+                (Some(0), "body", vec![A("class", "")]),
+                (Some(1), "div", vec![A("class", "x")]),
+            ],
+            &[("font-size", "16px"), ("opacity", "0")],
+            &[
+                ".x { opacity: 0; transition: opacity .2s }",
+                &format!(
+                    "@media (prefers-reduced-motion: reduce) {{ .x {{ opacity: 1; {reduced} }} }}"
+                ),
+            ],
+            json!({}),
+        )
+    };
+    // The element only transitions; switching off an animation it does not have proves nothing.
+    assert!(!opacity_shown(&make("animation: none"), 2));
+    assert!(opacity_shown(&make("transition: none"), 2));
+}
+
+#[test]
+fn an_element_with_a_listed_animation_captured_hidden_is_not_revealed() {
+    let node = |extra: &str| {
+        (
+            Some(1),
+            "div",
+            vec![
+                A("class", "x"),
+                A("data-reveal", ""),
+                A("data-t", Box::leak(extra.to_string().into_boxed_str())),
+            ],
+        )
+    };
+    let nodes = [
+        (None, "html", vec![A("class", "")]),
+        (Some(0), "body", vec![A("class", "")]),
+        node(""),
+    ];
+    // Captured at opacity 0 while its animation is listed: it may not have finished.
+    let hidden = translate_raw(
+        &nodes,
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".x { opacity: 0 }"],
+        json!({"animation_states": {"2": {"opacity": "0"}}}),
+    );
+    assert!(!opacity_shown(&hidden, 2), "{}", hidden.classes[&2]);
+}
+
+#[test]
+fn a_reveal_is_applied_only_at_widths_where_its_rule_is_active() {
+    // The reveal rule exists below 1100px only; the capture (1000px) sees it.
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "p", vec![A("class", "x")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".x { opacity: 0 } @media (max-width: 1100px) { .x.is-revealed { opacity: 1 } }"],
+        json!({}),
+    );
+    let c = &p.classes[&2];
+    let css = &p.files["src/styles/recipes.css"];
+    let all = format!("{c} {css}");
+    assert!(
+        all.contains("opacity-100") || all.contains("opacity: 1") || all.contains("opacity:1"),
+        "{all}"
+    );
+    assert!(
+        all.contains("min-[1101px]:opacity-0")
+            || all.contains("opacity: 0")
+            || all.contains("opacity:0"),
+        "wider widths stay hidden: {all}"
+    );
+}
+
+#[test]
+fn text_visibility_ignores_the_document_head_and_reads_opacity_expressions() {
+    let p = translate_raw(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "head", vec![A("class", "")]),
+            (Some(1), "title", vec![A("#text", "A page")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(3), "p", vec![A("class", "pct"), A("#text", "a")]),
+            (Some(3), "p", vec![A("class", "expr"), A("#text", "b")]),
+            (Some(3), "p", vec![A("class", "plain"), A("#text", "c")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".pct { opacity: 0% } .expr { opacity: var(--fade) }"],
+        json!({}),
+    );
+    let t = &p.report.untranslated.text_visibility;
+    assert_eq!(
+        (t.text_elements, t.visible, t.hidden_by_opacity),
+        (3, 1, 2),
+        "title text is not page text; `0%` and `var()` fall back to the captured opacity: {t:?}"
+    );
+}
+
+#[test]
+fn a_reveal_rule_that_only_reaches_descendants_is_not_evidence_for_each_of_them() {
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "div", vec![A("class", "cards")]),
+            (Some(2), "span", vec![A("class", "badge")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        // `.cards .is-revealed` is about whatever in `.cards` gets the class, not about every badge.
+        &[".cards .badge { opacity: 0 } .cards .is-revealed { opacity: 1 }"],
+        json!({}),
+    );
+    assert!(!opacity_shown(&p, 3), "{}", p.classes[&3]);
+}
+
+#[test]
+fn the_later_declaration_inside_one_reveal_rule_wins() {
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "p", vec![A("class", "x")]),
+        ],
+        &[
+            ("font-size", "16px"),
+            ("opacity", "0"),
+            ("translate", "0px 12px"),
+        ],
+        &[
+            ".x { opacity: 0; translate: 0 12px } .x.is-revealed { opacity: 1; translate: 3px; translate: none }",
+        ],
+        json!({}),
+    );
+    let c = &p.classes[&2];
+    assert!(opacity_shown(&p, 2), "{c}");
+    assert!(
+        c.contains("translate:none") || c.contains("translate-none"),
+        "{c}"
+    );
+}
+
+#[test]
+fn a_zero_opacity_rule_spelled_with_a_decimal_is_not_a_show_rule_and_short_durations_are_exact() {
+    // `.x.is-open { opacity: 0.0 }` hides; it must not make `.x` an `other` toggle (so the reveal stays).
+    let p = reveal_page(
+        &[
+            (None, "html", vec![A("class", "")]),
+            (Some(0), "body", vec![A("class", "")]),
+            (Some(1), "p", vec![A("class", "x"), A("data-reveal", "")]),
+        ],
+        &[("font-size", "16px"), ("opacity", "0")],
+        &[".x { opacity: 0 } .x.is-open { opacity: 0.0 }"],
+        json!({}),
+    );
+    assert!(opacity_shown(&p, 2), "{}", p.classes[&2]);
+    // 0.05s is a visible fade, 0ms is not: only the latter counts as turning the motion off.
+    let reduced = |duration: &str| {
+        reveal_page(
+            &[
+                (None, "html", vec![A("class", "")]),
+                (Some(0), "body", vec![A("class", "")]),
+                (Some(1), "div", vec![A("class", "x")]),
+            ],
+            &[("font-size", "16px"), ("opacity", "0")],
+            &[
+                ".x { opacity: 0; transition: opacity .2s }",
+                &format!(
+                    "@media (prefers-reduced-motion: reduce) {{ .x {{ opacity: 1; transition: opacity {duration} }} }}"
+                ),
+            ],
+            json!({}),
+        )
+    };
+    assert!(opacity_shown(&reduced("0ms"), 2));
+    assert!(!opacity_shown(&reduced("0.05s"), 2));
+}

@@ -88,6 +88,12 @@ fn layer_cmp(a: &LayerRank, b: &LayerRank) -> Ordering {
     }
 }
 
+/// `0`, `0.0`, `.0`, `0%`: an opacity of zero, however it is spelled.
+pub fn opacity_is_zero(v: &str) -> bool {
+    let v = v.trim();
+    v.strip_suffix('%').unwrap_or(v).trim().parse::<f64>() == Ok(0.0)
+}
+
 /// See [`Cascade::opacity_toggles`].
 #[derive(Debug, Default, Clone)]
 pub struct Toggles {
@@ -174,6 +180,9 @@ pub struct Cascade {
     index_class: HashMap<String, Vec<usize>>,
     index_tag: HashMap<String, Vec<usize>>,
     universal: Vec<usize>,
+    /// Rules that declare a non-zero `opacity` (the only ones `opacity_toggles` looks at), found
+    /// once per cascade instead of once per element.
+    show_rules: std::cell::OnceCell<Vec<usize>>,
     pub stats: CascadeStats,
 }
 
@@ -541,6 +550,7 @@ impl Cascade {
             index_class: HashMap::new(),
             index_tag: HashMap::new(),
             universal: Vec::new(),
+            show_rules: std::cell::OnceCell::new(),
             stats: builder.stats,
             keyframes: builder.keyframes,
         };
@@ -643,7 +653,8 @@ impl Cascade {
             is_other(&w) || is_reveal(&w)
         };
         // A compound without its toggling parts (`.is-revealed`, `[data-state=open]`, `:hover`,
-        // `:not(.is-hidden)`): what the rule is about when the toggle is off.
+        // `:not(.is-hidden)`): what the rule is about when the toggle is off. Structural
+        // pseudo-classes (`:first-child`, `:nth-child(2)`) are not toggles and stay.
         let strip = |c: &Compound| Compound {
             simples: c
                 .simples
@@ -651,7 +662,7 @@ impl Cascade {
                 .filter(|s| match s {
                     Simple::Class(n) => !toggling(n),
                     Simple::Attr { name, value, .. } => !toggling(name) && !toggling(value),
-                    Simple::Pseudo(_) => false,
+                    Simple::Pseudo(n) => !toggling(n),
                     Simple::Is(l) | Simple::Where(l) | Simple::Not(l) | Simple::Has(l) => {
                         !toggling(&l.to_css())
                     }
@@ -660,8 +671,31 @@ impl Cascade {
                 .cloned()
                 .collect(),
         };
+        // The cascade winner among reveal rules decides each end value: (important, layer,
+        // specificity, source order), as for any other declaration.
+        type Key = (bool, LayerRank, Specificity, u32, usize);
+        let beats = |a: &Key, b: &Key| -> bool {
+            if a.0 != b.0 {
+                return a.0;
+            }
+            let layers = if a.0 {
+                layer_cmp(&a.1, &b.1).reverse()
+            } else {
+                layer_cmp(&a.1, &b.1)
+            };
+            if layers != Ordering::Equal {
+                return layers == Ordering::Greater;
+            }
+            if a.2 != b.2 {
+                return a.2 > b.2;
+            }
+            // Source order, then the later declaration inside one rule.
+            (a.3, a.4) > (b.3, b.4)
+        };
+        let mut best: BTreeMap<String, (Key, String)> = BTreeMap::new();
         let mut out = Toggles::default();
-        for rule in &self.rules {
+        for &i in self.show_rules() {
+            let rule = &self.rules[i];
             if rule.active == Tri::No {
                 continue;
             }
@@ -671,24 +705,19 @@ impl Cascade {
             if last.pseudo_element().is_some() {
                 continue;
             }
-            let shows = rule.decls.iter().any(|d| {
-                d.name == "opacity" && {
-                    let v = css::to_css(&css::trim(&d.value));
-                    !v.is_empty() && v != "0" && v != "0%"
-                }
-            });
-            if !shows {
-                continue;
-            }
             let stripped = Complex {
                 leading: rule.complex.leading,
                 compounds: rule.complex.compounds.iter().map(strip).collect(),
                 combinators: rule.complex.combinators.clone(),
             };
             let last_left = stripped.compounds.last().map_or(0, |c| c.simples.len());
-            // A rule about nothing but its toggle (`[data-state=open]`, `:disabled`) says nothing
-            // about this element unless the element carries the toggling attribute itself.
-            if last_left == 0 {
+            // The rule's own element is emptied (`.menu :hover`, `.cards .is-revealed`): it is about
+            // any descendant of the ancestor part. That is enough to call it a toggle for them, but
+            // not to call it a reveal of this particular element.
+            let via_ancestors = last_left == 0 && stripped.compounds.len() > 1;
+            if last_left == 0 && stripped.compounds.len() == 1 {
+                // A rule about nothing but its toggle (`[data-state=open]`, `:disabled`) says
+                // nothing about this element unless it carries the toggling attribute itself.
                 let attrs: Vec<&String> = last
                     .simples
                     .iter()
@@ -701,6 +730,8 @@ impl Cascade {
                     continue;
                 }
             } else if selector::complex_match(&stripped, dom, node) == Tri::No {
+                // With ancestors, an emptied last compound (`.menu :hover`) matches any
+                // descendant of the ancestor part.
                 continue;
             }
             if selector::complex_match(&rule.complex, dom, node) == Tri::Yes {
@@ -709,17 +740,45 @@ impl Cascade {
             let w = words(&rule.complex.to_css());
             if is_other(&w) {
                 out.other = true;
-            } else if is_reveal(&w) {
+            } else if is_reveal(&w) && !via_ancestors {
                 out.reveal = true;
-                for d in rule.decls.iter() {
+                for (idx, d) in rule.decls.iter().enumerate() {
                     if END_PROPS.contains(&d.name.as_str()) {
-                        out.end
-                            .insert(d.name.clone(), css::to_css(&css::trim(&d.value)));
+                        let key: Key = (
+                            d.important,
+                            rule.layer.clone(),
+                            rule.specificity,
+                            rule.order,
+                            idx,
+                        );
+                        let value = css::to_css(&css::trim(&d.value));
+                        if best.get(&d.name).is_none_or(|(k, _)| beats(&key, k)) {
+                            best.insert(d.name.clone(), (key, value));
+                        }
                     }
                 }
             }
         }
+        out.end = best.into_iter().map(|(k, (_, v))| (k, v)).collect();
         out
+    }
+
+    fn show_rules(&self) -> &[usize] {
+        self.show_rules.get_or_init(|| {
+            self.rules
+                .iter()
+                .enumerate()
+                .filter(|(_, rule)| {
+                    rule.decls.iter().any(|d| {
+                        d.name == "opacity" && {
+                            let v = css::to_css(&css::trim(&d.value));
+                            !v.is_empty() && !opacity_is_zero(&v)
+                        }
+                    })
+                })
+                .map(|(i, _)| i)
+                .collect()
+        })
     }
 
     /// Could forcing an interactive state on `node` (the `dom` already says which) change what

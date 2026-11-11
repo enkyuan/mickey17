@@ -18,7 +18,7 @@ use super::layers::{
 };
 use super::par;
 use super::tailwind;
-use super::verify::{StyleCheck, check, unreachable_state_rules};
+use super::verify::{RevealRanges, StyleCheck, check, unreachable_state_rules};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -132,11 +132,30 @@ struct Visual {
     display_none: bool,
 }
 
-fn visual_of(layer: &Layer) -> Visual {
+/// `0.5`, `.5`, `50%`.
+fn parse_opacity(v: &str) -> Option<f64> {
+    let v = v.trim();
+    match v.strip_suffix('%') {
+        Some(p) => p.trim().parse::<f64>().ok().map(|n| n / 100.0),
+        None => v.parse::<f64>().ok(),
+    }
+}
+
+/// `computed` is the captured computed style: an opacity written as an expression (`var(--fade)`,
+/// `calc(...)`) is read from it instead of counting as fully visible.
+fn visual_of(layer: &Layer, computed: Option<&BTreeMap<String, String>>) -> Visual {
     let decl = |p: &str| layer.decls.get(p).map(|v| v.trim());
     Visual {
         opacity: decl("opacity")
-            .and_then(|v| v.parse::<f64>().ok())
+            .map(|v| {
+                parse_opacity(v)
+                    .or_else(|| {
+                        computed
+                            .and_then(|c| c.get("opacity"))
+                            .and_then(|c| parse_opacity(c))
+                    })
+                    .unwrap_or(1.0)
+            })
             .unwrap_or(1.0),
         visibility_hidden: match decl("visibility") {
             Some("hidden") | Some("collapse") => Some(true),
@@ -154,6 +173,19 @@ fn text_visibility(snap: &Snapshot, visuals: &HashMap<usize, Visual>) -> TextVis
             continue;
         };
         if !snap.has_own_text(node) || matches!(e.tag.as_str(), "script" | "style" | "noscript") {
+            continue;
+        }
+        // Text in <head> (the title) is not page text.
+        let mut up = Some(node);
+        let mut in_head = false;
+        while let Some(n) = up {
+            if snap.element(n).is_some_and(|x| x.tag == "head") {
+                in_head = true;
+                break;
+            }
+            up = snap.element(n).and_then(|x| x.parent);
+        }
+        if in_head {
             continue;
         }
         out.text_elements += 1;
@@ -479,6 +511,8 @@ fn tick(counter: &std::sync::atomic::AtomicU64, since: std::time::Instant) {
 
 struct NodeOut {
     part: Parts,
+    /// `(from, to, plan)`: the reveal of the width intervals `from..to` (0 = unbounded).
+    reveal_ranges: RevealRanges,
     visual: Visual,
     settle: Vec<Settle>,
     sensitive: bool,
@@ -640,6 +674,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
     let mut arbitrary_by_property: BTreeMap<String, usize> = BTreeMap::new();
     let captured_ix = bounds.iter().rposition(|&b| b <= snap.width).unwrap_or(0);
     let mut settle_map: HashMap<usize, Vec<Settle>> = HashMap::new();
+    let mut reveal_map: HashMap<usize, RevealRanges> = HashMap::new();
 
     // Other captured viewports: each paired element's own layer at that viewport's width.
     let mut overlays: Vec<Overlay> = Vec::new();
@@ -750,9 +785,11 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
                         let attributes = other
                             .element(o)
                             .map_or(&[][..], |e| e.attributes.as_slice());
-                        for r in reveal_plan(attributes, l, states, c, &toggles) {
-                            if !plan.iter().any(|x| x.prop == r.prop) {
-                                plan.push(r);
+                        if !other.animated.contains(&o) {
+                            for r in reveal_plan(attributes, l, states, c, &toggles) {
+                                if !plan.iter().any(|x| x.prop == r.prop) {
+                                    plan.push(r);
+                                }
                             }
                         }
                         plan
@@ -869,25 +906,34 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             tick(&T_STATES, t_states);
             // Elements the capture lists with an animation (`animation_states`) carry the end values
             // of that animation as their computed style, which is the state to keep.
-            let mut settle: Vec<Settle> = match (recover, rest.get(captured_ix)) {
+            let settle: Vec<Settle> = match (recover, rest.get(captured_ix)) {
                 (Some(c), Some(at)) => settle_plan(at, c, snap.animated.contains(&node)),
                 _ => Vec::new(),
             };
-            if let (Some(c), Some(at)) = (recover, rest.get(captured_ix)) {
-                let at_states: BTreeMap<State, &Layer> =
-                    states.iter().map(|(s, v)| (*s, &v[captured_ix])).collect();
+            // Reveals are decided per group of widths that activate the same rules (the reveal
+            // rule can be inactive at some widths), and not for elements the capture lists with an
+            // animation: it owns their opacity and may not have finished.
+            let mut reveals: Vec<(usize, Vec<Settle>)> = Vec::new();
+            if let Some(c) = recover
+                && !snap.animated.contains(&node)
+            {
                 let attributes = snap
                     .element(node)
                     .map_or(&[][..], |e| e.attributes.as_slice());
-                let toggles = cascades[captured_ix].opacity_toggles(&plain, node);
-                let reveal = reveal_plan(attributes, at, &at_states, c, &toggles);
-                if !reveal.is_empty() {
-                    untranslated.reveal_pre_state_elements += 1;
-                }
-                for r in reveal {
-                    if !settle.iter().any(|x| x.prop == r.prop) {
-                        settle.push(r);
+                for r in 0..rest.len() {
+                    if rep_of[r] != r {
+                        continue;
                     }
+                    let at_states: BTreeMap<State, &Layer> =
+                        states.iter().map(|(s, v)| (*s, &v[r])).collect();
+                    let toggles = cascades[r].opacity_toggles(&plain, node);
+                    let plan = reveal_plan(attributes, &rest[r], &at_states, c, &toggles);
+                    if !plan.is_empty() {
+                        reveals.push((r, plan));
+                    }
+                }
+                if reveals.iter().any(|(r, _)| *r == rep_of[captured_ix]) {
+                    untranslated.reveal_pre_state_elements += 1;
                 }
             }
             if !settle.is_empty() {
@@ -899,6 +945,39 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
                         .settled_from_computed
                         .entry(sp.prop.clone())
                         .or_default() += 1;
+                }
+            }
+            let reveal_ranges: RevealRanges = (0..rest.len())
+                .filter_map(|i| {
+                    reveals
+                        .iter()
+                        .find(|(r, _)| *r == rep_of[i])
+                        .map(|(_, plan)| {
+                            (
+                                bounds[i],
+                                bounds.get(i + 1).copied().unwrap_or(0),
+                                plan.clone(),
+                            )
+                        })
+                })
+                .collect();
+            for (r, plan) in &reveals {
+                for i in 0..rest.len() {
+                    if rep_of[i] != *r {
+                        continue;
+                    }
+                    rest[i].apply_settle(plan);
+                    for layers in states.values_mut() {
+                        layers[i].apply_settle(plan);
+                    }
+                }
+                if *r == rep_of[captured_ix] {
+                    for sp in plan {
+                        *untranslated
+                            .settled_from_computed
+                            .entry(sp.prop.clone())
+                            .or_default() += 1;
+                    }
                 }
             }
             // Another captured viewport's own styles for this element (see `Overlay`).
@@ -1060,7 +1139,8 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             }
             tick(&T_PSEUDO, t_pseudo);
             NodeOut {
-                visual: visual_of(&rest[captured_ix]),
+                reveal_ranges,
+                visual: visual_of(&rest[captured_ix], recover),
                 part: Parts {
                     node,
                     utilities,
@@ -1080,6 +1160,9 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         visuals.insert(out.part.node, out.visual);
         if !out.settle.is_empty() {
             settle_map.insert(out.part.node, out.settle.clone());
+        }
+        if !out.reveal_ranges.is_empty() {
+            reveal_map.insert(out.part.node, out.reveal_ranges.clone());
         }
         if out.sensitive {
             state_sensitive.insert(out.part.node);
@@ -1352,6 +1435,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         &|n| state_sensitive.contains(&n),
         &pseudo_nodes,
         &settle_map,
+        &reveal_map,
         &overlays,
     );
 
@@ -1862,6 +1946,7 @@ mod tests {
             &BTreeSet::new(),
             &|_| true,
             &[],
+            &HashMap::new(),
             &HashMap::new(),
             &[],
         );

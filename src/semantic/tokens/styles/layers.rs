@@ -275,6 +275,8 @@ pub fn settle_plan(
                 matches!(a, "hidden" | "visible" | "collapse")
                     && matches!(c, "hidden" | "visible" | "collapse")
                     && a != c
+                    // An element with a listed animation: only the shown end state is taken.
+                    && (!animated || c == "visible")
             }
             _ => a != "none" && identity(prop, c) && offsets_at_rest(a, computed),
         };
@@ -345,6 +347,28 @@ pub struct Overlay {
     pub states: HashMap<usize, BTreeMap<State, Layer>>,
 }
 
+/// A duration (or a list of them) of at most a millisecond: `0s`, `0ms`, `.01ms`, `1e-05s`.
+fn instantaneous(v: &str) -> bool {
+    let mut any = false;
+    for token in v
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+    {
+        let seconds = if let Some(ms) = token.strip_suffix("ms") {
+            ms.parse::<f64>().map(|n| n / 1000.0)
+        } else if let Some(s) = token.strip_suffix('s') {
+            s.parse::<f64>()
+        } else {
+            continue;
+        };
+        match seconds {
+            Ok(n) if n <= 0.001 => any = true,
+            _ => return false,
+        }
+    }
+    any
+}
+
 /// Does the element look like one a script reveals once (fade/slide in on load or scroll) rather
 /// than one hidden until something happens to it (a popover, a hover arrow, an inactive slide)?
 /// It is at opacity 0, visible and displayed, does not swallow pointer events, and no rule in
@@ -362,7 +386,12 @@ pub fn reveal_plan(
     toggles: &Toggles,
 ) -> Vec<Settle> {
     let get = |p: &str| computed.get(p).map(|v| v.trim());
-    if get("opacity") != Some("0") || rest.decls.get("opacity").map(|v| v.trim()) != Some("0") {
+    // `0`, `0.0`, `.0`, `0%`: all zero.
+    let zero = super::super::cascade::opacity_is_zero;
+    let Some(author_opacity) = rest.decls.get("opacity").filter(|v| zero(v)).cloned() else {
+        return Vec::new();
+    };
+    if !get("opacity").is_some_and(zero) {
         return Vec::new();
     }
     let declared = |p: &str, v: &str| rest.decls.get(p).is_some_and(|x| x.trim() == v);
@@ -414,8 +443,28 @@ pub fn reveal_plan(
         hit && !all.iter().any(|t| OTHER.contains(&t.as_str()))
     });
     let reduced = states.get(&State::ReducedMotion).copied();
-    let shown_when_reduced =
-        reduced.is_some_and(|l| l.decls.get("opacity").map(|v| v.trim()) == Some("1"));
+    // Shown at once under reduced motion, with the motion the element has switched off: every
+    // family of motion declared on it (transition, animation) must be disabled there, and it must
+    // have at least one. (Disabling an animation it does not have, or a mere `opacity: 1`, could
+    // be any toggled panel.)
+    let disables = |l: &Layer, family: &str| {
+        l.decls
+            .iter()
+            .filter(|(k, _)| k.starts_with(family))
+            .any(|(_, v)| {
+                let v = v.trim();
+                v.contains("none") || instantaneous(v)
+            })
+    };
+    let declared_families: Vec<&str> = ["transition", "animation"]
+        .into_iter()
+        .filter(|f| rest.decls.keys().any(|k| k.starts_with(f)))
+        .collect();
+    let shown_when_reduced = reduced.is_some_and(|l| {
+        l.decls.get("opacity").map(|v| v.trim()) == Some("1")
+            && !declared_families.is_empty()
+            && declared_families.iter().all(|f| disables(l, f))
+    });
     if !(toggles.reveal || named || shown_when_reduced) {
         return Vec::new();
     }
@@ -428,9 +477,9 @@ pub fn reveal_plan(
     };
     let mut out = vec![Settle {
         prop: "opacity".into(),
-        author: "0".into(),
+        author: author_opacity,
         value: end_of("opacity")
-            .filter(|v| v != "0")
+            .filter(|v| !super::super::cascade::opacity_is_zero(v))
             .unwrap_or_else(|| "1".into()),
     }];
     for prop in ["translate", "transform", "scale", "rotate"] {
