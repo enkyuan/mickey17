@@ -23,6 +23,11 @@ impl StylePlan {
 }
 
 impl StyleBridge for TailwindBridge<'_> {
+    /// The translation reads inline declarations into the cascade (their winners become classes).
+    fn translates_inline_styles(&self) -> bool {
+        true
+    }
+
     fn class_name(&self, _doc: &Doc, node: NodeId, original: &[String]) -> String {
         match self.plan.classes.get(&node) {
             Some(classes) => classes.clone(),

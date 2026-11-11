@@ -36,8 +36,12 @@ pub struct RouteInventory {
     pub scripts_omitted: usize,
     /// Elements deliberately not emitted, by reason (scripts, framework runtime, `javascript:` embeds).
     pub elements_dropped: BTreeMap<String, usize>,
-    /// Elements of the body that carry an inline `style` attribute in the capture: none is emitted.
+    /// Elements of the body that carry an inline `style` attribute in the capture: carried in the class translation or a typed style object, see the route gap.
     pub inline_style_attributes_in_capture: usize,
+    /// Of those, elements that carry at least one declaration into the emitted style object.
+    pub inline_style_carried: usize,
+    /// Transient declarations (animation state) left out, by property.
+    pub inline_style_transient_dropped: std::collections::BTreeMap<String, usize>,
     /// Same-origin links whose target path is not an assembled route (404 in the project).
     pub links_to_uncaptured_routes: Vec<String>,
     pub custom_elements: Vec<String>,
@@ -110,11 +114,19 @@ pub fn route(route: &str, a: &PageAnalysis, emitted: &Emitted) -> RouteInventory
             *inv.patterns_recognized.entry(m.primitive).or_default() += 1;
         }
     }
-    inv.inline_style_attributes_in_capture = doc
-        .descendants(body.unwrap_or(0))
-        .into_iter()
-        .filter(|d| doc.node(*d).has_attr("style"))
-        .count();
+    for d in doc.descendants(body.unwrap_or(0)) {
+        let Some(style) = doc.node(d).attr("style") else {
+            continue;
+        };
+        inv.inline_style_attributes_in_capture += 1;
+        let (kept, dropped) = crate::semantic::emit::inline_style_props(style);
+        if !kept.is_empty() {
+            inv.inline_style_carried += 1;
+        }
+        for name in dropped {
+            *inv.inline_style_transient_dropped.entry(name).or_default() += 1;
+        }
+    }
     inv.patterns_without_composition = emitted
         .skipped
         .iter()

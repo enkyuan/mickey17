@@ -160,6 +160,35 @@ on `/models`, 959 of 984 on the model page; the unmatched are mostly `<p>` eleme
 route) and hidden or svg elements. Pairing in the browser harness depends on geometry, which this
 comparison does not read.
 
+## Findings from the browser parity run of 7917885 (what was fixed, found, deferred)
+
+Source: `docs/parity-reports/2026-11-10-semantic-final-outputs.md`. Causes below were found by reading the captures and the
+original bundles, not by a browser run; the effect of each fix on the parity counts is not measured here.
+
+| # | Finding | Status |
+| --- | --- | --- |
+| 1 | Natural desktop nav stacked: `NavigationMenu.Root` carried the captured element's classes (`display:flex`) and its `List` wrapper was a plain block between it and the items. | **Fixed.** When one captured element holds the items, `List` keeps it (tag, classes and the attributes the composition carries, box) and `Root` renders a `div` with `contents`, so the items' flex/grid parent is the captured one. Same for tabs whose root is the list (`TabsRoot` gets `contents`). |
+| 2 | Menu panel: the original keeps the mobile-nav sheet in the DOM, `inert`, as a child of `<body>`; the build mounted a portal with `hidden`. | **Fixed as far as Base UI allows.** The dialog popup is `keepMounted` with `hidden={false}` and `inert={!open}`, so it is present, inert, and not display-hidden at rest. Unavoidable: `Dialog.Portal` wraps it in one `div` under `<body>` (`body>div#_R_…>popup` instead of `body>div.mobile-nav-sheet`) and the portal is absent from server HTML. Candidate named equivalence for the parity pipeline: *portal wrapper div*. The open look is not generated (closed-state styles are baked from the capture). |
+| 3 | Garden diagram parts collapse onto one point. | **Fixed (cause: repeated-structure grouping).** The positions were already in the translated classes (`[left:246px]`, the bridge reads inline declarations into the cascade); the collapse came from `edge-network__slot`/`__card` instances being grouped into one component rendered from its first instance. A group whose corresponding elements differ in translated classes or inline style is no longer extracted (listed under `skipped_groups`), so each instance keeps its own. Under `--captured-css` (no translation) inline `style` attributes are emitted as a typed object instead (positions, sizes, custom properties); animation-state declarations (`transform`, `opacity`, `visibility`, `clip-path`, `filter`, `transition*`, `animation*`, stroke dash/opacity, vendor-prefixed forms) are left out there and counted per property in the route gap. The script that sets them is the `edge-network` code in chunk `e3cc149f…js` (`classList.add`, `dataset`). |
+| 4 | Garden small-viewport typography (620 of 633 at 375). | **Cause found for part of it, deferred.** The bundle chooses the layout with `matchMedia("(max-width: 1023px)")` (the diagram code adds `home-engines--compact` or `--wide`; the categories component passes `layout: …?"compact":"wide"`), and `.home-engines--compact … { font-size: 10.384px }` and similar rules explain the 10.384, 11 and 10 px groups; about 120 items (12 → 16, 13 → 16) are not attributed. So the DOM differs per viewport (script-set classes), which the style translation cannot see from one snapshot. Needs the responsive milestone: per-viewport DOM variants for nodes whose classes or inline styles differ between the evidence viewports, selected by a media-query hook whose threshold is read from the bundle, with the tokens bridge asked once per viewport (coordinate with the tokens session). |
+| 5 | Whitespace between inline spans lost. | **Fixed.** A whitespace-only text node between two inline neighbours (captured `display`, tag list otherwise; looking outward through an inline parent; not in flex/grid/table-structure/svg/list parents) is emitted as `{' '}`, and the leading/trailing space of a single-text element (`<span> is</span>`) is no longer collapsed away. |
+| 6 | Microsoft AI React error #418 on `/` and the model page. | **Cause found and fixed at the generator.** Those two routes contain `<p>` elements holding `<div>`s (inside `split-text`); script-built DOM allows it, the HTML parser closes the `<p>`, so the server HTML differs from the client tree (`/models` has none). Such a `<p>` (when rendered as plain markup; not counting content inside a `button` or svg) is now emitted as `<div role="paragraph">` and counted as a gap; author selectors on `p` do not match it under `--captured-css`. Not verified in a browser. |
+| 7 | Garden canvases blank. | **Plan only** (below). |
+| 8 | Garden `Updated 11/8/2026`. | **Cause found, deferred.** Computed at runtime by the original: `Updated ${new Date().toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"numeric"})}`; the footer's year is a separate JSX child `new Date().getFullYear()`. The capture holds the capture-day text. Emitting a runtime date needs the JS-fact link from a text node to a call-site child expression that contains a `Date` call (client-only, `suppressHydrationWarning`); not built. |
+
+### Canvas and WebGL milestone plan (not started)
+
+What the original code needs (from the saved bundles): Natural draws its hero with a WebGL scene (`assets/dappled-scene-*.js`,
+923 kB, with its shader strings in `assets/shaders-*.js`, 84 kB; five other chunks use only 2D contexts for small widgets);
+Garden's five canvases are 2D (`getContext("2d")` ×3, `createElement("canvas")` ×2, 20 `requestAnimationFrame`, 11 `ResizeObserver`,
+4 `IntersectionObserver` in the one app chunk that also builds the diagram). Proposed units, each its own new files:
+`src/semantic/graphics/survey.rs` (per canvas: creator, context kind, size source, frame loop, inputs; reads `semantic::js` facts and
+`surfaces` from the evidence), `src/semantic/graphics/shaders.rs` (extract shader source strings with provenance to
+`src/graphics/<name>.glsl.ts`), `src/semantic/graphics/hooks.rs` (a named `use<Name>Canvas` hook per canvas: ref, resize, visibility
+and frame loop, `mochi lift` output for closed pure geometry functions), `src/components/ui` untouched. Open questions before any
+code: whether the scene libraries are vendored in the bundle (then they are imported as owned, provenance-recorded modules, not
+reimplemented) and how the frame-time and scroll inputs are taken. Needs review before starting.
+
 ## Known gaps (kept explicit in the report)
 
 - Initial state of one viewport only; states the capture never entered are
@@ -179,7 +208,7 @@ comparison does not read.
   repeat the full declaration set per width interval instead of only what changes); both
   belong to the tokens workstream.
 - Base UI needs a `Root` element around a `List` (Tabs, NavigationMenu): where the capture
-  has one element for both, the render has one extra wrapper `div`.
+  has one element for both, the render has one extra wrapper `div` that generates no box (`contents`).
 - A root-relative asset reference in an emitted file with no file under `public/` is counted as
   not copied and listed (`refs::dangling`, independent of what the resolver was asked).
 - Utility-class detection for naming is a prefix/digit heuristic.

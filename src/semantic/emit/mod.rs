@@ -14,7 +14,8 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use jsx::{
-    OriginalClasses, StyleBridge, element_props, is_script_hook, ts_string as ts_string_lit,
+    OriginalClasses, P_CLOSERS, StyleBridge, element_props, inline_style_props, is_script_hook,
+    paragraph_holds_block, ts_string as ts_string_lit,
 };
 pub use ui::wrapper_name;
 

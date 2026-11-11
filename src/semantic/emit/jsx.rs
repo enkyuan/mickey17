@@ -11,6 +11,11 @@ use std::rc::Rc;
 /// this with Tailwind utilities backed by the central tokens.
 pub trait StyleBridge {
     fn class_name(&self, doc: &Doc, node: NodeId, original: &[String]) -> String;
+    /// Does the class string already carry what the element's inline `style` declares? (A
+    /// translation of computed styles does; captured class names do not.)
+    fn translates_inline_styles(&self) -> bool {
+        false
+    }
 }
 
 /// Maps an asset URL as written in the capture to the path the project serves it from.
@@ -67,6 +72,65 @@ const MAX_DEPTH: usize = 200;
 /// Custom elements that exist only to run the original framework's client router.
 const FRAMEWORK_ELEMENTS: &[&str] = &["next-route-announcer", "nextjs-portal"];
 
+const INLINE_TAGS: &[&str] = &[
+    "a", "abbr", "b", "bdi", "bdo", "button", "cite", "code", "data", "dfn", "em", "i", "img",
+    "input", "kbd", "label", "mark", "q", "s", "samp", "select", "small", "span", "strong", "sub",
+    "sup", "svg", "textarea", "time", "u", "var", "wbr",
+];
+
+/// Does the `<p>` hold content the HTML parser cannot keep inside it? (Not counting what sits in a
+/// `button` or an svg: those are scope boundaries or foreign content.)
+pub fn paragraph_holds_block(doc: &Doc, id: NodeId) -> bool {
+    doc.descendants(id).into_iter().any(|d| {
+        let c = doc.node(d);
+        c.is_element()
+            && P_CLOSERS.contains(&c.tag.as_str())
+            && !doc
+                .ancestors(d)
+                .take_while(|a| *a != id)
+                .any(|a| matches!(doc.node(a).tag.as_str(), "button" | "svg"))
+    })
+}
+
+/// Start tags that close an open `<p>` in the HTML parser.
+pub const P_CLOSERS: &[&str] = &[
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "details",
+    "dialog",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "hr",
+    "li",
+    "main",
+    "menu",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "search",
+    "section",
+    "table",
+    "ul",
+];
+
 const VOID: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
     "wbr",
@@ -84,6 +148,73 @@ const STATE_SUFFIXES: &[&str] = &[
     "checked",
     "collapsed",
 ];
+
+/// Inline-style properties that describe where an animation currently is, not where the element
+/// sits: nothing emitted runs the script that would move them on, so they are not carried.
+fn is_transient_style(name: &str) -> bool {
+    let name = name
+        .strip_prefix("-webkit-")
+        .or_else(|| name.strip_prefix("-moz-"))
+        .or_else(|| name.strip_prefix("-ms-"))
+        .unwrap_or(name);
+    matches!(
+        name,
+        "transform"
+            | "transform-origin"
+            | "translate"
+            | "scale"
+            | "rotate"
+            | "opacity"
+            | "visibility"
+            | "clip-path"
+            | "filter"
+            | "backdrop-filter"
+            | "will-change"
+            | "pointer-events"
+            | "stroke-dasharray"
+            | "stroke-dashoffset"
+            | "stroke-opacity"
+            | "fill-opacity"
+    ) || name.starts_with("transition")
+        || name.starts_with("animation")
+}
+
+/// Split an inline `style` attribute into the declarations that are emitted as a typed style
+/// object (property name as written, value) and the names of the transient ones left out.
+/// Declarations the browser would ignore (empty values) and `!important` flags are not carried.
+pub fn inline_style_props(value: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for d in crate::semantic::tokens::css::parse_declarations(value) {
+        let text = d.raw.clone().unwrap_or_else(|| d.value_css());
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if is_transient_style(&d.name) {
+            dropped.push(d.name.clone());
+        } else {
+            // A repeated property (`display: -webkit-box; display: flex`) keeps the last value:
+            // an object literal cannot hold the key twice.
+            kept.retain(|(k, _): &(String, String)| *k != d.name);
+            kept.push((d.name.clone(), text.to_owned()));
+        }
+    }
+    (kept, dropped)
+}
+
+/// JSX for a text node whose whitespace was collapsed into `collapsed`: a boundary space is kept
+/// as `{' '}` (it separates inline neighbours and is part of an accessible name).
+fn text_with_boundaries(raw: &str, collapsed: &str) -> String {
+    let mut s = jsx_text(collapsed);
+    if raw.starts_with(ascii_ws) {
+        s = format!("{{' '}}{s}");
+    }
+    if raw.ends_with(ascii_ws) {
+        s.push_str("{' '}");
+    }
+    s
+}
 
 /// Classes a script selects by (`js-menu-toggle`); they carry no style.
 pub fn is_script_hook(class: &str) -> bool {
@@ -713,6 +844,34 @@ fn is_global_attr(name: &str) -> bool {
         || name.starts_with("data-")
 }
 
+/// The key React's `style` object uses for a CSS property (`clip-path` -> `clipPath`,
+/// `-webkit-x` -> `WebkitX`, `--custom` stays quoted as written).
+fn style_key(name: &str) -> String {
+    if name.starts_with("--") {
+        return ts_string(name);
+    }
+    let name = name
+        .strip_prefix("-ms-")
+        .map_or_else(|| name.to_owned(), |rest| format!("ms-{rest}"));
+    let mut out = String::new();
+    let mut upper = false;
+    for c in name.chars() {
+        if c == '-' {
+            upper = true;
+        } else if upper {
+            out.extend(c.to_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    if out.chars().all(|c| c.is_alphanumeric()) {
+        out
+    } else {
+        ts_string(&out)
+    }
+}
+
 fn prop_key(name: &str) -> String {
     if name
         .chars()
@@ -887,7 +1046,20 @@ impl<'a> Jsx<'a> {
                 continue;
             }
             if name == "style" {
-                self.stats.borrow_mut().inline_style_attributes_dropped += 1;
+                if self.style.translates_inline_styles() {
+                    continue;
+                }
+                let (kept, _) = inline_style_props(value);
+                if kept.is_empty() {
+                    self.stats.borrow_mut().inline_style_attributes_dropped += 1;
+                } else {
+                    let body = kept
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", style_key(k), ts_string(v)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push(format!("style={{{{ {body} }} as React.CSSProperties}}"));
+                }
                 continue;
             }
             if let Some(slot) = self.attr_slots.get(&(id, name.clone())) {
@@ -1014,6 +1186,97 @@ impl<'a> Jsx<'a> {
         out
     }
 
+    /// Is the sibling before (or after) `id` rendered inline (text, or an element that is not a
+    /// block)? Uses the captured `display` when there is one, the tag otherwise.
+    fn inline_neighbour(&self, id: NodeId, after: bool) -> bool {
+        let mut at_node = id;
+        loop {
+            let Some(parent) = self.doc.node(at_node).parent else {
+                return false;
+            };
+            let p = self.doc.node(parent);
+            // Whitespace between table structure, in a flex or grid container or in an svg is
+            // not rendered.
+            let table_structure = |d: &str| {
+                matches!(
+                    d,
+                    "table"
+                        | "table-row"
+                        | "table-row-group"
+                        | "table-header-group"
+                        | "table-footer-group"
+                        | "table-column"
+                        | "table-column-group"
+                )
+            };
+            if p.tag == "svg"
+                || self
+                    .doc
+                    .ancestors(at_node)
+                    .any(|a| self.doc.node(a).tag == "svg")
+                || matches!(
+                    p.tag.as_str(),
+                    "table"
+                        | "tbody"
+                        | "thead"
+                        | "tfoot"
+                        | "tr"
+                        | "colgroup"
+                        | "select"
+                        | "optgroup"
+                        | "ul"
+                        | "ol"
+                )
+                || p.style("display").is_some_and(|d| {
+                    d.contains("flex") || d.contains("grid") || table_structure(d) || d == "none"
+                })
+            {
+                return false;
+            }
+            let kids = &p.children;
+            let Some(at) = kids.iter().position(|k| *k == at_node) else {
+                return false;
+            };
+            let mut sibs: Box<dyn Iterator<Item = &NodeId>> = if after {
+                Box::new(kids[at + 1..].iter())
+            } else {
+                Box::new(kids[..at].iter().rev())
+            };
+            let found = sibs.find_map(|k| {
+                let c = self.doc.node(*k);
+                if let Some(t) = &c.text {
+                    return (!t.trim().is_empty()).then_some(true);
+                }
+                if self.dropped(*k).is_some() {
+                    return None;
+                }
+                Some(match c.style("display") {
+                    Some(d) => d.starts_with("inline"),
+                    None => INLINE_TAGS.contains(&c.tag.as_str()),
+                })
+            });
+            match found {
+                Some(v) => return v,
+                // Nothing on this side inside an inline parent: the neighbour is the parent's.
+                None => {
+                    let inline_parent = match p.style("display") {
+                        Some(d) => d.starts_with("inline"),
+                        None => INLINE_TAGS.contains(&p.tag.as_str()),
+                    };
+                    if !inline_parent {
+                        return false;
+                    }
+                    at_node = parent;
+                }
+            }
+        }
+    }
+
+    /// Does the element hold block-level content that HTML does not allow inside a `<p>`?
+    fn holds_block(&self, id: NodeId) -> bool {
+        paragraph_holds_block(self.doc, id)
+    }
+
     fn node(&self, id: NodeId, indent: usize, out: &mut String) {
         let n = self.doc.node(id);
         if indent > MAX_DEPTH {
@@ -1037,19 +1300,17 @@ impl<'a> Jsx<'a> {
             }
             let t = collapse_ws(text);
             if t.is_empty() {
+                // Whitespace between two inline neighbours is a space in the rendered text (and in
+                // accessible names); between blocks it is nothing.
+                if !text.is_empty()
+                    && self.inline_neighbour(id, false)
+                    && self.inline_neighbour(id, true)
+                {
+                    out.push_str(&format!("{pad}{{' '}}\n"));
+                }
                 return;
             }
-            // Preserve a boundary space between inline neighbours.
-            let lead = text.starts_with(ascii_ws);
-            let trail = text.ends_with(ascii_ws);
-            let mut s = jsx_text(&t);
-            if lead {
-                s = format!("{{' '}}{s}");
-            }
-            if trail {
-                s.push_str("{' '}");
-            }
-            out.push_str(&format!("{pad}{s}\n"));
+            out.push_str(&format!("{pad}{}\n", text_with_boundaries(text, &t)));
             return;
         }
         if let Some(o) = self.overrides.get(&id) {
@@ -1075,7 +1336,11 @@ impl<'a> Jsx<'a> {
         if n.tag == "svg" {
             self.stats.borrow_mut().svg_subtrees += 1;
         }
-        let tag = &n.tag;
+        // A `<p>` that holds block content (built by script, which allows it) cannot be written
+        // as HTML: the parser closes it at the first block child and hydration fails. It is a
+        // `div` with the paragraph role instead.
+        let misnested = n.tag == "p" && self.holds_block(id);
+        let tag = if misnested { &"div".to_owned() } else { &n.tag };
         if tag.contains('-')
             && !self
                 .doc
@@ -1084,7 +1349,10 @@ impl<'a> Jsx<'a> {
         {
             self.stats.borrow_mut().custom_elements.insert(tag.clone());
         }
-        let attrs = self.attributes(id, &[]);
+        let mut attrs = self.attributes(id, &[]);
+        if misnested && !n.has_attr("role") {
+            attrs.push("role=\"paragraph\"".to_owned());
+        }
         let open = if attrs.is_empty() {
             format!("<{tag}")
         } else if attrs.iter().map(String::len).sum::<usize>() < 70 {
@@ -1131,9 +1399,12 @@ impl<'a> Jsx<'a> {
             if let Some(t) = &self.doc.node(kids[0]).text
                 && !self.verbatim(kids[0])
             {
-                let t = collapse_ws(t);
-                if t.len() < 60 && !open.contains('\n') {
-                    out.push_str(&format!("{pad}{open}>{}</{tag}>\n", jsx_text(&t)));
+                let collapsed = collapse_ws(t);
+                if collapsed.len() < 60 && !open.contains('\n') && !collapsed.is_empty() {
+                    out.push_str(&format!(
+                        "{pad}{open}>{}</{tag}>\n",
+                        text_with_boundaries(t, &collapsed)
+                    ));
                     return;
                 }
             }

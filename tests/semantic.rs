@@ -325,6 +325,27 @@ fn dialog_state_machine_trigger_and_split_of_behaviors() {
 }
 
 #[test]
+fn a_dialog_the_capture_holds_inert_is_mounted_inert_not_hidden() {
+    let doc =
+        Doc::from_html(&fixture("dialog.html").replace("role=\"dialog\"", "role=\"dialog\" inert"));
+    let facts = js::extract("dialog-react.js", &fixture("dialog-react.js"));
+    let a = PageAnalysis::from_parts("dialog.html", doc, vec![facts]);
+    let e = emit::emit(&a, &EmitOptions::default());
+    let c = e
+        .components
+        .iter()
+        .find(|c| c.primitive == Primitive::Dialog)
+        .unwrap();
+    let src = &e.files[&c.file];
+    assert!(
+        src.contains("hidden={false}") && src.contains("inert={!open}"),
+        "{src}"
+    );
+    // The captured bare `inert` is not repeated: duplicate JSX attributes do not compile.
+    assert_eq!(src.matches("inert").count(), 1, "{src}");
+}
+
+#[test]
 fn dialog_is_emitted_controlled_with_the_media_query_guard_and_the_trigger_label() {
     let a = dialog_analysis();
     let e = emit::emit(&a, &EmitOptions::default());
@@ -1321,6 +1342,150 @@ fn tab_classes_with_quotes_are_valid_jsx_and_the_selected_tab_is_not_the_templat
     assert!(!src.contains("\\\""), "Debug-style escapes in JSX: {src}");
     assert!(src.contains("className={'[content:\"x\"] idle'}"), "{src}");
     assert!(!src.contains("selected-look"), "{src}");
+}
+
+#[test]
+fn inline_styles_whitespace_and_misnested_paragraphs_are_emitted_faithfully() {
+    let html = r#"<body><div class="slot" style="left: 246px; top: 68.5px; --gap: 3px; transform: scale(0.04, 0.07); opacity: 0; clip-path: none"></div><div style="opacity: 0"></div>
+<h1><span>1</span> <span>Natural</span><span> is</span></h1><div> </div><div>b</div><p><span>x</span></p></body>"#;
+    let mut doc = Doc::from_html(html);
+    // Script-built DOM may nest blocks in a <p>: rewrite the parsed span into a div.
+    let span = doc
+        .nodes
+        .iter()
+        .position(|n| {
+            n.tag == "span"
+                && n.children
+                    .iter()
+                    .any(|c| doc.nodes[*c].text.as_deref() == Some("x"))
+        })
+        .unwrap();
+    doc.nodes[span].tag = "div".to_owned();
+    let a = PageAnalysis::from_parts("x", doc, Vec::new());
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            ..EmitOptions::default()
+        },
+    );
+    let jsx = e.page.unwrap().jsx;
+    // Positions and custom properties are carried as a typed object; animation state is not.
+    assert!(
+        jsx.contains(
+            "style={{ left: '246px', top: '68.5px', '--gap': '3px' } as React.CSSProperties}"
+        ),
+        "{jsx}"
+    );
+    assert!(
+        !jsx.contains("transform") && !jsx.contains("opacity") && !jsx.contains("clipPath"),
+        "{jsx}"
+    );
+    // A space between two inline siblings is kept; between blocks it is not.
+    assert!(
+        jsx.contains("<span>1</span>\n") && jsx.contains("{' '}"),
+        "{jsx}"
+    );
+    assert_eq!(
+        jsx.matches("{' '}").count(),
+        1 + 1,
+        "one space between the spans, one leading ' is': {jsx}"
+    );
+    // A paragraph that holds a block is a div with the paragraph role.
+    assert!(jsx.contains("<div role=\"paragraph\">"), "{jsx}");
+    assert!(!jsx.contains("<p>") && !jsx.contains("<p "), "{jsx}");
+}
+
+#[test]
+fn a_root_around_a_single_captured_element_generates_no_box() {
+    let tabs = r#"<div role="tablist" class="t" aria-label="Install method"><button role="tab" id="a" aria-selected="true" aria-controls="pa">One</button><button role="tab" id="b" aria-selected="false" aria-controls="pb">Two</button></div>"#;
+    let (e, _) = emit_html(tabs);
+    let src = component(&e, Primitive::Tabs);
+    assert!(src.contains("className=\"contents\""), "{src}");
+    let nav = emit::emit(
+        &PageAnalysis::from_parts(
+            "nav",
+            Doc::from_html(&fixture("nav-hover.html")),
+            vec![js::extract("nav-hover.js", &fixture("nav-hover.js"))],
+        ),
+        &EmitOptions::default(),
+    );
+    let c = nav
+        .components
+        .iter()
+        .find(|c| c.primitive == Primitive::NavigationMenu)
+        .unwrap();
+    let src = &nav.files[&c.file];
+    // Either List keeps the captured element, or Root and List are the captured pair: never a
+    // classed Root around an unclassed List (the items would stack in a block).
+    if src.contains("className=\"contents\"") {
+        assert!(src.contains("render={<div />}"), "{src}");
+    }
+}
+
+#[test]
+fn repeated_style_keys_whitespace_in_cells_and_non_uniform_groups() {
+    let html = r#"<body><div style="display:-webkit-box;display:flex;-webkit-transition: all 1s; stroke-dasharray: 5"></div><table><tbody><tr><td><span>a</span> <span>b</span></td></tr></tbody></table><ul> <li>x</li> <li>y</li></ul></body>"#;
+    let a = PageAnalysis::from_parts("x", Doc::from_html(html), Vec::new());
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            ..EmitOptions::default()
+        },
+    );
+    let jsx = e.page.unwrap().jsx;
+    assert!(
+        jsx.contains("style={{ display: 'flex' } as React.CSSProperties}"),
+        "{jsx}"
+    );
+    assert_eq!(
+        jsx.matches("{' '}").count(),
+        1,
+        "only the cell's space: {jsx}"
+    );
+
+    // Instances that differ in an inline style are not a component: it would render every one
+    // from the first.
+    let mut n = 0;
+    let cards = CARDS
+        .split("<a class=\"card\"")
+        .enumerate()
+        .map(|(i, part)| {
+            if i == 0 {
+                part.to_owned()
+            } else {
+                n += 4;
+                format!("<a style=\"left: {n}px\" class=\"card\"{part}")
+            }
+        })
+        .collect::<String>();
+    let a = PageAnalysis::from_parts("cards", Doc::from_html(&cards), Vec::new());
+    let e = emit::emit(
+        &a,
+        &EmitOptions {
+            page: true,
+            ..EmitOptions::default()
+        },
+    );
+    assert!(
+        e.group_components.is_empty(),
+        "{:?}",
+        e.group_components
+            .iter()
+            .map(|g| &g.name)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        e.skipped_groups.iter().any(|s| s.contains("inline styles")),
+        "{:?}",
+        e.skipped_groups
+    );
+    let jsx = e.page.unwrap().jsx;
+    assert!(
+        jsx.contains("left: '4px'") && jsx.contains("left: '8px'") && jsx.contains("left: '12px'"),
+        "{jsx}"
+    );
 }
 
 #[test]

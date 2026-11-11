@@ -316,15 +316,18 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
         let misnested = invalid_paragraphs(&analysis.doc);
         if misnested > 0 {
             gaps.push(format!(
-                "{}: {misnested} <p> element(s) contain block-level elements in the capture (built by script, which allows it); the HTML parser closes a <p> at such a child, so the server HTML is restructured and React may report a hydration mismatch",
+                "{}: {misnested} <p> element(s) contain block-level elements in the capture (built by script, which allows it); HTML cannot hold that (the parser closes the <p>, hydration fails), so each one rendered as plain markup is emitted as a `div` with role=\"paragraph\" (author selectors on `p` no longer match it under --captured-css)",
                 plan.path
             ));
         }
         let mut inv = inventory::route(&plan.path, &analysis, &emitted);
         if inv.inline_style_attributes_in_capture > 0 {
             gaps.push(format!(
-                "{}: {} element(s) carry an inline `style` attribute in the capture; none is emitted (values that came from a script, such as custom properties, are absent)",
-                plan.path, inv.inline_style_attributes_in_capture
+                "{}: {} element(s) carry an inline `style` attribute in the capture (set by script as the captured state of the page): {} emit it as a typed style object (positions, sizes, custom properties); animation-state declarations are left out because nothing runs the script that moves them on: {:?}",
+                plan.path,
+                inv.inline_style_attributes_in_capture,
+                inv.inline_style_carried,
+                inv.inline_style_transient_dropped
             ));
         }
         if inv.patterns_without_composition > 0 {
@@ -603,45 +606,10 @@ pub fn assemble(capture_dir: &Path, opts: &Options<'_>) -> Result<Project> {
 
 /// `<p>` elements that hold block-level content: valid in a DOM built by script, not in HTML.
 fn invalid_paragraphs(doc: &Doc) -> usize {
-    const BLOCK: &[&str] = &[
-        "address",
-        "article",
-        "aside",
-        "blockquote",
-        "details",
-        "div",
-        "dl",
-        "fieldset",
-        "figure",
-        "footer",
-        "form",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "header",
-        "hr",
-        "main",
-        "menu",
-        "nav",
-        "ol",
-        "p",
-        "pre",
-        "section",
-        "table",
-        "ul",
-    ];
     doc.nodes
         .iter()
         .filter(|n| n.is_element() && n.tag == "p")
-        .filter(|n| {
-            doc.descendants(n.id).into_iter().any(|d| {
-                let c = doc.node(d);
-                c.is_element() && BLOCK.contains(&c.tag.as_str())
-            })
-        })
+        .filter(|n| emit::paragraph_holds_block(doc, n.id))
         .count()
 }
 

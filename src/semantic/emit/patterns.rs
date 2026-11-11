@@ -288,8 +288,11 @@ fn tabs(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
         }
         a
     };
+    // One captured element holds the tabs: the list keeps its box (and the tablist role), and the
+    // `Root` Base UI needs around it generates none (`display: contents`), so the parent's layout
+    // sees the same child as in the capture.
     let mut root_attrs: Vec<String> = if root == list {
-        Vec::new()
+        vec!["className=\"contents\"".to_owned()]
     } else {
         keep_tag(doc, root, "div").into_iter().collect()
     };
@@ -833,7 +836,8 @@ fn switch(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
 /// composition keeps the captured element instead of adding another beside it.
 fn keep_tag(doc: &Doc, node: NodeId, default: &str) -> Option<String> {
     let tag = doc.node(node).tag.as_str();
-    (tag != default && !tag.is_empty()).then(|| format!("render={{<{tag} />}}"))
+    (tag != default && !tag.is_empty() && !matches!(tag, "html" | "body" | "head"))
+        .then(|| format!("render={{<{tag} />}}"))
 }
 
 fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> {
@@ -942,14 +946,19 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
         )
     };
     let mut list_attrs: Vec<String> = Vec::new();
-    match list.filter(|l| *l != root) {
+    let split = list.filter(|l| *l != root);
+    match split {
         Some(l) => {
             list_attrs.extend(keep_tag(doc, l, "ul"));
             list_attrs.extend(part_attrs(&jsx, l, &[]));
         }
-        // One captured element holds the items: Root keeps it, List is the one element Base UI
-        // needs beside it (a `div`, not a list the capture never had).
-        None => list_attrs.push("render={<div />}".into()),
+        // One captured element holds the items: List keeps it (box, classes, attributes) and the
+        // `Root` Base UI needs around it generates no box, so the parent's layout and the items'
+        // flex/grid context are the capture's. Root renders a `div`, not a nested `nav`.
+        None => {
+            list_attrs.extend(keep_tag(doc, root, "ul"));
+            list_attrs.extend(part_attrs(&jsx, root, &[]));
+        }
     }
     let list_el = element(
         &w(Primitive::NavigationMenu, "List"),
@@ -957,8 +966,14 @@ fn hover_navigation(cx: &Cx<'_>, m: &Match, name: &str) -> Result<Comp, String> 
         Some(&indent_block(&body, 1)),
         3,
     );
-    let mut root_attrs: Vec<String> = keep_tag(doc, root, "nav").into_iter().collect();
-    root_attrs.extend(part_attrs(&jsx, root, &[]));
+    let mut root_attrs: Vec<String> = match split {
+        Some(_) => {
+            let mut a: Vec<String> = keep_tag(doc, root, "nav").into_iter().collect();
+            a.extend(part_attrs(&jsx, root, &[]));
+            a
+        }
+        None => vec!["render={<div />}".into(), "className=\"contents\"".into()],
+    };
     root_attrs.push("{...props}".into());
     let mut inner = list_el;
     inner.push_str(&popup);
@@ -1267,6 +1282,10 @@ fn dialog(
             ),
         }
     }
+    let mounted_inert = doc.node(popup).has_attr("inert") && !doc.node(popup).has_attr("hidden");
+    if mounted_inert {
+        gaps.push("the popup is mounted while closed (keepMounted, `inert`, not `hidden`) in a portal: Base UI wraps it in one extra `div` under <body> that the capture does not have; its styles are the closed-state ones baked from the capture, so the open look is not generated".into());
+    }
     gaps.push("trigger children (the icon) are emitted as captured in the closed state; whether the bundle renders different children when open is not analyzed".into());
     if let Some(unwired) = cx.unwired_closers.get(&m.id) {
         gaps.push(format!(
@@ -1293,7 +1312,17 @@ fn dialog(
             ));
         }
     }
-    let popup_attrs = part_attrs(&jsx_probe, popup, &[]);
+    let mut popup_attrs = part_attrs(&jsx_probe, popup, &[]);
+    if mounted_inert {
+        // Written below as `inert={!open}`: the captured bare `inert` would be a duplicate.
+        popup_attrs.retain(|a| a != "inert");
+    }
+    // Mounted while closed, as the capture has it: present in the DOM, `inert` instead of
+    // Base UI's `hidden` (the captured classes decide how it looks).
+    if mounted_inert {
+        popup_attrs.push("hidden={false}".into());
+        popup_attrs.push("inert={!open}".into());
+    }
     let popup_el = element(
         &w(Primitive::Dialog, "Popup"),
         &popup_attrs,
@@ -1415,6 +1444,39 @@ fn add_imports(cx: &Cx<'_>, source: &str, used: &BTreeSet<String>, own: &str) ->
 /// A pattern component that was emitted: match id, component name, props it requires.
 type PlaceInfo = (usize, String, Vec<(String, String)>);
 
+/// Do corresponding elements of the instances carry different classes (after the style bridge)
+/// or different inline styles? Those are not props of the component, so grouping them would give
+/// every instance the first one's look and position.
+fn styles_differ(cx: &Cx<'_>, instances: &[NodeId]) -> Option<String> {
+    let doc = cx.doc;
+    let jsx = cx.jsx();
+    let mut level: Vec<Vec<NodeId>> = vec![instances.to_vec()];
+    while let Some(nodes) = level.pop() {
+        let first = nodes[0];
+        if doc.node(first).is_element() {
+            let class = jsx.class_value(first);
+            let style = doc.node(first).attr("style");
+            if nodes[1..]
+                .iter()
+                .any(|n| jsx.class_value(*n) != class || doc.node(*n).attr("style") != style)
+            {
+                return Some(format!(
+                    "the <{}> at the same place carries different classes or inline styles in the instances",
+                    doc.node(first).tag
+                ));
+            }
+        }
+        let width = doc.node(first).children.len();
+        if nodes.iter().any(|n| doc.node(*n).children.len() != width) {
+            return None;
+        }
+        for i in 0..width {
+            level.push(nodes.iter().map(|n| doc.node(*n).children[i]).collect());
+        }
+    }
+    None
+}
+
 /// Components for repeated structures whose name and every varying slot are semantic.
 fn group_components(cx: &mut Cx<'_>, taken: &BTreeSet<String>, out: &mut Emitted) {
     let doc = cx.doc;
@@ -1455,6 +1517,15 @@ fn group_components(cx: &mut Cx<'_>, taken: &BTreeSet<String>, out: &mut Emitted
         }) {
             out.skipped_groups.push(format!(
                 "`{}` ({} instances, first node {}): instances contain or are parts of a recognized pattern, which the pattern emitters render",
+                g.component_name.as_deref().unwrap_or("?"),
+                g.instances.len(),
+                g.instances[0]
+            ));
+            continue;
+        }
+        if let Some(why) = styles_differ(cx, &g.instances) {
+            out.skipped_groups.push(format!(
+                "`{}` ({} instances, first node {}): {why}; a component renders every instance from the first one, so they stay plain markup",
                 g.component_name.as_deref().unwrap_or("?"),
                 g.instances.len(),
                 g.instances[0]
