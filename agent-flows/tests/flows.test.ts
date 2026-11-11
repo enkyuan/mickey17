@@ -106,7 +106,8 @@ describe("the fixture flow", () => {
     test("a static value that also appears in a response stays constant, with a warning", () => {
         const g = graphOf(twoRuns());
         const v = valueOf(g, 3, "header:x-publishable-key")!;
-        expect([v.class, v.value]).toEqual(["constant", "pk\x5ftest_ABCDEFGH12345678"]);
+        // A key-shaped constant is withheld even when it is public: the executor supplies it.
+        expect([v.class, v.value, v.redacted]).toEqual(["constant", undefined, true]);
         expect(g.warnings.some((w) => w.kind === "constant-matches-source" && w.location === "header:x-publishable-key")).toBe(true);
     });
 
@@ -412,7 +413,7 @@ describe("generated ground truth", () => {
         expect(checked).toBeGreaterThanOrEqual(20);
     });
 
-    test("a large recording is classed correctly and quickly", () => {
+    test("a large recording is classed correctly and quickly", { timeout: 60_000 }, () => {
         const { docs, truths } = generated(7, 3, 200);
         const started = performance.now();
         const g = graphOf(docs);

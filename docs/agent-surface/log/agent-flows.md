@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (58 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (77 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -43,8 +43,11 @@ Gaps in or deviations from `docs/AGENT_SURFACE.md`, with reasons:
    location). A match in some runs only is `unclassified` ("matches … in 1 of 2 runs"), never `derived`.
 3. **Evidence rule has two gates.** The weak gate decides what is looked up (length 8..2048, not a
    URL/path, MIME type, ISO/HTTP date, epoch, number under 12 digits, or word under 16 letters).
+   The weak gate has no entropy test, so which values are looked up never depends on their characters.
    The strong gate (≥ 6 distinct characters, ≥ 2.5 bits/char, plus the exclusions) must pass in
-   **at least one run**. A single strong gate per value made 8-hex ids randomly derived, blocked or
+   **at least one run**; a match that exists in some runs is counted in the others when the raw values
+   are equal there. A weak-only match neither links nor blocks; a consistent one is reported as a
+   `weak-source-ignored` warning (values of 8+ characters; shorter ones are not looked up at all). A single strong gate per value made 8-hex ids randomly derived, blocked or
    client-computed (review M6). Residual: an 8-hex id fails the strong gate in both runs about 5% of
    the time and is then `client-computed` (resolved, never blocked).
 4. **Low-entropy values are never sources**, so a really-derived small id (`1`) can only be an
@@ -52,9 +55,11 @@ Gaps in or deviations from `docs/AGENT_SURFACE.md`, with reasons:
 5. **Inputs.** Trace-event inputs first, then run-wide `params`. A low-entropy match against a
    run-wide parameter is kept but raises `weak-input-match` (it may coincide with another
    parameter, e.g. `page=1/2` vs `quantity=1/2`); attribute inputs to events to rule it out. A token-grade
-   value that follows a parameter in some runs only is `unclassified`.
-6. **Declared input that did not vary** is embedded as a `constant` with an `input-did-not-vary`
-   warning naming the input (the recording cannot show it is an input).
+   value that follows a parameter in some runs only is `unclassified`; a low-entropy one is
+   `client-computed` with a `weak-input-partial` warning. A full input match wins over *partial* server
+   evidence (a user input echoed by the server in one run is still an input).
+6. **Declared input that did not vary** (event-scoped or run-wide) is embedded as a `constant` with an
+   `input-did-not-vary` warning naming the alphabetically first matching input.
 7. **Array selection** (`json:$.rates[*].id`): the picked element must be explained by a sibling
    *label* field (not a bare number or boolean) that equals a run parameter in every run and is unique in
    the array; otherwise `unclassified`. One array level only. Residual risk: a numeric-looking
@@ -62,20 +67,30 @@ Gaps in or deviations from `docs/AGENT_SURFACE.md`, with reasons:
 8. **Free-text sources** carry a locator (`before`/`after`, `origin: "page"`): the text around the first
    whole-token occurrence identical in every run, cut before any word of 8+ token characters, and
    refused if it contains a secret-looking piece. Surrounding `prefix`/`suffix` of an edge are refused the same way.
-9. **Redaction (D7).** Constants are embedded except where the location is sensitive by name
-   (word-bounded: `pin` does not redact `shipping`; `body`, `authorization`, `cookie`, `token`,
-   `password`, `pwd`, `otp`, `jwt`, `api-key`, `signature`, `session`, `csrf`, `card`, …), the value is
-   a Luhn-valid card number, or it is a URL carrying such a parameter or secret-looking value. Redacted
-   constants have no value and no hash (an unsalted hash of a low-entropy secret is reversible) and
-   appear as `{location}` in `path_template`. Inputs and client-computed values are never emitted.
-   Blocker text never contains request paths.
+9. **Redaction (D7) is by name and by value.** A constant is withheld when its location is sensitive by name
+   (word-bounded: `pin` does not redact `shipping`; `body`, `authorization`, `cookie`, `token`, `password`,
+   `pwd`, `otp`, `jwt`, `api-key`, `hmac`, `signature`, `session`, `csrf`, `card`, `code`, `email`, …) **or** by what it
+   looks like: a Luhn-valid card number anywhere in it, a token-grade piece (14+ characters with a digit,
+   or 20+), an email or SSN, or a URL (absolute or relative, query, fragment or `;` form) with a sensitive
+   parameter or secret-looking value. Components of a redacted URL are redacted with it. Over-redaction is the
+   accepted failure direction: public keys (`pk-test-…`) and replayable constants such as `tokenType: "Bearer"` are
+   withheld too and must come from the executor's credential store. Redacted constants carry no value and no hash and appear as `{location}`
+   in `path_template`. Inputs and client-computed values are never emitted. Blocker text carries no request paths,
+   and a location that embeds a token-grade key (a session id used as a JSON key) is printed `<redacted-location>`.
+   An edge `prefix`/`suffix` is refused if it looks like a secret, and on a sensitive target only a short auth
+   scheme word (`Bearer `) may precede the credential.
 10. **Alignment is positional but checked.** Same method, host and path depth are not enough: a path
-    segment that differs between runs must be an id (≥ 6 chars with a digit) or follow a run
-    parameter; otherwise the flow blocks ("the requests may have been reordered").
+    segment that differs between runs must be an id/slug (≥ 6 chars with a digit, `-`/`_` or mixed case) or
+    follow a run parameter, and the operation named by an RPC-style request (`operationName`, JSON-RPC `method`,
+    `action`/`op` fields or query parameters) must agree or follow a parameter; otherwise the flow blocks
+    ("the requests may have been reordered"). A heuristic for protocol-level endpoints: other same-endpoint
+    reorderings are not detected (they surface as unexplained `client-computed` values).
 11. **Hostile input.** `time` is clamped to 24 h (a huge value would make any response eligible as a
     source), non-HTTP statuses become 0, dates are range-checked, JSON nesting is capped at 128, substring search skips targets over 4096 chars.
-12. **Determinism ties.** Entries sort by start time, then id, then a hash of the whole entry; events
-    without an id are named by their content; request/event/cookie order in the input is irrelevant.
+12. **Determinism and ties.** Entries sort by start time, then id, then a hash of the whole entry with sorted
+    keys; events without an id are named by their content; request/event/cookie order and JSON key order in the
+    input are irrelevant. Requests with the same start time and no `_requestId` cannot be paired across runs, so
+    the flow **blocks** (with explicit ids the id breaks the tie).
 13. **JSON types** are kept (`json_type` for non-strings, empty `{}`/`[]` are values); a type that
     differs between runs blocks.
 
@@ -122,7 +137,7 @@ Not covered: base64 blobs embedding the source with extra text, hashes, `Number(
 `schema, status ("resolved"|"blocked"), runs, inputs[{name, uses}], steps[…], edges[…], blockers[{step, location, reason}], warnings[{step, location, kind, detail}]`.
 Step: `index, id, event?, method, origin, path_template, statuses, values[{location, class, value?|redacted?, json_type?, input?, source?, via?, shape?, reason?}], provides, needs`.
 Edge: `from{where: initial-cookie|request|response, step|null, location, locator?, select?} → to{step, location}`, `via`, `prefix?`, `suffix?`.
-Warning kinds: `constant-matches-source`, `input-did-not-vary`, `weak-input-match`, `ambiguous-order`, `event-mismatch`.
+Warning kinds: `constant-matches-source`, `input-did-not-vary`, `weak-input-match`, `weak-input-partial`, `weak-source-ignored`, `entry-skipped`, `event-mismatch`.
 Canonical JSON: fixed key order, sorted collections, trailing newline; identical for shuffled entries, events, cookies and runs.
 
 ## Mapping to the agent-schema package (not adopted yet)
@@ -191,12 +206,28 @@ Not changed: source precedence vs "earliest" (decision 1, documented); first-occ
 Tests the reviewer found too weak were strengthened (deleted-source test, bootstrap deletion, cross-stack
 signature now includes the producing step, HTML truth sources).
 
-**Round 2:** re-review of the fixes in the TypeScript package — see the entry below once it has run.
+**Round 2 (Opus, high effort) on the TypeScript port (d6e4ba4).** The fuzzer found no crashes (3000 mutations).
+Verified findings and what was done:
+- *Fixed, with tests:* H-a RPC-style same-endpoint reordering (operation key check); H-b/H-c constants redacted by name only
+  (now by value too, child slots follow their parent URL); H-d secretish bypassed by digitless keys, spaced card numbers,
+  path-like locator text (reworked; auth-scheme-only prefixes on sensitive targets); M-a a no-op encoding in one run blocked a
+  legitimate flow (no-op transforms agree); M-b weak-only matches blocked before inputs were tried (weak neither links nor
+  blocks; full input beats partial server evidence); M-c selecting an element by its own value (now an input); M-d silent
+  `client-computed` on ignored consistent matches (warnings); M-e URL-valued fields (parent refused, children redacted); M-f
+  quadratic regex scanning of HTML (single-pass scanner); M-g token-grade keys echoed in locations (`<redacted-location>`); M-h
+  determinism holes (sorted keys in hashes, alphabetical input choice, ties block); M-i prefix-colliding variants (length-class lookup);
+  duplicate jar and `Set-Cookie` names; prototype-named HTML entities; invalid-URL entries reported (`entry-skipped`); slug path
+  segments; run-wide inputs in `input-did-not-vary`; stricter tests (digitless secrets, `code=`, child slots, GraphQL, key order, ties).
+- *Not fixed, documented:* page-derived key names in `location`/`select.field`/`reason` carry no `origin: "page"` marker (schema
+  adoption must wrap them, D8); storage and DOM sources (storageState `origins[]`) are not read, so such values are
+  `client-computed`; a missing or string HAR `time` counts as instantaneous; weak-only values shorter than 8 characters are never looked up.
+
+**Round 3:** re-review of these fixes — see the entry below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 58 pass, 0 fail.
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 77 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -214,5 +245,5 @@ signature now includes the producing step, HTML truth sources).
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (58 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (77 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

@@ -33,7 +33,7 @@ class Parser {
         if (c === "t" && this.s.startsWith("true", this.i)) return ((this.i += 4), { t: "bool", v: true });
         if (c === "f" && this.s.startsWith("false", this.i)) return ((this.i += 5), { t: "bool", v: false });
         if (c === "n" && this.s.startsWith("null", this.i)) return ((this.i += 4), { t: "null" });
-        const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(this.s.slice(this.i, this.i + 400));
+        const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(this.s.slice(this.i, this.i + 4096));
         if (!m) this.fail();
         this.i += m[0].length;
         return { t: "num", raw: m[0] };

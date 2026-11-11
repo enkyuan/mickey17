@@ -131,10 +131,12 @@ export function looksLikeCard(v: string): boolean {
 /** Long names matched anywhere in a location. */
 const SENSITIVE_SUBSTRINGS = [
     "authorization", "cookie", "token", "secret", "password", "passwd", "passphrase", "credential", "signature", "session",
-    "csrf", "xsrf", "apikey", "api-key", "api_key", "privatekey", "private-key", "private_key", "bearer",
+    "csrf", "xsrf", "apikey", "api-key", "api_key", "privatekey", "private-key", "private_key", "bearer", "hmac",
 ];
 /** Short names matched only as whole words (`pin` must not redact `shipping`). */
-const SENSITIVE_WORDS = new Set(["pwd", "pass", "pin", "otp", "jwt", "auth", "card", "cvc", "cvv", "iban", "ssn", "sig", "body"]);
+const SENSITIVE_WORDS = new Set([
+    "pwd", "pass", "pin", "otp", "jwt", "auth", "card", "cvc", "cvv", "cvv2", "iban", "ssn", "social", "email", "sig", "body", "code", "phone",
+]);
 
 /**
  * Locations whose values are credentials or secrets by name. Their constant values are never
@@ -150,25 +152,58 @@ export function sensitiveLocation(loc: string): boolean {
     return words.some((w) => SENSITIVE_WORDS.has(w));
 }
 
-/** Text that is, or contains, something secret-looking: a token-grade piece or a card number. */
-export function secretish(text: string): boolean {
-    if (looksLikeCard(text)) return true;
-    const tokenGrade = (p: string) => isEvidence(p) && /\d/.test(p);
-    const words = text.split(/[^A-Za-z0-9_-]+/);
-    const blobs = text.split(/[\s"'<>&;,(){}[\]|\\`=:]+/);
-    return [...words, ...blobs].some((p) => p.length > 0 && (tokenGrade(p) || looksLikeCard(p)));
+/** A run of 13 to 19 digits (spaces and dashes allowed) that passes the Luhn check, anywhere in the text. */
+function cardIn(text: string): boolean {
+    for (const m of text.matchAll(/(?:\d[ -]?){13,19}/g)) if (looksLikeCard(m[0].trim())) return true;
+    return false;
 }
 
-/** An absolute URL whose query or path carries a sensitive parameter name or a secret-looking value. */
+const distinctCount = (s: string): number => new Set(s).size;
+
+/** A long mixed blob (digits or both cases, high entropy) regardless of URL/path shape. */
+function rawTokenish(p: string): boolean {
+    return p.length >= 12 && distinctCount(p) >= 6 && entropyBitsPerChar(p) >= 3.0 && /\d/.test(p);
+}
+
+/** Text that is, or contains, something secret-looking: a token-grade piece or a card number. */
+export function secretish(text: string): boolean {
+    if (cardIn(text)) return true;
+    const tokenGrade = (p: string) => isEvidence(p) && ((p.length >= 14 && /\d/.test(p)) || p.length >= 20);
+    const words = text.split(/[^A-Za-z0-9_-]+/);
+    const blobs = text.split(/[\s"'<>&;,(){}[\]|\\`=:]+/);
+    return words.some((p) => p.length > 0 && tokenGrade(p)) || blobs.some((p) => p.length > 0 && (tokenGrade(p) || rawTokenish(p)));
+}
+
+/** Personal data by shape: an email address or a US social security number. */
+export function piiish(value: string): boolean {
+    return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(value) || /(?:^|\D)\d{3}-\d{2}-\d{4}(?:\D|$)/.test(value);
+}
+
+/** Parameters in a URL, absolute or relative, including the query, fragment and `;` forms. */
 export function urlHasSecret(value: string): boolean {
-    if (!value.startsWith("http://") && !value.startsWith("https://")) return false;
-    let u: URL;
-    try {
-        u = new URL(value);
-    } catch {
-        return false;
+    if (!/[?#;]/.test(value) && !value.includes("://")) return false;
+    if (value.startsWith("http://") || value.startsWith("https://")) {
+        try {
+            const u = new URL(value);
+            if (u.username || u.password) return true;
+            if (u.pathname.split("/").some((seg) => looksLikeCard(seg))) return true;
+        } catch {
+            /* fall through to the textual scan */
+        }
     }
-    if (u.username || u.password) return true;
-    for (const [k, v] of u.searchParams) if (sensitiveLocation(k) || secretish(v)) return true;
-    return u.pathname.split("/").some((seg) => looksLikeCard(seg));
+    for (const m of value.matchAll(/[?&#;]([^=&#;\s]+)=([^&#;\s]*)/g)) {
+        if (sensitiveLocation(m[1]!) || secretish(m[2]!)) return true;
+    }
+    return false;
+}
+
+/** Whether a constant may not be written to the graph: by location name, or by what the value looks like. */
+export function redactConstant(loc: string, value: string): boolean {
+    return sensitiveLocation(loc) || looksLikeCard(value) || cardIn(value) || secretish(value) || piiish(value) || urlHasSecret(value);
+}
+
+/** A location that embeds a token-grade key (a session id used as a JSON key or query name). */
+export function safeLocation(loc: string): string {
+    const tokenGrade = (p: string) => isEvidence(p) && ((p.length >= 14 && /\d/.test(p)) || p.length >= 20);
+    return loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
 }

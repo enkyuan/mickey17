@@ -1,11 +1,12 @@
 // Alignment, cross-request matching and value classing.
 
-import { isEvidence, isWeakEvidence, looksLikeCard, MIN_LEN, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
+import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, secretish, sensitiveLocation, shape } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
     apply,
     exactTransforms,
+    isNoop,
     plainOf,
     preimages,
     type Rel,
@@ -76,7 +77,9 @@ type Cand =
     | { kind: "valid"; rel: Rel; locator?: Locator; select?: Select }
     | { kind: "partial"; why: string }
     /** A wildcard source whose concrete location is identical in every run: the concrete source is reported instead. */
-    | { kind: "redundant" };
+    | { kind: "redundant" }
+    /** Equal in every run but too low-entropy to count as a source. */
+    | { kind: "weak" };
 
 /** Infer the flow graph from two or more recorded runs. */
 export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
@@ -90,6 +93,22 @@ export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
     const warnings: Warning[] = [];
 
     const runs = recs.map((r) => prepare(r, opts));
+    // Requests with the same start time and no explicit id have no defined order, so they cannot be
+    // paired across runs: block rather than pair them by an arbitrary hash.
+    for (const [ri, r] of runs.entries()) {
+        const groups = new Map<number, Entry[]>();
+        for (const e of r.entries) groups.set(e.startedUs, [...(groups.get(e.startedUs) ?? []), e]);
+        if ([...groups.values()].some((g) => g.length > 1 && g.some((e) => !e.explicitId))) {
+            blockers.push({
+                step: null,
+                location: null,
+                reason: `run ${runIds[ri]} has requests with identical start times and no _requestId; their order cannot be recovered (give each a distinct startedDateTime or a _requestId)`,
+            });
+        }
+    }
+    if (blockers.length > 0) {
+        return { schema: SCHEMA, status: "blocked", runs: runIds, inputs: [], steps: [], edges: [], blockers, warnings };
+    }
     const alignErr = alignmentError(runs, recs);
     if (alignErr !== null) {
         blockers.push({ step: null, location: null, reason: alignErr });
@@ -98,16 +117,8 @@ export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
     const nRuns = runs.length;
     const nSteps = runs[0]!.entries.length;
 
-    runs.forEach((r, ri) => {
-        const starts = new Set(r.entries.map((e) => e.startedUs));
-        if (starts.size !== r.entries.length) {
-            warnings.push({
-                step: null,
-                location: null,
-                kind: "ambiguous-order",
-                detail: `run ${runIds[ri]} has requests with identical start times; their order is broken by content hash`,
-            });
-        }
+    recs.forEach((rec, ri) => {
+        for (const s of rec.skipped) warnings.push({ step: null, location: null, kind: "entry-skipped", detail: `run ${runIds[ri]}: ${s}` });
     });
 
     // Aligned request slots (the targets to classify).
@@ -226,7 +237,7 @@ function prepare(rec: Recording, opts: Options): RunData {
         reqMap: req.map((slots) => new Map(slots.map((s) => [s.loc, s.value] as const))),
         reqSlots: req.map((slots) => new Map(slots.map((s) => [s.loc, s] as const))),
         free: entries.map((e) => (isFreeText(e) && e.respBody ? bodyTokens(e.respBody.text) : null)),
-        jar: rec.initialCookies.map((c) => ({ loc: `cookie:${c.name}`, value: c.value })),
+        jar: jarSlots(rec),
     };
 }
 
@@ -238,6 +249,22 @@ function paramValues(recs: Recording[], runs: RunData[], step: number): Set<stri
     });
 }
 
+/** The starting jar as slots; duplicate names get `#n` like every other repeated key. */
+function jarSlots(rec: Recording): Slot[] {
+    const counts = new Map<string, number>();
+    return rec.initialCookies.map((c) => {
+        const n = counts.get(c.name) ?? 0;
+        counts.set(c.name, n + 1);
+        return { loc: `cookie:${c.name.replace(/#/g, "%23")}${n === 0 ? "" : `#${n}`}`, value: c.value };
+    });
+}
+
+/** Top-level fields that name the operation of an RPC-style endpoint (GraphQL, JSON-RPC, `?action=`). */
+const OPERATION_KEYS = [
+    "json:$.operationName", "json:$.operation", "json:$.method", "json:$.action", "json:$.op", "json:$.mutation", "json:$.cmd",
+    "url.query:action", "url.query:op", "url.query:operation", "url.query:method", "url.query:cmd", "form:action", "form:op",
+];
+
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
     const n = runs[0]!.entries.length;
     for (const r of runs) {
@@ -246,6 +273,7 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
         }
     }
     for (let i = 0; i < n; i++) {
+        const params = paramValues(recs, runs, i);
         const a = runs[0]!.entries[i]!;
         for (const r of runs.slice(1)) {
             const b = r.entries[i]!;
@@ -256,14 +284,21 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
                 return `runs are not alignable at step ${i}: the request paths have a different number of segments`;
             }
         }
+        // The operation named by an RPC-style body or query must agree (or follow a run parameter):
+        // two requests to the same endpoint (`POST /graphql`) are otherwise indistinguishable.
+        for (const key of OPERATION_KEYS) {
+            const vals = runs.map((r) => r.reqMap[i]!.get(key));
+            if (vals.every((v) => v === vals[0])) continue;
+            if (vals.every((v, r) => v !== undefined && params[r]!.has(v))) continue;
+            return `runs are not alignable at step ${i}: the operation (${key}) differs between runs (the requests may have been reordered)`;
+        }
         // A path segment that differs between runs must be an id (token-grade in every run) or
         // follow a run parameter; otherwise two different endpoints were paired by position.
         const segs = runs.map((r) => pathSegments(r.entries[i]!.url));
-        const params = paramValues(recs, runs, i);
         for (let k = 0; k < segs[0]!.length; k++) {
             const vals = segs.map((s) => s[k]!);
             if (vals.every((v) => v === vals[0])) continue;
-            const idLike = vals.every((v) => v.length >= 6 && /\d/.test(v) && /^[A-Za-z0-9_.~%-]+$/.test(v));
+            const idLike = vals.every((v) => v.length >= 6 && /^[A-Za-z0-9_.~%-]+$/.test(v) && (/\d/.test(v) || /[-_]/.test(v) || (/[a-z]/.test(v) && /[A-Z]/.test(v))));
             const isParam = vals.every((v, r) => params[r]!.has(v));
             if (!idLike && !isParam) {
                 return `runs are not alignable at step ${i}: path segment ${k} differs between runs and is neither an id nor a run parameter (the requests may have been reordered)`;
@@ -343,6 +378,7 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
     const exact = (t: Transform): Rel => ({ transform: t, prefix: "", suffix: "" });
     // Substring search: every variant is at least MIN_LEN characters, so each occurrence starts
     // with a MIN_LEN-character window. Looking windows up costs O(target length) per target.
+    // Variants that share a window (every JWT starts `eyJhbGci`) are looked up by length instead of scanned.
     const windows = new Map<string, string[]>();
     for (const variant of index.keys()) {
         if (variant.length < MIN_LEN) continue;
@@ -351,6 +387,24 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
         if (list) list.push(variant);
         else windows.set(w, [variant]);
     }
+    const crowded = new Map<string, Map<number, Set<string>>>();
+    for (const [w, list] of windows) {
+        if (list.length <= 16) continue;
+        const byLen = new Map<number, Set<string>>();
+        for (const v of list) byLen.set(v.length, (byLen.get(v.length) ?? new Set<string>()).add(v));
+        crowded.set(w, byLen);
+    }
+    const variantsAt = (value: string, i: number): string[] => {
+        const w = value.slice(i, i + MIN_LEN);
+        const byLen = crowded.get(w);
+        if (!byLen) return windows.get(w) ?? [];
+        const found: string[] = [];
+        for (const [len, set] of byLen) {
+            const cand = value.slice(i, i + len);
+            if (cand.length === len && set.has(cand)) found.push(cand);
+        }
+        return found;
+    };
     const out: RunHits = new Map();
     targets.forEach((t, ti) => {
         const value = run.reqMap[t.step]!.get(t.loc);
@@ -358,14 +412,20 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
         const isVarying = varies(t.values);
         for (const [si, tf] of index.get(value) ?? []) {
             const e = all[si]!;
-            if (eligible(run, e.sid, t.step)) addHit(out, ti, e.sid, exact(tf), strongRelation(tf, e.val, value), undefined, e.concrete);
+            if (!eligible(run, e.sid, t.step)) continue;
+            const strong = strongRelation(tf, e.val, value);
+            addHit(out, ti, e.sid, exact(tf), strong, undefined, e.concrete);
+            if (tf === "Identity") {
+                // The value needs no encoding here; in another run it may, so every no-op transform agrees.
+                for (const alias of TRANSFORMS) if (alias !== "Identity" && isNoop(alias, e.val)) addHit(out, ti, e.sid, exact(alias), strong, undefined, e.concrete);
+            }
         }
         // Substring matches (Bearer tokens, embedded ids). Constants skip this: they never become
         // edges, so only the cheap exact lookups run for them (to raise a warning).
         if (isVarying && value.length > MIN_LEN && value.length <= MAX_TARGET_LEN) {
             const seen = new Set<string>();
             for (let i = 0; i + MIN_LEN <= value.length; i++) {
-                for (const variant of windows.get(value.slice(i, i + MIN_LEN)) ?? []) {
+                for (const variant of variantsAt(value, i)) {
                     if (variant.length >= value.length || !value.startsWith(variant, i) || seen.has(`${i}\u0000${variant}`)) continue;
                     seen.add(`${i}\u0000${variant}`);
                     // Only the first occurrence of a variant defines prefix and suffix.
@@ -410,6 +470,8 @@ interface InputMatch {
     full: string[];
     /** Parameters equal to a token-grade target in some runs but not all. */
     partial: string[];
+    /** Parameters equal to a low-entropy target in some runs but not all (reported, never blocking). */
+    weakPartial: string[];
     /** The only matches came from run-wide parameters and the value is low-entropy. */
     weak: boolean;
 }
@@ -420,25 +482,29 @@ interface InputMatch {
  * run-wide parameter is reported as `weak` (it may be a coincidence with another parameter).
  */
 function matchInputs(step: number, vals: string[], runs: RunData[], recs: Recording[]): InputMatch {
-    const scope = (pick: (r: number) => Map<string, string> | undefined): { full: string[]; partial: string[] } => {
+    const scope = (pick: (r: number) => Map<string, string> | undefined): { full: string[]; partial: string[]; weakPartial: string[] } => {
         const names = new Set<string>();
         for (let r = 0; r < vals.length; r++) for (const k of pick(r)?.keys() ?? []) names.add(k);
         const full: string[] = [];
         const partial: string[] = [];
+        const weakPartial: string[] = [];
         for (const name of [...names].sort(cmp)) {
             const sets: Set<Transform>[] = [];
             let matchedRuns = 0;
+            let anyMatch = 0;
             for (let r = 0; r < vals.length; r++) {
                 const pv = pick(r)?.get(name);
                 if (pv === undefined) break;
                 const ts = exactTransforms(vals[r]!, pv, false);
+                if (ts.length > 0) anyMatch++;
                 if (ts.length > 0 && isEvidence(vals[r]!)) matchedRuns++;
                 sets.push(new Set(ts));
             }
             if (sets.length === vals.length && intersect(sets).size > 0) full.push(name);
             else if (matchedRuns > 0) partial.push(name);
+            else if (anyMatch > 0) weakPartial.push(name);
         }
-        return { full, partial };
+        return { full, partial, weakPartial };
     };
     const event = scope((r) => visible(recs[r]!, runs[r]!, step).event);
     if (event.full.length > 0 || event.partial.length > 0) return { ...event, weak: false };
@@ -503,7 +569,11 @@ function sourceValue(run: RunData, sid: Sid): string | undefined {
 }
 
 const describe = (sid: Sid): string =>
-    sid.phase === 0 ? `initial cookie \`${sid.loc}\`` : sid.phase === 1 ? `request ${sid.step} \`${sid.loc}\`` : `response ${sid.step} \`${sid.loc}\``;
+    sid.phase === 0
+        ? `initial cookie \`${safeLocation(sid.loc)}\``
+        : sid.phase === 1
+          ? `request ${sid.step} \`${safeLocation(sid.loc)}\``
+          : `response ${sid.step} \`${safeLocation(sid.loc)}\``;
 
 function sourceRef(sid: Sid, locator?: Locator): SourceRef {
     if (sid.phase === 0) return { where: "initial-cookie", step: null, location: sid.loc };
@@ -570,8 +640,9 @@ function classifyTarget(
     const validReq: Valid[] = [];
     const partialExt: string[] = [];
     const partialReq: string[] = [];
+    const weakSources: string[] = [];
     for (const { sid, perRun } of [...perSource.values()].sort((a, b) => sidCmp(a.sid, b.sid))) {
-        const cand = candidate(sid, perRun, runs, recs, t.step, nRuns);
+        const cand = candidate(sid, perRun, runs, recs, t.step, t.loc, nRuns);
         const [valid, partial] = sid.phase === 1 ? [validReq, partialReq] : [validExt, partialExt];
         if (cand.kind === "valid") {
             valid.push({
@@ -581,6 +652,7 @@ function classifyTarget(
                 ...(cand.select ? { select: cand.select } : {}),
             });
         } else if (cand.kind === "partial") partial.push(cand.why);
+        else if (cand.kind === "weak") weakSources.push(describe(sid));
     }
 
     const withType = (vc: ValueClass): ValueClass => (jsonType ? { ...vc, json_type: jsonType } : vc);
@@ -600,67 +672,94 @@ function classifyTarget(
     };
     const unclassified = (why: string) => ({ vc: { ...base("unclassified"), reason: `partial evidence: ${why}` } });
 
+    const warn = (kind: string, detail: string) => warnings.push({ step: t.step, location: t.loc, kind, detail });
     if (varies(t.values)) {
-        // Server-issued values (cookie jar, responses) first, then user inputs, then values reused
-        // from earlier requests, then nothing: client-computed.
+        // Server-issued values (cookie jar, responses) first, then user inputs (a user input echoed
+        // by the server in only some runs is still an input), then partial server evidence, then
+        // values reused from earlier requests, then nothing: client-computed.
         if (validExt[0]) return derived(validExt[0]);
-        if (partialExt[0] !== undefined) return unclassified(partialExt[0]);
         const inputs = matchInputs(t.step, vals, runs, recs);
         if (inputs.full.length === 1) {
             if (inputs.weak) {
-                warnings.push({
-                    step: t.step,
-                    location: t.loc,
-                    kind: "weak-input-match",
-                    detail: `low-entropy value matched run-wide parameter \`${inputs.full[0]}\` only; a coincidence with another parameter is possible (attribute inputs to trace events to rule it out)`,
-                });
+                warn(
+                    "weak-input-match",
+                    `low-entropy value matched run-wide parameter \`${inputs.full[0]}\` only; a coincidence with another parameter is possible (attribute inputs to trace events to rule it out)`,
+                );
             }
             return { vc: withType({ ...base("input"), input: inputs.full[0]! }) };
         }
         if (inputs.full.length > 1) {
             return { vc: { ...base("unclassified"), reason: `ambiguous: follows several run parameters (${inputs.full.join(", ")})` } };
         }
+        if (partialExt[0] !== undefined) return unclassified(partialExt[0]);
         if (inputs.partial.length > 0) {
             return unclassified(`follows run parameter \`${inputs.partial[0]}\` in some runs but not in all`);
         }
         if (validReq[0]) return derived(validReq[0]);
         if (partialReq[0] !== undefined) return unclassified(partialReq[0]);
+        // Nothing explains the value. Say what almost did (D10: no silent fallback).
+        if (weakSources.length > 0) {
+            warn(
+                "weak-source-ignored",
+                `equals ${weakSources[0]} in every run but is too low-entropy to count as a source; it is classed client-computed (name it as a run parameter if it is an input)`,
+            );
+        }
+        if (inputs.weakPartial.length > 0) {
+            warn("weak-input-partial", `equals run parameter \`${inputs.weakPartial[0]}\` in some runs only (low-entropy value); classed client-computed`);
+        }
         return { vc: withType({ ...base("client-computed"), shape: shape(vals[0]!) }) };
     }
 
     // Constant in every run.
     const value = vals[0]!;
     const vc = withType(base("constant"));
-    if (sensitiveLocation(t.loc) || looksLikeCard(value) || urlHasSecret(value)) vc.redacted = true;
+    const parent = t.loc.includes("|") ? t.loc.slice(0, t.loc.indexOf("|")) : null;
+    const parentValue = parent ? runs[0]!.reqMap[t.step]!.get(parent) : undefined;
+    // Redacted by location name or by what the value looks like; a component of a redacted URL is redacted too.
+    if (redactConstant(t.loc, value) || (parentValue !== undefined && redactConstant(parent!, parentValue))) vc.redacted = true;
     else vc.value = value;
     const src = validExt[0] ?? validReq[0];
     if (isEvidence(value) && src) {
-        warnings.push({
-            step: t.step,
-            location: t.loc,
-            kind: "constant-matches-source",
-            detail: `identical in every run and equal to ${describe(src.sid)}; if the server issues this value, record runs on fresh sessions so it varies`,
-        });
+        warn("constant-matches-source", `identical in every run and equal to ${describe(src.sid)}; if the server issues this value, record runs on fresh sessions so it varies`);
     }
-    // A declared user input that did not vary is baked in as a constant: say so.
-    const declared = [...new Set(recs.flatMap((rec, r) => [...(visible(rec, runs[r]!, t.step).event ?? [])].filter(([, pv]) => pv === value).map(([k]) => k)))];
-    const everyRun = declared.filter((name) => recs.every((rec, r) => visible(rec, runs[r]!, t.step).event?.get(name) === value));
-    if (everyRun.length > 0) {
-        warnings.push({
-            step: t.step,
-            location: t.loc,
-            kind: "input-did-not-vary",
-            detail: `equals user input \`${everyRun[0]}\` in every run, so it is embedded as a constant; record runs with different values to make it an input`,
-        });
+    // A declared user input (event-scoped or run-wide) that did not vary is baked in as a constant: say so.
+    const declared = new Set<string>();
+    recs.forEach((rec, r) => {
+        const v = visible(rec, runs[r]!, t.step);
+        for (const [k, pv] of v.event ?? []) if (pv === value) declared.add(k);
+        for (const [k, pv] of v.run) if (pv === value) declared.add(k);
+    });
+    const everyRun = [...declared]
+        .filter((name) =>
+            recs.every((rec, r) => {
+                const v = visible(rec, runs[r]!, t.step);
+                return (v.event?.get(name) ?? v.run.get(name)) === value;
+            }),
+        )
+        .sort(cmp);
+    if (everyRun.length > 0 && !vc.redacted) {
+        warn("input-did-not-vary", `equals user input \`${everyRun[0]}\` in every run, so it is embedded as a constant; record runs with different values to make it an input`);
     }
     return { vc };
 }
 
-function candidate(sid: Sid, perRun: (Hit | undefined)[], runs: RunData[], recs: Recording[], targetStep: number, nRuns: number): Cand {
+/** A literal that may precede a credential in a sensitive header (`Bearer `, `Basic `, `Token `). */
+const AUTH_SCHEME = /^[A-Za-z]{2,12} $/;
+
+function candidate(
+    sid: Sid,
+    perRun: (Hit | undefined)[],
+    runs: RunData[],
+    recs: Recording[],
+    targetStep: number,
+    targetLoc: string,
+    nRuns: number,
+): Cand {
+    // The loose gate found the match; at least one run must pass the strong gate, or the value
+    // is not evidence at all (a weak-only match neither links nor blocks).
     const found = perRun.filter((h) => h !== undefined).length;
+    if (!perRun.some((h) => h?.strong)) return found === nRuns ? { kind: "weak" } : { kind: "redundant" };
     if (found < nRuns) return { kind: "partial", why: `matches ${describe(sid)} in ${found} of ${nRuns} runs` };
-    // The loose gate found the match; at least one run must pass the strong gate.
-    if (!perRun.some((h) => h!.strong)) return { kind: "redundant" };
     const keys = intersect(perRun.map((h) => new Set(h!.rels.keys())));
     const rels = [...perRun[0]!.rels].filter(([k]) => keys.has(k)).map(([, r]) => r).sort((a, b) => Number(!relIsExact(a)) - Number(!relIsExact(b)) || relCmp(a, b));
     const rel = rels[0];
@@ -668,7 +767,8 @@ function candidate(sid: Sid, perRun: (Hit | undefined)[], runs: RunData[], recs:
         return { kind: "partial", why: `matches ${describe(sid)} with a different encoding or surrounding text in different runs` };
     }
     // Surrounding text is copied into the graph: it must not carry a secret.
-    if (secretish(rel.prefix) || secretish(rel.suffix)) {
+    const sensitiveTarget = sensitiveLocation(targetLoc);
+    if (secretish(rel.prefix) || secretish(rel.suffix) || (sensitiveTarget && ((rel.prefix && !AUTH_SCHEME.test(rel.prefix)) || rel.suffix))) {
         return { kind: "partial", why: `matches ${describe(sid)} inside text that looks like a secret; it is not copied into the graph` };
     }
     if (sid.loc.includes("[*]")) {

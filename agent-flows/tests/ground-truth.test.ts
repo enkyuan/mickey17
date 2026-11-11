@@ -71,7 +71,7 @@ function sourceMatches(fromAt: string, loc: string): boolean {
 /** Divergences that are not extraction errors; anything else that differs from the truth fails. */
 function allowedDivergence(scenario: string, loc: string, truth: any, g: FlowGraph, step: number): string | null {
     const v = valueOf(g, step, loc)!;
-    if (truth.class === "input" && v.class === "constant" && (loc.endsWith("country") || loc.endsWith("method"))) {
+    if (truth.class === "input" && v.class === "constant" && (loc === "json:$.country" || loc === "form:country" || loc === "json:$.method")) {
         return "input that did not vary between the two recorded runs";
     }
     if (truth.class === "input" && v.class === "client-computed" && truth.role === "idempotency-key" && v.shape === "uuid") {

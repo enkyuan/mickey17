@@ -108,7 +108,8 @@ export function responseSlots(e: Entry): Slot[] {
         if (ignoredHeader(n) || n === "set-cookie") continue;
         out.push(keyed("header:", n, counts), v);
     }
-    for (const [n, v] of e.respSetCookies) out.push(`setcookie:${n}`, v);
+    const cookieCounts = new Map<string, number>();
+    for (const [n, v] of e.respSetCookies) out.push(keyed("setcookie:", n, cookieCounts), v);
     if (e.respBody) bodySlots(out, e.respBody.mime, e.respBody.text, e.respBody.parts, false);
     return out.slots.sort(bySlotLoc);
 }
@@ -181,7 +182,7 @@ function decodeEntities(s: string): string {
     return s.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[A-Za-z]+);/g, (m, g: string) => {
         if (g.startsWith("#x")) return safeCp(parseInt(g.slice(2), 16), m);
         if (g.startsWith("#")) return safeCp(parseInt(g.slice(1), 10), m);
-        return ENTITIES[g] ?? m;
+        return Object.hasOwn(ENTITIES, g) ? ENTITIES[g]! : m;
     });
 }
 
@@ -193,22 +194,82 @@ const safeCp = (n: number, fallback: string): string => {
     }
 };
 
-/** Attributes of every `<tag ...>` outside comments, scripts and styles. A tolerant scanner, not a full HTML parser. */
+/**
+ * Attributes of every `<tag ...>` outside comments, scripts and styles. A tolerant single-pass
+ * scanner (linear time, whatever the input), not a full HTML parser.
+ */
 function scanTags(html: string, tag: string): Map<string, string>[] {
-    const clean = html
-        .replace(/<!--[\s\S]*?-->/g, " ")
-        .replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ")
-        .replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ");
+    const lower = html.toLowerCase();
     const out: Map<string, string>[] = [];
-    const tagRe = new RegExp(`<${tag}(?=[\\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*)>`, "gi");
-    for (const m of clean.matchAll(tagRe)) {
-        const attrs = new Map<string, string>();
-        const attrRe = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-        for (const a of (m[1] ?? "").matchAll(attrRe)) {
-            const name = a[1]!.toLowerCase();
-            if (!attrs.has(name)) attrs.set(name, decodeEntities(a[2] ?? a[3] ?? a[4] ?? ""));
+    const open = `<${tag}`;
+    let i = 0;
+    while (i < html.length) {
+        const lt = html.indexOf("<", i);
+        if (lt < 0) break;
+        if (html.startsWith("<!--", lt)) {
+            const end = html.indexOf("-->", lt + 4);
+            if (end < 0) break;
+            i = end + 3;
+            continue;
         }
-        out.push(attrs);
+        let skipped = false;
+        for (const raw of ["script", "style"]) {
+            const next = lower[lt + raw.length + 1] ?? "";
+            if (lower.startsWith(`<${raw}`, lt) && /[\s/>]/.test(next)) {
+                const end = lower.indexOf(`</${raw}`, lt + raw.length + 1);
+                if (end < 0) return out;
+                i = end + raw.length + 2;
+                skipped = true;
+                break;
+            }
+        }
+        if (skipped) continue;
+        if (lower.startsWith(open, lt) && /[\s/>]/.test(lower[lt + open.length] ?? "")) {
+            // Parse attributes up to the closing `>`, honouring quotes.
+            const attrs = new Map<string, string>();
+            let p = lt + open.length;
+            let closed = false;
+            while (p < html.length) {
+                const c = html[p]!;
+                if (c === ">") {
+                    closed = true;
+                    p++;
+                    break;
+                }
+                if (/[\s/]/.test(c)) {
+                    p++;
+                    continue;
+                }
+                let q = p;
+                while (q < html.length && !/[\s/>=]/.test(html[q]!)) q++;
+                const name = html.slice(p, q).toLowerCase();
+                p = q;
+                while (p < html.length && /\s/.test(html[p]!)) p++;
+                let value = "";
+                if (html[p] === "=") {
+                    p++;
+                    while (p < html.length && /\s/.test(html[p]!)) p++;
+                    const quote = html[p];
+                    if (quote === '"' || quote === "'") {
+                        const end = html.indexOf(quote, p + 1);
+                        if (end < 0) return out;
+                        value = html.slice(p + 1, end);
+                        p = end + 1;
+                    } else {
+                        q = p;
+                        while (q < html.length && !/[\s>]/.test(html[q]!)) q++;
+                        value = html.slice(p, q);
+                        p = q;
+                    }
+                }
+                if (name && !attrs.has(name)) attrs.set(name, decodeEntities(value));
+            }
+            if (!closed) break;
+            out.push(attrs);
+            i = p;
+            continue;
+        }
+        i = lt + 1;
     }
     return out;
 }

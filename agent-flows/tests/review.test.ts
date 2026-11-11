@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { infer } from "../src/classify.ts";
 import { toJson, valueOf } from "../src/graph.ts";
 import { parseRecording } from "../src/har.ts";
-import { graphOf, harOf, Rng, type Req, type RunDoc, traceOf } from "./support.ts";
+import { graphOf, harOf, Rng, type Req, type RunDoc, traceOf, twoRuns as twoRunsLocal } from "./support.ts";
 
 const JSON_CT = ["content-type", "application/json"] as [string, string];
 
@@ -117,7 +117,7 @@ describe("hostile input (M1)", () => {
 });
 
 describe("determinism under ties (M2)", () => {
-    test("parallel identical requests, no ids: swapping them changes nothing", () => {
+    test("parallel identical requests with no ids cannot be ordered: the flow blocks, identically for any file order", () => {
         const mk = (run: string, a: string, b: string, swap: boolean) => {
             const parallel = [
                 req(0, "GET", `${B}/api/status`, { tMs: 1000, respBody: jsonBody({ v: a }) }),
@@ -131,6 +131,33 @@ describe("determinism under ties (M2)", () => {
         };
         const base = (swapA: boolean) => toJson(graphOf([mk("a", "valueA_8f2Kq9ZxLm41", "valueB_8f2Kq9ZxLm42", swapA), mk("b", "valueA_Zq81mXk9L2f8", "valueB_Zq81mXk9L2f9", false)]));
         expect(base(true)).toBe(base(false));
+        const g = JSON.parse(base(true));
+        expect(g.status).toBe("blocked");
+        expect(g.blockers[0].reason).toContain("identical start times");
+    });
+
+    test("with explicit request ids the same ties are ordered by id and stay resolved", () => {
+        const mk = (run: string, swap: boolean) => {
+            const parallel = [
+                req(0, "GET", `${B}/api/status`, { id: "p1", tMs: 1000, respBody: jsonBody({ v: `valueA_${run}8f2Kq9ZxLm41` }) }),
+                req(1, "GET", `${B}/api/status`, { id: "p2", tMs: 1000, respBody: jsonBody({ v: `valueB_${run}8f2Kq9ZxLm42` }) }),
+            ];
+            const d = doc(run, [...(swap ? parallel.reverse() : parallel), req(2, "POST", `${B}/x`, { tMs: 1500 })]);
+            d.trace.events = [];
+            return d;
+        };
+        const a = toJson(graphOf([mk("a", true), mk("b", false)]));
+        expect(toJson(graphOf([mk("a", false), mk("b", true)]))).toBe(a);
+        expect(JSON.parse(a).status).toBe("resolved");
+    });
+
+    test("key order inside the HAR and trace never changes the output", () => {
+        const docs = twoRunsLocal();
+        const base = toJson(graphOf(docs));
+        const reverseKeys = (v: any): any =>
+            Array.isArray(v) ? v.map(reverseKeys) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).reverse().map(([k, x]) => [k, reverseKeys(x)])) : v;
+        const flipped = docs.map((d) => ({ ...d, har: reverseKeys(d.har), trace: reverseKeys(d.trace) }));
+        expect(toJson(graphOf(flipped))).toBe(base);
     });
 
     test("events without ids are named by content, not position", () => {
@@ -190,7 +217,7 @@ describe("array selection (M3)", () => {
 
     test("an array of scalars has no sibling fields: top-level fields are not siblings", () => {
         const mkIds = (run: string, pick: number) => {
-            const ids = [`id_${run}AAAA1111`, `id_${run}BBBB2222`];
+            const ids = [`id_${run}Zq81mXk9L2f8`, `id_${run}Wp47nRj3T6c5`];
             return doc(
                 run,
                 [
@@ -299,5 +326,194 @@ describe("cost", () => {
         expect(g.steps).toHaveLength(40);
         expect(performance.now() - started).toBeLessThan(10_000);
         void JSON_CT;
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 2 (review of the TypeScript port)
+
+describe("alignment by operation (round 2, H-a)", () => {
+    test("two GraphQL operations that swap order block", () => {
+        const op = (name: string, id: string) => jsonBody({ operationName: name, query: `query ${name} { x }`, variables: { id } });
+        const a = doc("a", [req(0, "POST", `${B}/graphql`, { body: op("GetCart", "c_8f2Kq9ZxLm41") }), req(1, "POST", `${B}/graphql`, { body: op("GetUser", "u_Zq81mXk9L2f8") })]);
+        const b = doc("b", [req(0, "POST", `${B}/graphql`, { body: op("GetUser", "u_Wp47nRj3T6c5") }), req(1, "POST", `${B}/graphql`, { body: op("GetCart", "c_Lm41Zx9qK2f8") })]);
+        const g = graphOf([a, b]);
+        expect(g.status).toBe("blocked");
+        expect(g.blockers[0]!.reason).toContain("operation");
+    });
+    test("an operation that follows a run parameter, and slug path segments, still align", () => {
+        const mk = (run: string, slug: string) => doc(run, [req(0, "POST", `${B}/rpc`, { body: jsonBody({ method: slug }) }), req(1, "GET", `${B}/shop/${slug}-collection`)], [["pick", slug]]);
+        expect(graphOf([mk("a", "red-shoes"), mk("b", "blue-hats")]).status).toBe("resolved");
+    });
+});
+
+describe("constants are redacted by what they look like (round 2, H-b..H-d)", () => {
+    const secrets = [
+        "AIza\x53yA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6", "sk\x5flive_QWERTYUIOPASDFGHJKLZXCV", "RESETtok_1234567890abcdef", "alice.smith@example.com",
+        "123-45-6789", "4242424242424242|12/30|123", "access_token=ya\x329.A0ARrdaM-abcdef", "AbC123xyz789QwE", "737399",
+    ];
+    test("query, header, body, relative URLs, fragments, emails, SSNs and payment strings never reach the output", () => {
+        const mk = (run: string) =>
+            doc(run, [
+                req(0, "POST", `${B}/reset/${secrets[2]}/confirm?key=${secrets[0]}`, {
+                    headers: [["x-hmac", secrets[1]!], ["referer", `${B}/cb?code=${secrets[7]}`]],
+                    body: jsonBody({ next: `/reset?token=${secrets[2]}`, returnUrl: `${B}/done#${secrets[6]}`, cvv2: "737", email: secrets[3], social: secrets[4], payment_info: secrets[5], shippingNote: "leave at door" }),
+                }),
+            ]);
+        const g = graphOf([mk("a"), mk("b")]);
+        const text = toJson(g);
+        for (const s of secrets.slice(0, 8)) expect(text, s).not.toContain(s);
+        expect(text).not.toContain("737");
+        // Ordinary text is kept.
+        expect(valueOf(g, 0, "json:$.shippingNote")!.value).toBe("leave at door");
+        // Components of a redacted URL are redacted with it.
+        expect(valueOf(g, 0, "header:referer|query:code")!.redacted).toBe(true);
+        expect(g.steps[0]!.path_template).toBe("/reset/{url.path[1]}/confirm");
+    });
+
+    test("edge prefixes: digitless keys, spaced card numbers and anything before a sensitive target's credential", () => {
+        const toks = ["tok_8f2Kq9ZxLm41AbCd", "tok_Zq81mXk9L2f8QwEr"];
+        for (const prefix of ["apikey=sk\x5flive_QWERTYUIOPASDFGHJKLZXCV;pan=4242 4242 4242 4242;session=", "user=alice; "]) {
+            const mk = (run: string, t: string) =>
+                doc(run, [
+                    req(0, "GET", `${B}/`, { respHeaders: [["set-cookie", `sid=${t}; Path=/`]] }),
+                    req(1, "POST", `${B}/x`, { headers: [["x-auth", `${prefix}${t}`]] }),
+                ]);
+            const g = graphOf([mk("a", toks[0]!), mk("b", toks[1]!)]);
+            const text = toJson(g);
+            expect(text).not.toContain("QWERTYUIOPASDFGHJKLZXCV");
+            expect(text).not.toContain("4242 4242");
+            expect(valueOf(g, 1, "header:x-auth")!.class).not.toBe("derived");
+        }
+    });
+
+    test("locators: path-like neighbours are cut or refused", () => {
+        const mk = (run: string, t: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/`, { respBody: ["text/html", `<script>var t="${t}";var k="/Xy7q/Zr9w/Lm3p/Ab5c";</script>`] }),
+                req(1, "POST", `${B}/x`, { headers: [["x-page", t]] }),
+            ]);
+        const g = graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]);
+        expect(toJson(g)).not.toContain("Xy7q");
+    });
+
+    test("page-derived keys that are tokens are not echoed in locations", () => {
+        const tok = (run: string) => `sess_${run === "a" ? "8f2Kq9ZxLm41AbCd" : "Zq81mXk9L2f8QwEr"}`;
+        const mk = (run: string) => doc(run, [req(0, "POST", `${B}/x?${tok(run)}=1`, { body: jsonBody({ sessions: { [tok(run)]: true } }) })]);
+        const g = graphOf([mk("a"), mk("b")]);
+        const text = toJson(g);
+        expect(text).not.toContain("8f2Kq9ZxLm41AbCd");
+        expect(text).not.toContain("Zq81mXk9L2f8QwEr");
+        expect(g.status).toBe("blocked");
+    });
+
+    test("a return URL with an account id is refused as a source, never emitted", () => {
+        const mk = (run: string, cart: string) =>
+            doc(run, [
+                req(0, "POST", `${B}/cart`, { respBody: jsonBody({ cartId: cart }) }),
+                req(1, "POST", `${B}/x`, { body: jsonBody({ return_url: `${B}/t/acct_1Hh1ZK2eZvKYlo2C/done?cart=${cart}` }) }),
+            ]);
+        const g = graphOf([mk("a", "cart_8f2Kq9ZxLm41"), mk("b", "cart_Zq81mXk9L2f8")]);
+        expect(toJson(g)).not.toContain("acct_1Hh1ZK2eZvKYlo2C");
+        expect(valueOf(g, 1, "json:$.return_url")!.class).toBe("unclassified");
+        expect(valueOf(g, 1, "json:$.return_url|path[1]")!.redacted).toBe(true);
+    });
+});
+
+describe("matching (round 2, M-a..M-e)", () => {
+    test("a token that needs URL-encoding in one run and not in the other is still derived", () => {
+        const mk = (run: string, raw: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/`, { respHeaders: [["set-cookie", `XSRF-TOKEN=${encodeURIComponent(raw)}; Path=/`]] }),
+                req(1, "POST", `${B}/x`, { headers: [["x-xsrf", raw]] }),
+            ]);
+        const g = graphOf([mk("a", "ab/cd+ef0123456789Zq81mXk9"), mk("b", "abcdef0123456789Zq81mXk9L2f8")]);
+        expect(valueOf(g, 1, "header:x-xsrf")!.class).toBe("derived");
+        expect(g.status).toBe("resolved");
+    });
+
+    test("weak-only matches neither link nor block, and say so", () => {
+        const mk = (run: string, sep: string) =>
+            doc(run, [req(0, "GET", `${B}/a`, { respBody: jsonBody({ sep: "--------", defaultCity: "San Francisco" }) }), req(1, "POST", `${B}/b`, { body: jsonBody({ rule: sep, city: run === "a" ? "San Francisco" : "Oakland Heights" }) })], [["rule", sep], ["city", run === "a" ? "San Francisco" : "Oakland Heights"]]);
+        const g = graphOf([mk("a", "--------"), mk("b", "========")]);
+        expect(g.status).toBe("resolved");
+        expect(valueOf(g, 1, "json:$.rule")!.input).toBe("rule");
+        // A user input that the server echoed in only one run is still an input.
+        expect(valueOf(g, 1, "json:$.city")!.input).toBe("city");
+    });
+
+    test("a consistent low-entropy match that is ignored is reported", () => {
+        const mk = (run: string, id: string) => doc(run, [req(0, "GET", `${B}/a`, { respBody: jsonBody({ id }) }), req(1, "POST", `${B}/b`, { body: jsonBody({ ref: id }) })]);
+        const g = graphOf([mk("a", "a1a1b2b2"), mk("b", "c3c3d4d4")]);
+        expect(valueOf(g, 1, "json:$.ref")!.class).toBe("client-computed");
+        expect(g.warnings.some((w) => w.kind === "weak-source-ignored" && w.location === "json:$.ref")).toBe(true);
+    });
+
+    test("choosing an array element by its own value is an input, not a block", () => {
+        const mk = (run: string, name: string) =>
+            doc(run, [req(0, "GET", `${B}/rates`, { respBody: jsonBody({ rates: [{ code: "A", name: "Standard Delivery" }, { code: "B", name: "Express Delivery" }] }) }), req(1, "POST", `${B}/rate`, { body: jsonBody({ method: name }) })], [["shipping", name]]);
+        const g = graphOf([mk("a", "Standard Delivery"), mk("b", "Express Delivery")]);
+        expect(valueOf(g, 1, "json:$.method")!.class).toBe("input");
+        expect(g.status).toBe("resolved");
+    });
+
+    test("a low-entropy partial input match is reported", () => {
+        const mk = (run: string, zip: string, p: string) => doc(run, [req(0, "POST", `${B}/a`, { body: jsonBody({ zip }) })], [["zip", p]]);
+        const g = graphOf([mk("a", "94110", "94110"), mk("b", "10001", "10002")]);
+        expect(valueOf(g, 0, "json:$.zip")!.class).toBe("client-computed");
+        expect(g.warnings.some((w) => w.kind === "weak-input-partial")).toBe(true);
+    });
+});
+
+describe("robustness (round 2, M-f, low)", () => {
+    test("pathological HTML is scanned in linear time", () => {
+        const html = (unit: string) => `<html>${unit.repeat(20_000)}<meta name="csrf-token" content="tok_8f2Kq9ZxLm41AbCd"></html>`;
+        const started = performance.now();
+        for (const unit of ["<!--a", "<script>", "<input ", "<meta "]) {
+            const mk = (run: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", html(unit)] }), req(1, "POST", `${B}/x`)]);
+            graphOf([mk("a"), mk("b")]);
+        }
+        expect(performance.now() - started).toBeLessThan(8_000);
+    });
+
+    test("many variants that share a prefix do not make search quadratic", () => {
+        const mk = (run: string, seed: number) => {
+            const g = new Rng(seed);
+            const leaves = Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`k${i}`, `eyJhbGci${g.hex(24)}`]));
+            return doc(run, [req(0, "GET", `${B}/a`, { respBody: jsonBody(leaves) }), req(1, "POST", `${B}/b`, { headers: Array.from({ length: 5 }, (_, i) => [`x-h${i}`, `Bearer ${"x".repeat(2000)}${g.hex(16)}`] as [string, string]) })]);
+        };
+        const started = performance.now();
+        graphOf([mk("a", 1), mk("b", 2)]);
+        expect(performance.now() - started).toBeLessThan(8_000);
+    });
+
+    test("duplicate jar cookies, repeated Set-Cookie names and prototype-named entities", () => {
+        const mk = (run: string, a: string, b: string) => {
+            const d = doc(run, [req(0, "GET", `${B}/`, { respHeaders: [["set-cookie", `c=${a}`], ["set-cookie", `c=${b}`]], respBody: ["text/html", `<meta name="m" content="&constructor;&toString;x">`] }), req(1, "POST", `${B}/x`, { headers: [["x-a", a], ["x-b", b]] })]);
+            d.cookies = [{ name: "j", value: a }, { name: "j", value: b }];
+            return d;
+        };
+        const g = graphOf([mk("a", "k8Q2m9ZxL41aBcD7", "p3W7nRj6T5cEfG2h"), mk("b", "Zq81mXk9L2f8QwEr", "Hy47Vt3Bn6Ds0KuJ")]);
+        expect(g.edges.map((e) => e.from.location).sort()).toEqual(["setcookie:c", "setcookie:c#1"]);
+        expect(JSON.stringify(g)).not.toContain("native code");
+    });
+
+    test("an invalid URL entry is reported, not silently dropped", () => {
+        const d = doc("a", [req(0, "GET", `${B}/a`)]);
+        d.har.log.entries.push({ ...structuredClone(d.har.log.entries[0]), _requestId: "bad", request: { method: "GET", url: "not a url", headers: [] } });
+        const g = graphOf([d, doc("b", [req(0, "GET", `${B}/a`)])]);
+        expect(g.warnings.some((w) => w.kind === "entry-skipped")).toBe(true);
+    });
+
+    test("input-did-not-vary names the alphabetically first input, and covers run-wide parameters", () => {
+        const mk = (run: string, order: string[]) => {
+            const reqs = [req(0, "POST", `${B}/a`, { body: jsonBody({ zip: "94110", other: run }) })];
+            const t = traceOf(run, [], reqs);
+            t.params = Object.fromEntries(order.map((k) => [k, "94110"]));
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        const w = (order: string[]) => graphOf([mk("a", order), mk("b", order)]).warnings.filter((x) => x.kind === "input-did-not-vary");
+        expect(w(["billingZip", "shippingZip"])).toEqual(w(["shippingZip", "billingZip"]));
+        expect(w(["shippingZip", "billingZip"])[0]!.detail).toContain("`billingZip`");
     });
 });

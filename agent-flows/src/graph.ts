@@ -1,13 +1,14 @@
 // Canonical serialisation of the flow graph: fixed key order, every collection already sorted
 // by the builder. Identical graphs serialise to identical bytes.
 
+import { safeLocation } from "./evidence.ts";
 import type { Blocker, Edge, FlowGraph, InputParam, SourceRef, Step, ValueClass, Warning } from "./types.ts";
 
 function source(s: SourceRef): SourceRef {
     return {
         where: s.where,
         step: s.step,
-        location: s.location,
+        location: safeLocation(s.location),
         ...(s.locator ? { locator: { before: s.locator.before, after: s.locator.after, origin: s.locator.origin } } : {}),
         ...(s.select ? { select: { field: s.select.field, param: s.select.param } } : {}),
     };
@@ -15,7 +16,7 @@ function source(s: SourceRef): SourceRef {
 
 function value(v: ValueClass): ValueClass {
     return {
-        location: v.location,
+        location: safeLocation(v.location),
         class: v.class,
         ...(v.value !== undefined ? { value: v.value } : {}),
         ...(v.redacted ? { redacted: true } : {}),
@@ -31,7 +32,7 @@ function value(v: ValueClass): ValueClass {
 function edge(e: Edge): Edge {
     return {
         from: source(e.from),
-        to: { step: e.to.step, location: e.to.location },
+        to: { step: e.to.step, location: safeLocation(e.to.location) },
         via: e.via,
         ...(e.prefix ? { prefix: e.prefix } : {}),
         ...(e.suffix ? { suffix: e.suffix } : {}),
@@ -58,11 +59,11 @@ export function canonical(g: FlowGraph): FlowGraph {
         schema: g.schema,
         status: g.status,
         runs: [...g.runs],
-        inputs: g.inputs.map((i: InputParam) => ({ name: i.name, uses: i.uses.map((u) => ({ step: u.step, location: u.location })) })),
+        inputs: g.inputs.map((i: InputParam) => ({ name: i.name, uses: i.uses.map((u) => ({ step: u.step, location: safeLocation(u.location) })) })),
         steps: g.steps.map(step),
         edges: g.edges.map(edge),
-        blockers: g.blockers.map((b: Blocker) => ({ step: b.step, location: b.location, reason: b.reason })),
-        warnings: g.warnings.map((w: Warning) => ({ step: w.step, location: w.location, kind: w.kind, detail: w.detail })),
+        blockers: g.blockers.map((b: Blocker) => ({ step: b.step, location: b.location === null ? null : safeLocation(b.location), reason: b.reason })),
+        warnings: g.warnings.map((w: Warning) => ({ step: w.step, location: w.location === null ? null : safeLocation(w.location), kind: w.kind, detail: w.detail })),
     };
 }
 

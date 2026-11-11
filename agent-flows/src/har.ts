@@ -19,6 +19,8 @@ export interface Body {
 export interface Entry {
     /** `_requestId` when present, else `c-<hash of method, url and body>`. */
     id: string;
+    /** True when `id` is a `_requestId` (stable across runs), false when derived from content. */
+    explicitId: boolean;
     /** Hash of the whole entry (request and response): the last tie-break, so equal ids and start times still sort the same. */
     key: string;
     startedUs: number;
@@ -51,6 +53,8 @@ export interface Recording {
     entries: Entry[];
     events: TraceEvent[];
     initialCookies: { name: string; value: string }[];
+    /** Entries that could not be used (not an http(s) URL): reported, never silently dropped. */
+    skipped: string[];
 }
 
 export function endUs(e: Entry): number {
@@ -71,13 +75,14 @@ export function parseRecording(har: string, trace: string, cookies?: string | nu
     const id = runId(t);
     const params = new Map<string, string>();
     for (const key of ["params", "inputs"]) flatten("", t.get(key), params);
-    const entries = parseEntries(harV);
+    const skipped: string[] = [];
+    const entries = parseEntries(harV, skipped);
     entries.sort((a, b) => a.startedUs - b.startedUs || cmp(a.id, b.id) || cmp(a.key, b.key));
     const events = parseEvents(t);
     events.sort((a, b) => a.tUs - b.tUs || cmp(a.id, b.id));
     const jar = cookies ? parseCookieJar(cookies) : [];
     jar.sort((a, b) => cmp(a.name, b.name) || cmp(a.value, b.value));
-    return { id, params, entries, events, initialCookies: jar };
+    return { id, params, entries, events, initialCookies: jar, skipped };
 }
 
 function runId(t: Map<string, JVal>): string {
@@ -123,7 +128,7 @@ function pairs(v: JVal | undefined): [string, string][] {
 
 const lower = (p: [string, string][]): [string, string][] => p.map(([n, v]) => [n.toLowerCase(), v]);
 
-function parseEntries(har: JVal): Entry[] {
+function parseEntries(har: JVal, skipped: string[]): Entry[] {
     const log = asObject(asObject(har)?.get("log"));
     const list = asArray(log?.get("entries"));
     if (!list) throw new Error("HAR has no log.entries array");
@@ -136,8 +141,10 @@ function parseEntries(har: JVal): Entry[] {
         try {
             url = new URL(asString(req.get("url")) ?? "");
         } catch {
+            skipped.push(`entry ${i}: request.url is not a valid URL`);
             return;
         }
+        // data:, blob: and similar entries are not network requests; they are skipped without a warning.
         if (url.protocol !== "http:" && url.protocol !== "https:") return;
         const started = parseIsoUs(asString(eo.get("startedDateTime")) ?? "");
         if (started === null) throw new Error(`entry ${i}: startedDateTime is missing or not ISO 8601`);
@@ -156,7 +163,8 @@ function parseEntries(har: JVal): Entry[] {
         const rid = asString(eo.get("_requestId"));
         out.push({
             id: rid ? rid : contentId(method, asString(req.get("url")) ?? "", reqBody),
-            key: sha256Hex(JSON.stringify(e, (_k, v) => (v instanceof Map ? [...v] : v))),
+            explicitId: Boolean(rid),
+            key: sha256Hex(stable(e)),
             startedUs: started,
             durationUs: time === null || !Number.isFinite(time) ? 0 : Math.round(Math.min(Math.max(0, time), MAX_DURATION_MS) * 1000),
             method,
@@ -171,6 +179,22 @@ function parseEntries(har: JVal): Entry[] {
         });
     });
     return out;
+}
+
+/** JSON text of a parsed value with object keys sorted, so key order in the file never matters. */
+function stable(v: JVal): string {
+    switch (v.t) {
+        case "obj":
+            return `{${[...v.entries.keys()].sort(cmp).map((k) => `${JSON.stringify(k)}:${stable(v.entries.get(k)!)}`).join(",")}}`;
+        case "arr":
+            return `[${v.items.map(stable).join(",")}]`;
+        case "str":
+            return JSON.stringify(v.v);
+        case "num":
+            return v.raw;
+        default:
+            return v.t === "bool" ? String(v.v) : "null";
+    }
 }
 
 /** A response longer than a day is a hostile or corrupt `time`; it would let any response look finished. */
@@ -304,7 +328,7 @@ function parseEvents(t: Map<string, JVal>): TraceEvent[] {
     (asArray(t.get("events")) ?? []).forEach((e) => {
         const o = asObject(e);
         // Without an id the event is named by its content, never by its position in the file.
-        const id = asString(o?.get("id")) ?? `ev-${sha256Hex(JSON.stringify(e, (_k, v) => (v instanceof Map ? [...v] : v))).slice(0, 12)}`;
+        const id = asString(o?.get("id")) ?? `ev-${sha256Hex(stable(e)).slice(0, 12)}`;
         const tv = o?.get("t");
         let tUs = 0; // recorders that do not time events: order falls back to the id
         if (tv?.t === "str") {

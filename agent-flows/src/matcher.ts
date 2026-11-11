@@ -144,6 +144,36 @@ export function apply(t: Transform, s: string): string | null {
     return out !== s && out !== "" ? out : null;
 }
 
+/**
+ * Whether `t` leaves `source` unchanged *by definition* (a percent-encoder on text with nothing to
+ * escape), so a run in which the exact value matches also matches through `t`. Without this, a
+ * cookie that needs URL-encoding in one run (`/`, `+`) and not in another would never agree on a transform.
+ */
+export function isNoop(t: Transform, source: string): boolean {
+    switch (t) {
+        case "UrlEncode":
+        case "FormEncode":
+        case "JsonEscape":
+            return encodesToSelf(t, source);
+        case "UrlDecode":
+            return !source.includes("%");
+        case "JsonUnescape":
+            return !source.includes("\\");
+        default:
+            return false;
+    }
+}
+
+function encodesToSelf(t: Transform, source: string): boolean {
+    try {
+        if (t === "UrlEncode") return encodeURIComponent(source) === source;
+        if (t === "FormEncode") return !/[^A-Za-z0-9*._-]/.test(source);
+        return JSON.stringify(source).slice(1, -1) === source;
+    } catch {
+        return false;
+    }
+}
+
 /** The distinctive value of a (transform, source) pair: the source for encoders, the decoded result for decoders. */
 export const plainOf = (t: Transform, source: string, transformed: string): string => (isDecode(t) ? transformed : source);
 
