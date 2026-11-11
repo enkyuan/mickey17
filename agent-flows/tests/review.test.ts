@@ -930,3 +930,76 @@ describe("round 6", () => {
         for (const s of ["hunter2024", "hunter2025", "hunter2026"]) expect(t2, s).not.toContain(s);
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 7
+
+describe("round 7", () => {
+    const swapped = (mk: (n: string) => Req, a: string, b: string, before: Req[]) =>
+        graphOf([doc("a", [...before, mk(a), { ...mk(b), id: "q9", tMs: 5100 }]), doc("b", [...before, mk(b), { ...mk(a), id: "q9", tMs: 5100 }])]);
+    const gql = (n: string) => req(5, "POST", `${B}/graphql`, { body: jsonBody({ operationName: n }) });
+
+    test("operation names listed in a script bundle do not make swapped requests alignable", () => {
+        for (const bundle of [
+            'function a(){return c({operationName:"GetCartV2",query:A})}function b(){return c({operationName:"GetUserV2",query:U})}',
+            'q("GetCartV2");\nq("GetUserV2");\n',
+            '[\n  "GetCartV2",\n  "GetUserV2",\n]',
+        ]) {
+            const js = req(0, "GET", `${B}/static/app.js`, { respBody: ["application/javascript", bundle] });
+            expect(swapped(gql, "GetCartV2", "GetUserV2", [js]).status).toBe("blocked");
+        }
+    });
+
+    test("an operation field carrying a server-issued URL or a digitless nonce still aligns", () => {
+        const mk = (run: string, id: string) => {
+            const next = `/cart/update/${id}`;
+            return doc(run, [req(0, "GET", `${B}/c`, { respBody: jsonBody({ next }) }), req(1, "POST", `${B}/x`, { body: ["application/x-www-form-urlencoded", `action=${encodeURIComponent(next)}&qty=1`] })]);
+        };
+        expect(graphOf([mk("a", "c_8f2Kq9ZxLm41"), mk("b", "c_Zq81mXk9L2f8")]).status).toBe("resolved");
+        const nonce = (run: string) => (run === "a" ? "abcdefghijklmnopqrstuvwxy" : "zyxwvutsrqponmlkjihgfedcb");
+        const mk2 = (run: string) => {
+            const d = doc(run, [req(0, "POST", `${B}/x`, { body: jsonBody({ action: nonce(run) }) })]);
+            d.cookies = [{ name: "n", value: nonce(run) }];
+            return d;
+        };
+        expect(graphOf([mk2("a"), mk2("b")]).status).toBe("resolved");
+    });
+
+    test("cards glued to other digits, straddling long runs, with odd separators or full-width digits are found", () => {
+        const note = (n: string) => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ note: n }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ note: n }) })])]);
+        for (const n of [
+            "14242 4242 4242 4242", "94111 1111 1111 1111", "15555 5555 5555 4444", "55512344242 4242 4242 4242",
+            `${"1".repeat(52)} 4111 1111 1111 1111`, "4242 4242 4242 4242", "4242,4242,4242,4242", "４２４２ ４２４２ ４２４２ ４２４２",
+        ]) {
+            const text = toJson(note(n));
+            expect(text, n).not.toMatch(/4242 4242|4242,4242|4242 4242|1111 1111 1111 1111|４２４２|55512344242/);
+            expect(text, n).not.toContain("4444");
+        }
+    });
+
+    test("automation calls with spaces, snake_case names and typed text are scrubbed; a card straddling the old cut is withheld", () => {
+        const text = (t: string) => {
+            const reqs = [req(0, "GET", `${B}/a`)];
+            const mk = (run: string) => {
+                const tr = traceOf(run, [], reqs);
+                tr.events[0].target = t;
+                return { har: harOf(reqs), trace: tr, cookies: [] } as RunDoc;
+            };
+            return toJson(graphOf([mk("a"), mk("b")]));
+        };
+        for (const t of [`fill ("hunter2")`, `send_keys("hunter2")`, `t.typeText('#pw','hunter2')`, `setInputFiles('/Users/ada/passport.pdf')`]) {
+            expect(text(t), t).not.toMatch(/hunter2|passport/);
+        }
+        expect(text(`#x${"x".repeat(1008)} 4111 1111 1111 1111`)).not.toContain("4111 1111 111");
+        expect(text("li:nth-child(2) > a")).toContain("nth-child(2)");
+    });
+
+    test("blob secrets in descriptive headers and dotted secrets in URL paths are redacted; epoch keys are not", () => {
+        const mk = (run: string) =>
+            doc(run, [req(0, "POST", `${B}/x`, { headers: [["cache-control", "max-age=0, ext=Ab3/Xy9+Qw7/Lm2+Zt5="], ["accept", "application/json; key=a1B2.c3D4+e5F6g7"]], body: jsonBody({ cdn: "//cdn.x.com/a1B2.c3D4+e5F6g", series: { "1699999999000": 1, "1699999999001": 2, "1699999999002": 3 } }) })]);
+        const g = graphOf([mk("a"), mk("b")]);
+        const text = toJson(g);
+        for (const s of ["Ab3/Xy9", "a1B2.c3D4"]) expect(text, s).not.toContain(s);
+        expect(g.steps[0]!.values.filter((v) => v.location.startsWith("json:$.series")).length).toBe(3);
+    });
+});

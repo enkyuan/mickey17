@@ -1,6 +1,6 @@
 // Alignment, cross-request matching and value classing.
 
-import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
+import { hasTokenPiece, isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
@@ -288,16 +288,18 @@ function operationOf(loc: string, value: string): string | null {
 }
 
 /**
- * Whether this value was issued to the client before the step: it is token-grade (so the classifier
- * can explain it from its source) and an earlier response, the starting cookie jar or an earlier free-text
- * body carries exactly it. Short words (`update`, `GetCart`) are never "issued": a response that merely
- * lists them does not make two swapped requests alignable.
+ * Whether this value was issued to the client before the step: it contains a token-grade piece (an id or
+ * nonce, so the classifier can explain it from its source, even inside a URL) and an earlier response, the
+ * starting cookie jar or an earlier HTML page carries exactly it. Names (`update`, `GetCartV2`) are never
+ * "issued": a response or a script bundle that merely lists them does not make swapped requests alignable.
  */
 function issuedBefore(run: RunData, step: number, value: string): boolean {
-    if (!isWeakEvidence(value) || !/\d/.test(value)) return false;
+    if (!hasTokenPiece(value)) return false;
     if (run.jar.some((s) => s.value === value)) return true;
     for (let j = 0; j < step; j++) {
-        if (run.resp[j]!.some((s) => s.value === value) || run.free[j]?.has(value)) return true;
+        if (run.resp[j]!.some((s) => s.value === value)) return true;
+        const mime = run.entries[j]!.respBody?.mime.split(";")[0]?.trim().toLowerCase();
+        if ((mime === "text/html" || mime === "application/xhtml+xml") && run.free[j]?.has(value)) return true;
     }
     return false;
 }

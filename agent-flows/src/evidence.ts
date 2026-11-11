@@ -155,30 +155,38 @@ export function sensitiveLocation(loc: string): boolean {
 }
 
 /**
- * A card number anywhere in the text: any 13 to 19 digit window of a digit run (single spaces or
- * dashes between digits allowed) that passes the Luhn check, so an expiry date glued to the number
- * does not hide it.
+ * A card number anywhere in the text: a 13 to 19 digit window of a digit run (digits with single
+ * separators: space, `.`, `_`, `/`, `-`, `,`, NBSP; full-width digits are normalised) that passes the Luhn
+ * check. Windows are tried where a group of digits starts or ends, so digits glued in front of or behind
+ * the number (an expiry date) do not hide it. Work is bounded and the bound fails closed.
  */
 function cardIn(text: string): boolean {
+    const t = text.length > 65_536 ? text : text.normalize("NFKC");
     let runs = 0;
-    for (const m of text.matchAll(/\d(?:[ ._/-]{0,2}\d){12,63}/g)) {
-        // Fail closed: a value with this many long digit runs is withheld rather than scanned to the end.
+    let work = 0;
+    for (const m of t.matchAll(/\d(?:[ \u00a0._/,-]{0,2}\d)*/g)) {
+        if (m[0].length < 13) continue;
         if (++runs > 4096) return true;
         const run = m[0];
-        // Digits, and where each group of digits starts (the run start or just after a separator): a card
-        // begins at a group start, so windows are tried there only.
         const digits: number[] = [];
         const starts: number[] = [];
-        for (let i = 0; i < run.length && digits.length < 96; i++) {
+        const ends: number[] = [];
+        for (let i = 0; i < run.length && digits.length < 4096; i++) {
             const c = run.charCodeAt(i);
-            if (c >= 48 && c <= 57) {
-                if (i === 0 || run.charCodeAt(i - 1) < 48 || run.charCodeAt(i - 1) > 57) starts.push(digits.length);
-                digits.push(c - 48);
-            }
+            if (c < 48 || c > 57) continue;
+            if (i === 0 || run.charCodeAt(i - 1) < 48 || run.charCodeAt(i - 1) > 57) starts.push(digits.length);
+            digits.push(c - 48);
+            const next = run.charCodeAt(i + 1);
+            if (i + 1 >= run.length || next < 48 || next > 57) ends.push(digits.length);
         }
-        for (const s0 of starts) {
-            for (let l = 13; l <= 19 && s0 + l <= digits.length; l++) if (luhn(digits, s0, l)) return true;
-        }
+        const tryWindow = (s0: number, l: number): boolean => {
+            if (s0 < 0 || s0 + l > digits.length) return false;
+            work += l;
+            return luhn(digits, s0, l);
+        };
+        for (const s0 of starts) for (let l = 13; l <= 19; l++) if (tryWindow(s0, l)) return true;
+        for (const e0 of ends) for (let l = 13; l <= 19; l++) if (tryWindow(e0 - l, l)) return true;
+        if (work > 20_000_000) return true;
     }
     return false;
 }
@@ -204,7 +212,7 @@ const distinctCount = (s: string): number => new Set(s).size;
  * exempt only where `slugOk` (a location that names a product, path or label): the same shape under any
  * other name may be a passphrase or a licence key.
  */
-function tokenGrade(p: string, slugOk = false): boolean {
+export function tokenGrade(p: string, slugOk = false): boolean {
     if (!isEvidence(p)) return false;
     if (slugOk && slugLike(p)) return false;
     return /\d/.test(p) ? p.length >= 14 : p.length >= 20;
@@ -247,12 +255,22 @@ const HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,10}$/i;
 /** A long mixed blob (digits or both cases, high entropy) regardless of URL/path shape. */
 function rawTokenish(p: string, slugOk = false, pathOk = false): boolean {
     if (slugOk && slugLike(p)) return false;
-    if (p.includes("://") || HOST.test(p)) return false; // a URL or host: its pieces and parameters are checked separately
-    if (p.startsWith("//") && HOST.test(p.slice(2).split(/[/?#]/)[0] ?? "")) return false; // a scheme-relative URL
+    if (HOST.test(p)) return false; // a bare host name
+    if (p.includes("://") || p.startsWith("//")) {
+        // A URL: the scheme and host are not secrets, its path and parameters are checked on their own.
+        const rest = p.replace(/^(?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\/[^/?#]*/, "");
+        if (p.startsWith("//") && !HOST.test(p.slice(2).split(/[/?#]/)[0] ?? "")) return rawTokenish(p.slice(2), slugOk, pathOk);
+        return rest.length > 1 ? rawTokenish(rest, slugOk, pathOk) : false;
+    }
     const segs = p.split("/").filter(Boolean);
     // A readable path (`/api/v2/carts/`): mostly words, slugs and version tokens.
     if ((slugOk || pathOk) && segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || /^[a-z]{1,3}\d{1,3}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false;
     return p.length >= 12 && distinctCount(p) >= 6 && entropyBitsPerChar(p) >= 3.0 && /\d/.test(p);
+}
+
+/** Whether a value contains a token-grade word (an id or nonce), even inside a path or URL. */
+export function hasTokenPiece(value: string): boolean {
+    return value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w));
 }
 
 /** Text that is, or contains, something secret-looking: a token-grade piece, a card number or personal data. */
@@ -318,8 +336,13 @@ const BENIGN_HEADER = /^header:content-type(#\d+)?$/;
 const DESCRIPTIVE_HEADER = /^header:(accept|accept-encoding|accept-language|cache-control|sec-ch-[a-z-]+|sec-fetch-[a-z-]+)(#\d+)?$/;
 /** A browser product token (`Mozilla/5.0 (...) ...`, `curl/8.4.0`) in a user agent. */
 const PRODUCT_TOKEN = /^[A-Za-z][\w.-]*\/\d[\w.]*(?:\s|$)/;
+/** A piece of a descriptive header value: short, a MIME type, a `product/1.2` token or `name=number`. */
+const descriptivePiece = (w: string): boolean =>
+    w.length < 16 || /^[a-z-]+\/[a-z0-9+.*-]+$/i.test(w) || /^[A-Za-z][\w.-]*\/[\d.]+$/.test(w) || /^[a-z-]+=\d+(?:\.\d+)?$/i.test(w);
 const noTokenWords = (value: string): boolean =>
-    !value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w)) && !/[A-Za-z0-9]{3,}_[A-Za-z0-9_]{6,}/.test(value);
+    value.split(/[\s,;]+/).every(descriptivePiece) &&
+    !value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w)) &&
+    !/[A-Za-z0-9]{3,}_[A-Za-z0-9_]{6,}/.test(value);
 const benignValue = (loc: string, value: string): boolean =>
     BENIGN_HEADER.test(loc) ||
     (DESCRIPTIVE_HEADER.test(loc) && noTokenWords(value) && !cardIn(value) && !piiish(value)) ||
@@ -331,9 +354,13 @@ export function redactConstant(loc: string, value: string): boolean {
     return !benignValue(loc, value) && secretish(value, slugOkLocation(loc), slugOkLocation(loc));
 }
 
-const CALLS = /\b(fill|type|press|pressSequentially|insertText|setValue|check|select_?option|sendKeys|has-text|text|value|set_input_files)\(/gi;
+const CALLS = /\b[A-Za-z_][\w-]*\s*\(/g;
 
-/** Replace the arguments of automation calls (`fill("x")`) with `…`, in one pass; an unclosed call drops the rest. */
+/**
+ * Replace the arguments of calls in a selector or action text (`fill("x")`, `t.typeText('#pw', 'x')`) with `…`, in one
+ * pass; only CSS pseudo-classes with a short plain argument (`:nth-child(2)`) keep theirs.
+ * An unclosed call drops the rest.
+ */
 function scrubCalls(text: string): string {
     let out = "";
     let last = 0;
@@ -342,33 +369,41 @@ function scrubCalls(text: string): string {
         const open = m.index + m[0].length;
         let depth = 1;
         let quote = "";
+        let quoted = false;
         let i = open;
         for (; i < text.length && depth > 0; i++) {
             const c = text[i]!;
             if (quote) {
                 if (c === "\\") i++;
                 else if (c === quote) quote = "";
-            } else if (c === '"' || c === "'" || c === "`") quote = c;
-            else if (c === "(") depth++;
+            } else if (c === '"' || c === "'" || c === "`") {
+                quote = c;
+                quoted = true;
+            } else if (c === "(") depth++;
             else if (c === ")") depth--;
         }
-        out += `${text.slice(last, open)}…${depth === 0 ? ")" : ""}`;
-        last = i;
-        CALLS.lastIndex = i;
-        if (depth > 0) break;
+        const body = text.slice(open, depth === 0 ? i - 1 : i);
+        if (depth > 0) return `${out}${text.slice(last, open)}…`;
+        // Only a CSS pseudo-class with a short plain argument (`:nth-child(2n+1)`) is kept.
+        const pseudo = text[m.index - 1] === ":" && !quoted && body.length < 16;
+        if (!pseudo) {
+            out += `${text.slice(last, open)}…)`;
+            last = i;
+        }
+        CALLS.lastIndex = Math.max(i, open);
     }
     return out + text.slice(last);
 }
 
 /** A trace selector or label with attribute values and typed text removed, or withheld if it still looks secret. */
 export function safeText(text: string): string {
-    const cleaned = scrubCalls(text.slice(0, 1024))
+    const cleaned = scrubCalls(text.slice(0, 8192))
         .replace(/(\[?\bvalue\s*=\s*)(?:"[^"]{0,256}"|'[^']{0,256}'|[^\]\s]{0,256})/gi, "$1…")
         .replace(/\b(text|type|value|label)=\S{0,256}/gi, "$1=…");
-    return secretish(cleaned) ? "<redacted-text>" : cleaned;
+    return secretish(cleaned) ? "<redacted-text>" : cleaned.slice(0, 1024);
 }
 
 /** A location that embeds a token-grade key (a session id used as a JSON key or query name). */
 export function safeLocation(loc: string): string {
-    return piiish(loc) || cardIn(loc) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
+    return piiish(loc) || (!/(?:^|[.:[])\d{13}(?:$|\])/.test(loc) && cardIn(loc)) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
 }

@@ -205,6 +205,14 @@ function parseEntries(har: JVal, skipped: string[]): Entry[] {
     return out;
 }
 
+/** An event without its per-run `inputs`: ids that clash must tie-break the same way in every run. */
+function withoutInputs(e: JVal): JVal {
+    if (e.t !== "obj") return e;
+    const entries = new Map(e.entries);
+    entries.delete("inputs");
+    return { t: "obj", entries };
+}
+
 /** JSON text of a parsed value with object keys sorted, so key order in the file never matters. */
 function stable(v: JVal): string {
     switch (v.t) {
@@ -368,7 +376,7 @@ function parseEvents(t: Map<string, JVal>): TraceEvent[] {
             if (s !== null) requests.push(s);
         }
         out.push({
-            key: sha256Hex(stable(e!)),
+            key: sha256Hex(stable(withoutInputs(e))),
             id,
             tUs,
             kind: asString(o?.get("type")) ?? "",

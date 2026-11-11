@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (111 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (116 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -278,12 +278,22 @@ host; descriptive headers (`accept*`, `cache-control`, `sec-*`) exempt again onl
 by a single-pass scanner (any length, more call names, card-shaped location keys redacted); the self-closing raw-text exemption of round 5 was reverted (HTML ignores the slash).
 Known and kept: XHTML served with a self-closing `<script/>`/`<title/>` is read with HTML semantics (an input after it is a located token, not `html:input`).
 
-**Round 7:** re-review of the round-6 delta only — see below once it has run.
+**Round 7 (Opus, high; round-6 delta only).** Confirmed holding: digitless operation names listed in a response block, digit-bearing nonces from JSON/HTML/jar resolve, `cardIn`
+cost (25-100 ms on 1 M-character mixes), `provides`/`select.field`/card-shaped keys filtered, event tie-break, no flakes in 3 full runs. Findings, fixed and pinned ("round 7"):
+H1 `issuedBefore` counted script bundles and any weak-evidence value, so swapped GraphQL requests resolved silently through a JS bundle (now only values with a token-grade
+piece, carried by an earlier response, the jar or an earlier *HTML* page; bundles and text bodies never count); M1 the same rule blocked server-issued URLs in an operation field
+and digitless nonces (any token-grade piece, inside a URL too); M2 the rewritten `cardIn` missed cards with digits glued in front or straddling a 64-digit chunk (windows now start or end
+at digit groups over whole runs; separators include `,` NBSP; NFKC folds full-width digits; fail-closed work bound). Low: `scrubCalls` replaces every call's arguments except a short CSS pseudo-class
+argument (whitespace before `(`, `send_keys`, `typeText`, `setInputFiles`, any length) and `safeText` checks before it cuts; descriptive headers are exempt only when every piece is short,
+MIME-, product- or `name=number`-shaped; URL values have their path and parameters checked; epoch-like numeric keys are not read as cards; events that reuse an id tie-break on a hash that excludes the per-run inputs.
+Known and kept: a recording with two untimed events that share an id and differ in content is degenerate (output is deterministic but depends on which event wins).
+
+**Round 8:** re-review of the round-7 delta only — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 111 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 116 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -301,5 +311,5 @@ Known and kept: XHTML served with a self-closing `<script/>`/`<title/>` is read 
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (111 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (116 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).
