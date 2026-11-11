@@ -761,3 +761,89 @@ describe("round 4", () => {
         expect(performance.now() - started).toBeLessThan(10_000);
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 5
+
+describe("round 5", () => {
+    test("reordered RPC requests block for digit-bearing and capitalised operation names", () => {
+        const pair = (mk: (n: string) => Req, a: string, b: string) => graphOf([doc("a", [mk(a), { ...mk(b), id: "q1", tMs: 1100 }]), doc("b", [mk(b), { ...mk(a), id: "q1", tMs: 1100 }])]);
+        const persisted = (n: string) => req(0, "POST", `${B}/graphql`, { body: jsonBody({ operationName: n }) });
+        expect(pair(persisted, "GetProductV2", "GetReviewsV2").status).toBe("blocked");
+        const get = (n: string) => req(0, "GET", `${B}/graphql?operationName=${n}`);
+        expect(pair(get, "cartQuery1", "userQuery1").status).toBe("blocked");
+        const rpc = (n: string) => req(0, "POST", `${B}/rpc`, { body: jsonBody({ method: n }) });
+        expect(pair(rpc, "cart.v1.get", "order.v1.create").status).toBe("blocked");
+        const form = (n: string) => req(0, "POST", `${B}/`, { body: ["application/x-www-form-urlencoded", `Action=${n}`] });
+        expect(pair(form, "DescribeInstances", "TerminateInstances").status).toBe("blocked");
+    });
+
+    test("versioned paths and readable labels in prefixes and locators still derive", () => {
+        const mk = (run: string, id: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/`, { respBody: ["text/html", `<a href="/api/v1/carts/${id}">cart</a>`] }),
+                req(1, "POST", `${B}/cart`, { respBody: jsonBody({ cartId: id }) }),
+                req(2, "POST", `${B}/x`, { headers: [["x-ref", `/shop/v2/carts/${id}/items`], ["x-cart", id]] }),
+            ]);
+        const g = graphOf([mk("a", "cart_8f2Kq9ZxLm41"), mk("b", "cart_Zq81mXk9L2f8")]);
+        expect(g.status).toBe("resolved");
+        expect(valueOf(g, 2, "header:x-ref")!.class).toBe("derived");
+    });
+
+    test("slug- and key-shaped secrets in query strings and paths, and legitimate slugs, hosts and labels", () => {
+        const mk = (run: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/activate/ABCDE-FGHIJ-KLMNO-PQRST/4821-9937-1102-5583?licence=ABCDE-FGHIJ-KLMNO-PQRSX&recovery=correct-horse-battery-staple&voucher=4821-9937-1102-5583`, {
+                    headers: [["origin", "https://www.shop24.de"]],
+                }),
+                req(1, "POST", `${B}/shop/blue-widget-deluxe-edition`, { body: jsonBody({ username: "correct-horse-battery-staple", shippingMethod: "express-next-day-delivery", coupon: "SUMMER-SALE-2026", color: "midnight-blue-metallic" }) }),
+            ]);
+        const g = graphOf([mk("a"), mk("b")]);
+        const text = toJson(g);
+        for (const s of ["ABCDE-FGHIJ", "4821-9937", "correct-horse"]) expect(text, s).not.toContain(s);
+        expect(valueOf(g, 0, "header:origin")!.value).toBe("https://www.shop24.de");
+        expect(g.steps[1]!.path_template).toBe("/shop/blue-widget-deluxe-edition");
+        for (const loc of ["json:$.shippingMethod", "json:$.coupon", "json:$.color"]) expect(valueOf(g, 1, loc)!.value, loc).toBeDefined();
+    });
+
+    test("a card past 16 KB or after many digit runs is still found", () => {
+        const g = (note: string) => graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ note }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ note }) })])]);
+        expect(toJson(g("lorem ipsum ".repeat(1400) + "card 4242 4242 4242 4242"))).not.toContain("4242 4242");
+        expect(toJson(g("order 1000000000001; ".repeat(65) + "4242424242424242"))).not.toContain("4242424242424242");
+    });
+
+    test("comment-heavy HTML and unclosed fill( targets stay fast", () => {
+        const started = performance.now();
+        const mk = (run: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", "<!--x-->".repeat(80_000)] })]);
+        graphOf([mk("a"), mk("b")]);
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mkT = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = "fill(".repeat(80_000);
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        graphOf([mkT("a"), mkT("b")]);
+        expect(performance.now() - started).toBeLessThan(8_000);
+    });
+
+    test("user agents with embedded keys, other-language password names and quoted selector arguments", () => {
+        const mk = (run: string) =>
+            doc(run, [req(0, "POST", `${B}/x`, { headers: [["user-agent", "MyApp/4.2.1 (iOS; install sk\x5flive_ABCdef1234567890xyz)"], ["accept", "application/json, sk\x5flive_ABCdef1234567890xyz"]], body: jsonBody({ contraseña: "hunter2024", clave: "hunter2025", wachtwoord: "hunter2026", "mot de passe": "hunter2027" }) })]);
+        const text = toJson(graphOf([mk("a"), mk("b")]));
+        for (const s of ["sk\x5flive_ABCdef", "hunter202"]) expect(text, s).not.toContain(s);
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mkT = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = "#pw >> fill('a)hunter2024') >> :has-text(\"hunter2025\") >> type=hunter2026";
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        const t2 = toJson(graphOf([mkT("a"), mkT("b")]));
+        for (const s of ["hunter2024", "hunter2025", "hunter2026"]) expect(t2, s).not.toContain(s);
+    });
+
+    test("self-closing title/textarea do not swallow the rest of the page", () => {
+        const mk = (run: string, t: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", `<title/><textarea/><input type=hidden name=csrf value=${t}>`] }), req(1, "POST", `${B}/x`, { headers: [["x-csrf", t]] })]);
+        const g = graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]);
+        expect(valueOf(g, 1, "header:x-csrf")!.source!.location).toBe("html:input[name=csrf]");
+    });
+});

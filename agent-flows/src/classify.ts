@@ -272,19 +272,25 @@ function jarSlots(rec: Recording): Slot[] {
  * (`operationName`, JSON-RPC `method`, `action`, `op`, ...) or the `operationName` of a batched body
  * element. Nested fields called `method` (a payment or shipping method) are ordinary values.
  */
-const TOP_OPERATION = /^(?:json:\$|json:\$\[\d+\])\.(?:operationName|operation|op|action|method|mutation|cmd)$|^(?:url\.query|form):(?:operationName|operation|op|action|method|mutation|cmd)$|^json:\$\[\d+\]\.operationName$/;
+const TOP_OPERATION = /^(?:json:\$|json:\$\[\d+\])\.(?:operationName|operation|op|action|method|mutation|cmd)$|^(?:url\.query|form):(?:operationName|operation|op|action|method|mutation|cmd)$|^json:\$\[\d+\]\.operationName$/i;
 const GRAPHQL_DOCUMENT = /^(?:json:\$|json:\$\[\d+\])\.query$|^(?:url\.query|form):query$/;
 /**
  * The operation a request value names, or null when it is not an operation name. A value that looks
  * like an id (server-issued) is not an operation name either: it is a derived value, not an endpoint.
  */
 function operationOf(loc: string, value: string): string | null {
-    if (TOP_OPERATION.test(loc)) return isWeakEvidence(value) && /\d/.test(value) ? null : value;
+    if (TOP_OPERATION.test(loc)) return value;
     if (GRAPHQL_DOCUMENT.test(loc)) {
         const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
         return m ? `gql:${m[1]}` : null;
     }
     return null;
+}
+
+/** Whether an earlier response of the run carries exactly this value. */
+function issuedBefore(run: RunData, step: number, value: string): boolean {
+    for (let j = 0; j < step; j++) if (run.resp[j]!.some((s) => s.value === value)) return true;
+    return false;
 }
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
@@ -316,7 +322,8 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
             });
             if (vals.every((v) => v === null || v === undefined)) continue;
             if (vals.every((v) => v === vals[0])) continue;
-            if (vals.every((v, r) => v !== null && v !== undefined && params[r]!.has(v))) continue;
+            // Explained by a run parameter, or issued by an earlier response of the same run (a server nonce).
+            if (vals.every((v, r) => v !== null && v !== undefined && (params[r]!.has(v) || issuedBefore(runs[r]!, i, v)))) continue;
             return `runs are not alignable at step ${i}: the operation (${safeLocation(key)}) differs between runs (the requests may have been reordered)`;
         }
         // A path segment that differs between runs must be an id (token-grade in every run) or
@@ -422,7 +429,7 @@ function discover(run: RunData, targets: Aligned[], notes: Set<string>): RunHits
         // Bound the work per offset: the 64 longest lengths of a crowded window are probed (longer values are
         // the more distinctive); anything dropped is reported.
         const keep = [...byLen.entries()].sort((a, b) => b[0] - a[0]).slice(0, 64);
-        if (byLen.size > keep.length) notes.add(`${byLen.size - keep.length} shorter source lengths sharing the prefix \`${safeText(w)}\` were not searched for substring matches`);
+        if (byLen.size > keep.length) notes.add("some shorter source values sharing a common prefix were not searched for substring matches");
         crowded.set(w, new Map(keep));
     }
     const variantsAt = (value: string, i: number): string[] => {
@@ -814,7 +821,7 @@ function candidate(
     }
     // Surrounding text is copied into the graph: it must not carry a secret.
     const sensitiveTarget = sensitiveLocation(targetLoc);
-    if (secretish(rel.prefix) || secretish(rel.suffix) || urlHasSecret(rel.prefix) || urlHasSecret(rel.suffix) || (sensitiveTarget && ((rel.prefix && !AUTH_SCHEME.test(rel.prefix)) || rel.suffix))) {
+    if (secretish(rel.prefix, false, true) || secretish(rel.suffix, false, true) || urlHasSecret(rel.prefix) || urlHasSecret(rel.suffix) || (sensitiveTarget && ((rel.prefix && !AUTH_SCHEME.test(rel.prefix)) || rel.suffix))) {
         return { kind: "partial", why: `matches ${describe(sid)} inside text that looks like a secret; it is not copied into the graph` };
     }
     if (sid.loc.includes("[*]")) {
@@ -880,6 +887,6 @@ function locator(runs: RunData[], step: number, tokens: string[]): Locator | nul
     if (ib) before = before.slice(ib.index! + ib[0].length);
     const ia = longWord.exec(after);
     if (ia) after = after.slice(0, ia.index);
-    if (before.length + after.length < 4 || secretish(before) || secretish(after)) return null;
+    if (before.length + after.length < 4 || secretish(before, false, true) || secretish(after, false, true)) return null;
     return { before, after, origin: "page" };
 }

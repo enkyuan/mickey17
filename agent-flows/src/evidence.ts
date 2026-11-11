@@ -132,7 +132,7 @@ export function looksLikeCard(v: string): boolean {
 const SENSITIVE_SUBSTRINGS = [
     "authorization", "cookie", "token", "secret", "password", "passwd", "passphrase", "credential", "signature", "session",
     "csrf", "xsrf", "apikey", "api-key", "api_key", "privatekey", "private-key", "private_key", "bearer", "hmac", "passcode", "pincode",
-    "passwort", "kennwort", "contrasena", "senha", "motdepasse", "mot_de_passe", "mot-de-passe",
+    "passwort", "kennwort", "contrasena", "contraseña", "senha", "motdepasse", "clave", "wachtwoord", "parola", "haslo", "lösenord", "пароль",
 ];
 /** Short names matched only as whole words (`pin` must not redact `shipping`). */
 const SENSITIVE_WORDS = new Set([
@@ -145,7 +145,8 @@ const SENSITIVE_WORDS = new Set([
  */
 export function sensitiveLocation(loc: string): boolean {
     const l = loc.toLowerCase();
-    if (SENSITIVE_SUBSTRINGS.some((k) => l.includes(k))) return true;
+    const squashed = l.replace(/[\s_-]+/g, "");
+    if (SENSITIVE_SUBSTRINGS.some((k) => l.includes(k) || squashed.includes(k))) return true;
     const words = loc
         .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
         .toLowerCase()
@@ -159,10 +160,9 @@ export function sensitiveLocation(loc: string): boolean {
  * does not hide it.
  */
 function cardIn(text: string): boolean {
-    const head = text.length > 16_384 ? text.slice(0, 16_384) : text;
     let runs = 0;
-    for (const m of head.matchAll(/\d(?:[ ._/-]{0,2}\d){12,63}/g)) {
-        if (++runs > 64) break;
+    for (const m of text.matchAll(/\d(?:[ ._/-]{0,2}\d){12,63}/g)) {
+        if (++runs > 8192) break;
         const digits = m[0].replace(/\D/g, "").slice(0, 96);
         for (let s = 0; s + 13 <= digits.length; s++) {
             for (let l = 13; l <= 19 && s + l <= digits.length; l++) if (looksLikeCard(digits.slice(s, s + l))) return true;
@@ -187,28 +187,51 @@ function tokenGrade(p: string, slugOk = false): boolean {
 
 function slugLike(p: string): boolean {
     const parts = p.split(/[-_]/);
-    return parts.length >= 2 && parts.every((w) => /^[A-Za-z]{1,12}$/.test(w) || /^\d{1,6}$/.test(w));
+    if (parts.length < 2 || !parts.every((w) => /^[A-Za-z]{1,12}$/.test(w) || /^\d{1,6}$/.test(w))) return false;
+    // Readable: at least one real word, and not a key in equal-sized groups (`ABCDE-FGHIJ-KLMNO-PQRST`, `4821-9937-1102-5583`).
+    if (!parts.some((w) => /^[A-Za-z]{3,}$/.test(w))) return false;
+    const sizes = new Map<number, number>();
+    for (const w of parts) sizes.set(w.length, (sizes.get(w.length) ?? 0) + 1);
+    return Math.max(...sizes.values()) < 3;
 }
 
-/** Locations that legitimately carry readable slugs and labels. */
-const SLUG_OK_LOCATION = /sku|slug|handle|product|variant|category|collection|referer|href|url|location|path\[|title|label|name|route|page/i;
+/** Leaf names that legitimately carry readable slugs and labels (whole words of the field name, never the whole location). */
+const SLUG_WORDS = new Set([
+    "sku", "slug", "handle", "product", "variant", "category", "collection", "referer", "href", "title", "label", "route",
+    "method", "rate", "color", "colour", "coupon", "option", "size", "type", "kind", "mode", "plan", "tier", "carrier", "service", "shipping",
+]);
+
+/** Whether a location may carry a readable slug: a path segment, or a field whose own name says so. */
+export function slugOkLocation(loc: string): boolean {
+    if (loc.startsWith("url.path[")) return true;
+    const leaf = loc.split("|")[0]!.replace(/\[\d+\]/g, "").split(/[.:]/).pop() ?? "";
+    return leaf
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .some((w) => SLUG_WORDS.has(w));
+}
+
+/** A host name (`www.shop24.de`): letters, digits and dots ending in a real TLD. */
+const HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,10}$/i;
 
 
 /** A long mixed blob (digits or both cases, high entropy) regardless of URL/path shape. */
-function rawTokenish(p: string, slugOk = false): boolean {
+function rawTokenish(p: string, slugOk = false, pathOk = false): boolean {
     if (slugOk && slugLike(p)) return false;
-    if (p.includes("://")) return false; // a URL: its pieces and parameters are checked separately
+    if (p.includes("://") || p.startsWith("//") || HOST.test(p)) return false; // a URL or host: its pieces and parameters are checked separately
     const segs = p.split("/").filter(Boolean);
-    if (slugOk && segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false; // a readable path
+    // A readable path (`/api/v2/carts/`): mostly words, slugs and version tokens.
+    if ((slugOk || pathOk) && segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || /^[a-z]{1,3}\d{1,3}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false;
     return p.length >= 12 && distinctCount(p) >= 6 && entropyBitsPerChar(p) >= 3.0 && /\d/.test(p);
 }
 
 /** Text that is, or contains, something secret-looking: a token-grade piece, a card number or personal data. */
-export function secretish(text: string, slugOk = false): boolean {
+export function secretish(text: string, slugOk = false, pathOk = false): boolean {
     if (cardIn(text) || piiish(text)) return true;
     const words = text.split(/[^A-Za-z0-9_-]+/);
     const blobs = text.split(/[\s"'<>&;,(){}[\]|\\`=:]+/);
-    return words.some((p) => p.length > 0 && tokenGrade(p, slugOk)) || blobs.some((p) => p.length > 0 && (tokenGrade(p, slugOk) || rawTokenish(p, slugOk)));
+    return words.some((p) => p.length > 0 && tokenGrade(p, slugOk)) || blobs.some((p) => p.length > 0 && (tokenGrade(p, slugOk) || rawTokenish(p, slugOk, pathOk)));
 }
 
 /** Personal data by shape: an email address (linear scan, no backtracking) or a US social security number. */
@@ -261,24 +284,26 @@ export function urlHasSecret(value: string): boolean {
 }
 
 /** Headers whose values are descriptive, not credentials: only URL/card/PII checks apply to them. */
-const BENIGN_HEADER = /^header:(content-type|accept|accept-encoding|accept-language|cache-control|connection|dnt|upgrade-insecure-requests|pragma|sec-ch-[a-z-]+|sec-fetch-[a-z-]+)(#\d+)?$/;
+const BENIGN_HEADER = /^header:content-type(#\d+)?$/;
 /** A browser product token (`Mozilla/5.0 (...) ...`, `curl/8.4.0`) in a user agent. */
 const PRODUCT_TOKEN = /^[A-Za-z][\w.-]*\/\d[\w.]*(?:\s|$)/;
 const benignValue = (loc: string, value: string): boolean =>
-    BENIGN_HEADER.test(loc) || (/^header:user-agent(#\d+)?$/.test(loc) && PRODUCT_TOKEN.test(value));
+    BENIGN_HEADER.test(loc) ||
+    (/^header:user-agent(#\d+)?$/.test(loc) && PRODUCT_TOKEN.test(value) && !value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w)) && !/[A-Za-z0-9]{3,}_[A-Za-z0-9_]{6,}/.test(value));
 
 /** Whether a constant may not be written to the graph: by location name, or by what the value looks like. */
 export function redactConstant(loc: string, value: string): boolean {
     if (sensitiveLocation(loc) || looksLikeCard(value) || cardIn(value) || piiish(value) || urlHasSecret(value)) return true;
-    return !benignValue(loc, value) && secretish(value, SLUG_OK_LOCATION.test(loc));
+    return !benignValue(loc, value) && secretish(value, slugOkLocation(loc), slugOkLocation(loc));
 }
 
 /** A trace selector or label with attribute values removed (`[value="x"]` -> `[value=…]`), or withheld if it still looks secret. */
 export function safeText(text: string): string {
     const cleaned = text
-        .replace(/(\[?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*'|[^\]\s]+)/gi, "$1…")
-        .replace(/\b(fill|type|press|check|select_?option|sendKeys)\([^)]*\)/gi, "$1(…)")
-        .replace(/\btext=\S+/gi, "text=…");
+        .slice(0, 512)
+        .replace(/(\[?\bvalue\s*=\s*)(?:"[^"]{0,256}"|'[^']{0,256}'|[^\]\s]{0,256})/gi, "$1…")
+        .replace(/\b(fill|type|press|check|select_?option|sendKeys|has-text|text|value)\((?:"[^"]{0,256}"|'[^']{0,256}'|[^)]{0,256})\)/gi, "$1(…)")
+        .replace(/\b(text|type|value|label)=\S{0,256}/gi, "$1=…");
     return secretish(cleaned) ? "<redacted-text>" : cleaned;
 }
 

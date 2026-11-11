@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (98 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (105 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -249,12 +249,27 @@ non-English password names, numeric and single-quoted JSON text, `.`/`_`/`/` car
 the HTML scanner now treats `textarea`, `title`, `xmp`, `noscript`, `template` as inert, `<![CDATA[`/`<?` as bogus comments and accepts `--!>`;
 `cardIn` and `natCmp` bounded (no BigInt). Known and kept: a duplicate jar cookie name in only one run blocks (the name is then not a source in that run).
 
-**Round 5:** re-review of the round-4 fixes — see below once it has run.
+**Round 5 (Opus, high; final) re-review of 676c912.** Confirmed holding: password-name list, numeric/single-quoted JSON text, card separators,
+selector cleaning, inert HTML containers, truncation reporting, natCmp, bare credentials in descriptive headers. Findings, fixed with tests:
+H1 reordered RPC requests paired silently again for digit-bearing or capitalised operation names (the shape-based "looks server-issued"
+test is gone: a value counts as server-issued only if an earlier response of the same run carries it; field names match case-insensitively);
+M1 readable paths with a digit (`/api/v1/carts/…`) in prefixes and locators blocked legitimate flows (readable-path exemption now applies
+there); M2 the slug exemption covered every query parameter and path (now: path segments and fields whose own name says so,
+as whole words; slugs of equal-sized groups or without a real word are keys, not slugs); M3 a card after 16 KB or 64 digit runs (caps removed,
+work bounded per run); M4 quadratic `--!>` search per comment (position cached); M5 ReDoS in `safeText` (bounded quantifiers, 512-character cap).
+Also: `accept`/`sec-*` no longer exempt, `user-agent` exempt only without token-grade words or snake-case keys, hostnames are not tokens, more
+password names (`contraseña`, `clave`, `wachtwoord`, `mot de passe`, …), `fill('a)x')`/`:has-text()`/`type=` selectors, self-closing `<title/>`,
+`variant-index-truncated` no longer echoes source text.
+Known and kept (low): GraphQL documents starting with a fragment, a comment or `{` (anonymous) have no operation name and swapped ones
+pair silently (they surface as unexplained values); a 16 to 19 character digitless random secret in a non-sensitive field is emitted (threshold is 20);
+over-redaction of slug-shaped values under field names outside the slug word list.
+
+After round 5 no separate re-review of these last fixes was run; they are covered by the regression tests above.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 98 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 105 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -272,5 +287,5 @@ the HTML scanner now treats `textarea`, `title`, `xmp`, `noscript`, `template` a
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (98 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (105 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

@@ -205,6 +205,7 @@ const RAW_TEXT = new Set(["script", "style", "textarea", "title", "xmp", "noscri
 function scanTags(html: string, tag: string): Map<string, string>[] {
     const out: Map<string, string>[] = [];
     let i = 0;
+    let bang = -2; // next `--!>` position; -1 once none remains
     while (i < html.length) {
         const lt = html.indexOf("<", i);
         if (lt < 0) break;
@@ -218,7 +219,9 @@ function scanTags(html: string, tag: string): Map<string, string>[] {
         }
         if (html.startsWith("<!--", lt)) {
             const a = html.indexOf("-->", lt + 4);
-            const b = html.indexOf("--!>", lt + 4);
+            // `--!>` also ends a comment; its position is cached so a document with none is scanned once.
+            if (bang !== -1 && bang < lt + 4) bang = html.indexOf("--!>", lt + 4);
+            const b = bang;
             const end = a < 0 ? b : b < 0 ? a : Math.min(a, b);
             if (end < 0) break;
             i = end + (html.startsWith("--!>", end) ? 4 : 3);
@@ -280,7 +283,7 @@ function scanTags(html: string, tag: string): Map<string, string>[] {
         }
         if (!closed) break;
         i = p;
-        if (RAW_TEXT.has(name)) {
+        if (RAW_TEXT.has(name) && html[p - 2] !== "/") {
             // Raw text up to the matching end tag; nothing inside is markup.
             const re = new RegExp(`</${name}[\\s/>]`, "gi");
             re.lastIndex = i;
