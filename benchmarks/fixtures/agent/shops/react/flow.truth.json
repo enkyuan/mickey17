@@ -459,5 +459,8 @@
             "expect": {"status": 422, "code": "validation_failed"}
         }
     ],
-    "clientComputedCount": 1
+    "clientComputedCount": 1,
+    "notes": [
+        "The idempotency key is class input with role idempotency-key and is executor-supplied (the executor mints it; no site code runs). Inference should report it via the step's idempotency location (agent-schema FlowStep.idempotency), not as a client-computed value; the signature is the only client-computed value."
+    ]
 }

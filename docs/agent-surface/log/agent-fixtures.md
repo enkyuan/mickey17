@@ -54,6 +54,9 @@ interaction traces, and `benchmarks/tests/agent-shops.test.ts`.
    `FlowStep.idempotency` field. **Decision for the parent:** confirm, or relabel it
    `client-computed` (then each stack has two, and `clientComputedCount`/`validateTruth` change).
    Either way the executor can mint a fresh UUID with no site code.
+   **Resolved by the parent (2026-11-10):** keep `input` + `idempotency-key`, executor-supplied; exactly one
+   client-computed value (the signature). Inference reports the key via the step's idempotency
+   location (agent-schema `FlowStep.idempotency`); noted in each truth file's `notes`.
 5. **CSRF sources differ per stack** (meta / hidden field / cookie) on purpose; the server-rendered
    shop also re-renders the same token in every returned form, so "source of the token" is
    ambiguous there (truth lists the bootstrap document as canonical).
@@ -121,7 +124,7 @@ Not covered: DOM/a11y parity (T0), route enumeration, drift scripts (M5), any ex
 
 ## Decisions (deviations from / gaps in docs/AGENT_SURFACE.md)
 
-- D11 value-class table has no entry for a caller-mintable idempotency key (see 4 above).
+- D11 value-class table has no entry for a caller-mintable idempotency key (see 4 above; resolved: `input` + role).
 - D11 payments: the stub is a same-origin, in-flow tokenization step (`tokenize-payment`), which
   the design treats as out of scope for real providers; here it exists so extraction has a
   hosted-field-shaped step to classify. agent-schema's `PaymentMethod` has no value for "in-flow
@@ -211,5 +214,5 @@ verified by my own mutation runs and a clean type check, not by a fourth indepen
 hand-labelled `flow.truth.json` per stack; HAR 1.2 + interaction-trace recorder (24 committed
 runs); `agent-shops.test.ts`. **Why:** M0 neutrality test and M2 ground truth. **Evidence:** 119
 pass / 3 skip; mutation tests for the truth checks; recordings byte-reproducible. **Limits:**
-no socket runs, happy-dom not Chromium, no listener inventory, idempotency-key class pending,
+no socket runs, happy-dom not Chromium, no listener inventory, idempotency-key class settled (`input` + role),
 truth not yet in agent-schema types. **Review:** Opus adversarial rounds 1 and 2 (tables above); round 3 (delta only); round-3 fixes self-verified by mutation.
