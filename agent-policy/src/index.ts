@@ -4,7 +4,7 @@ export { ed25519Verifier, generateEd25519, hmacSigner, type SigAlg, type Signer,
 // `decide` and `checkProofs` are deliberately not exported here: they authorize without
 // reserving spend or consuming a confirmation. Executors call `authorize`.
 export {
-    authorize, bindingFor, checkStatic, hostMatchesMerchant, modeCell,
+    authorize, bindingFor, snapshotRequest, checkStatic, hostMatchesMerchant, modeCell,
     type ActionRequest, type Allow, type Authorization, type AuthorizeDeps, type Credential, type MoneyDetails, type Proofs, type ThirdPartyChecks, type Tokens,
 } from "./policy.ts";
 export * from "./mandate.ts";

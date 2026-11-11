@@ -67,6 +67,8 @@ function scriptOf(ch: string): string | null {
     return null;
 }
 const LATIN = /\p{Script=Latin}/u;
+/** CJK/Thai/Hangul characters that read as Latin letters; Latin mixed with these is never "ordinary" CJK text. */
+const CJK_LOOKALIKES = new Set(Array.from("\u3007\u53e3\u5de5\u4e01\u4e00\u30fc\u30a8\u30ed\u30cb\u30cf\u30c8\u3112\u311a\u3125\u3147\u3163\u0e25\u0e1a\u0e1e\u30ab\u30bf\u4e2d\u4eba\u516b\u4e8c"));
 const MAX_RAW_CHARS = 1_000_000;
 const TOKEN = /[\p{L}\p{M}\p{N}_'-]+/gu;
 
@@ -131,24 +133,27 @@ function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: numbe
 export function sanitizePageText(input: string, opts: SanitizeOptions = {}): SanitizeResult {
     const flags = new Map<FlagKind, number>();
     const tagRuns: number[][] = [];
-    // Hard bound on work, applied before any per-character pass.
-    let raw = input;
-    if (raw.length > MAX_RAW_CHARS) {
-        let cut = MAX_RAW_CHARS;
-        const hi = raw.charCodeAt(cut - 1);
+    // Hard bound on work, applied before every per-character pass and again after NFKC
+    // (a single character such as U+FDFA expands to 18).
+    const maxChars = opts.maxChars ?? 20_000;
+    const rawCap = Math.min(MAX_RAW_CHARS, maxChars * 4 + 4096);
+    const capped = (s: string): string => {
+        if (s.length <= rawCap) return s;
+        let cut = rawCap;
+        const hi = s.charCodeAt(cut - 1);
         if (hi >= 0xd800 && hi <= 0xdbff) cut -= 1; // never split a surrogate pair
-        bump(flags, "truncated", raw.length - cut);
-        raw = raw.slice(0, cut);
-    }
-    let text = stripInvisible(raw, flags, tagRuns);
+        bump(flags, "truncated", s.length - cut);
+        return s.slice(0, cut);
+    };
+    let text = stripInvisible(capped(input), flags, tagRuns);
 
-    const folded = text.normalize("NFKC");
+    const folded = capped(text.normalize("NFKC"));
     if (folded !== text) {
         bump(flags, "compat-normalized");
         text = stripInvisible(folded, flags, tagRuns);
     }
 
-    const max = opts.maxChars ?? 20_000;
+    const max = maxChars;
     const cps = Array.from(text);
     if (cps.length > max) {
         bump(flags, "truncated", cps.length - max);
@@ -177,7 +182,7 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
         }
         let flagged = false;
         // Latin embedded in CJK or Thai running text (no spaces between words) is ordinary.
-        const benign = [...scripts].every((s) => s === "Latin" || s === "CJK" || s === "Thai");
+        const benign = [...scripts].every((s) => s === "Latin" || s === "CJK" || s === "Thai") && !Array.from(tok).some((c) => CJK_LOOKALIKES.has(c));
         if (scripts.size > 1 && !benign) {
             bump(flags, "mixed-script");
             flagged = true;

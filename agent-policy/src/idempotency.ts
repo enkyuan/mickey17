@@ -24,9 +24,12 @@ export interface IdempotencyStore {
     markUnknown(key: string, fingerprint: string): Promise<void>;
     /**
      * Human reconciliation of an unknown outcome: `not-executed` frees the key, a stored
-     * result records what happened. Nothing else can clear an unknown entry.
+     * result records what happened. Applies only to an `unknown` entry, or an `in-flight`
+     * one whose TTL has passed; a live in-flight request can never be reconciled.
+     * Nothing else can clear an unknown entry. This must never be reachable from the
+     * agent or tool surface: it is an operator action.
      */
-    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult): Promise<boolean>;
+    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult, now: number): Promise<boolean>;
 }
 
 export async function requestFingerprint(actionId: string, args: unknown): Promise<string> {
@@ -72,9 +75,11 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
         return Promise.resolve();
     }
 
-    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult): Promise<boolean> {
+    reconcile(key: string, fingerprint: string, outcome: "not-executed" | StoredResult, now: number): Promise<boolean> {
         const e = this.#m.get(key);
-        if (!e || e.fingerprint !== fingerprint || e.state === "completed") return Promise.resolve(false);
+        if (!e || e.fingerprint !== fingerprint) return Promise.resolve(false);
+        const reconcilable = e.state === "unknown" || (e.state === "in-flight" && e.expiresAt <= now);
+        if (!reconcilable) return Promise.resolve(false);
         if (outcome === "not-executed") this.#m.delete(key);
         else {
             e.state = "completed";

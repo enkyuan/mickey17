@@ -408,3 +408,41 @@ recorded in the next entry.
 Not run / limits: nothing here exercises a real network, DNS, a real browser or a real
 payment provider; every input is synthetic. `cargo check` (the repo's declared check) was
 not run because no Rust changed.
+
+## 8. Entry 2026-11-10: review rounds 2 and 3 (bc2434e and the round-3 fix commit)
+
+Round 2 (Opus, high; diff 663b5e9) found two HIGH regressions introduced by the round-1
+fixes plus several partial fixes. Round 3 (diff bc2434e) found one HIGH (NFKC expansion),
+several MEDIUM and LOW. Verdicts and decisions:
+
+| Finding | Verdict | Fix and decision |
+| --- | --- | --- |
+| R2-1 HIGH: forward clock jump flushed the consumed-token table | confirmed (regression of round 1) | Retention runs on the store's own monotonic clock, never the caller's `now`. R3-6: retention also follows the token's remaining validity (24 h after expiry, capped at 7 d). Limits: per-process state; a multi-process executor needs a shared atomic store (interface says so); restart forgets consumed tokens. |
+| R2-2 HIGH: sanitizer quadratic on emoji+FE0F | confirmed | O(1) previous-code-point tracking; raw input capped relative to `maxChars` (`min(1M, 4*maxChars+4096)`). |
+| R3-1 HIGH: NFKC expansion bypassed the cap (3 MB input, 3.4 GB RSS) | confirmed | Re-cap after NFKC; timing test relative to plain text of equal length. |
+| R2-3 / R3-2: hidden-text rules over-corrected, then failed open | confirmed | Large positive offsets are not "hidden" without a bounding box; with a box, wholly-outside-document and outside-ancestor-clip boxes are hidden; positive offsets/text-indent hide when an ancestor (or the node) clips overflow; opacity compounds and is folded into the text colour for contrast; an unsampled background image makes the backdrop *unknown* and the segment is returned in `Collected.unjudged` (visible but flagged), a `backgroundSample` colour from the capture is judged. Decision: the capture should supply bounding boxes, the document size and sampled backdrop colours; without them T0 reports what it could not judge instead of guessing. Known evasions left: `rect(1px...)`, `circle(0 at ...)`, polygon clip paths. |
+| R2-4 / R3-4: merchant not bound to where the request goes; TOCTOU | confirmed | `authorize` snapshots the request (each field read once, frozen) and returns the frozen request to send; the egress decision is now a branded object issued only by `evaluateEgress`/`evaluateRedirect` and its host must equal the merchant (`egress-decision-missing`/`egress-host-mismatch`). **Interface change:** `MoneyDetails.egress` (an issued `EgressAllow`) replaces the earlier string. `decide`/`checkProofs` are not exported from the package index and `package.json` `exports` exposes only the index. |
+| R2-5 | confirmed | Robots: lone surrogates, `//` and `\` targets, slash runs recreated by dot-segments, versioned product token; a 500 KiB cut drops the final partial line instead of widening a rule. |
+| R2-6 | confirmed | `requiresAuth` must be boolean everywhere; read-only requires an explicit `false`. |
+| R2-7 / R3-11 | partly | Strict (`!'()*`), plus-for-space, lowercase and double-encoded forms; numbers redacted only on exact registered match or Luhn card shape (IIN 2-6). Known: ~10% of 13-digit integers starting 2-6 are Luhn-valid (epoch-ms after 2033-05); numeric secrets with leading zeros and HTML-entity encodings are not covered. |
+| R2-8 / R3-7 | confirmed | Latin inside CJK/Thai running text is not flagged; CJK/Thai/Hangul look-alikes of Latin letters (`〇 口 エ ㄒ ล ...`) are; more scripts listed; keycap emoji keep their selector. |
+| R2-9 / R3-3 | confirmed | `describeTool` reads every caller value exactly once into locals (getters/proxies tested). |
+| R2-10 / R3-5 | confirmed | `reconcile(key, fp, outcome, now)` applies only to `unknown` entries or `in-flight` ones past their TTL (a live request can never be reconciled, so no double execution). It is an operator action and must never be reachable from the agent/tool surface. |
+| R3-9 | partly right | `r2-surrogate-cut` is observable only in flags; `r2-robots-cut-surrogate` was not equivalent. Both mutants replaced; robots now cuts at a line boundary and a test pins it. Two mutants (`r2-robots-double-slash`, `r2-robots-backslash`) are equivalent after the post-resolution slash merge. |
+| R2-11 / R3-12 | confirmed | `mutate.ts` requires a *named failing test* for a kill (a crash is INVALID) and has a 120 s per-run timeout; tests no longer wrapped in `if (out)`. |
+
+Not done (stated): a side-effecting GET redirected cross-host is decided by method only;
+mandates are bearer tokens (`subject`/`issuer` not bound to a credential); completed
+idempotency entries expire (money is protected by the permanent ledger entry);
+`reconcile` has no authentication of its own.
+
+Commands and results:
+
+```
+cd agent-policy
+./node_modules/.bin/tsc --noEmit          # clean
+bun test                                  # 363 pass, 0 fail (3 consecutive runs)
+bun scripts/mutate.ts --jobs 6            # 191/191 killed (2 equivalent mutants documented)
+```
+
+Round 4: a final Opus review of the round-3 fix diff is recorded in the next entry.

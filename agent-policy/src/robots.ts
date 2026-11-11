@@ -21,9 +21,10 @@ export function parseRobots(text: string): Robots {
     let clipped = text;
     if (clipped.length > MAX_BYTES) {
         let cut = MAX_BYTES;
-        const hi = clipped.charCodeAt(cut - 1);
-        if (hi >= 0xd800 && hi <= 0xdbff) cut -= 1; // never split a surrogate pair
         clipped = clipped.slice(0, cut);
+        // drop the final partial line: a truncated Allow/Disallow would become a different rule
+        const nl = Math.max(clipped.lastIndexOf("\n"), clipped.lastIndexOf("\r"));
+        clipped = nl >= 0 ? clipped.slice(0, nl) : "";
     }
     const groups: { agents: string[]; rules: RobotsRule[]; crawlDelay: number | null }[] = [];
     let cur: { agents: string[]; rules: RobotsRule[]; crawlDelay: number | null } | null = null;
@@ -138,7 +139,8 @@ export function evaluateRobots(robots: Robots, productToken: string, target: str
         // target like "//admin/x" is judged as "/admin/x" and not parsed as a host.
         const pathOnly = ("/" + target.replaceAll("\\", "/")).replace(/^\/+/, "/");
         const u = new URL(`https://robots.invalid${pathOnly}`);
-        path = u.pathname + u.search;
+        // dot-segments can recreate a slash run ("/x/..//admin"): merge after resolution too
+        path = u.pathname.replace(/\/{2,}/g, "/") + u.search;
     } catch {
         return { allowed: false, reason: "unparsable target", crawlDelay: delay };
     }

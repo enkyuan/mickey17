@@ -1,4 +1,5 @@
 import { isSafePosInt } from "./bytes.ts";
+import { isIssuedEgress, type EgressAllow } from "./egress.ts";
 import {
     isConfirmationExpiredOrMismatched,
     type ConfirmationBinding,
@@ -41,8 +42,12 @@ export interface ThirdPartyChecks {
 }
 
 export interface MoneyDetails {
-    /** The host the request will actually be sent to (the egress decision's host). Must equal `merchant`. */
-    readonly egressHost: string;
+    /**
+     * The egress decision the request will be sent under (from evaluateEgress or
+     * evaluateRedirect). Only a decision issued by this library is accepted, and its host
+     * must equal `merchant`.
+     */
+    readonly egress: EgressAllow;
     readonly merchant: string;
     readonly item: string;
     readonly totalMinor: number;
@@ -159,7 +164,10 @@ export function checkStatic(req: ActionRequest): Refusal | null {
         if (!m || typeof m.merchant !== "string" || typeof m.item !== "string" || typeof m.payee !== "string" || typeof m.currency !== "string" || !isSafePosInt(m.totalMinor)) {
             return refuse("blocked", "invalid-request", "a well-formed money object (merchant, item, totalMinor, currency, payee)", "Financial action lacks well-formed money details.");
         }
-        if (typeof m.egressHost !== "string" || normalizeHost(m.egressHost) !== normalizeHost(m.merchant)) {
+        if (!isIssuedEgress(m.egress)) {
+            return refuse("blocked", "egress-decision-missing", "an egress decision issued by evaluateEgress for this request", "Financial actions must carry the egress decision they will be sent under.");
+        }
+        if (normalizeHost(m.egress.host) !== normalizeHost(m.merchant)) {
             return refuse("blocked", "egress-host-mismatch", "a request whose egress host is the authorized merchant", "The host the request goes to is not the merchant being authorized.");
         }
         if (normalizeHost(m.payee) !== normalizeHost(m.merchant)) {
@@ -216,6 +224,32 @@ export function decide(req: ActionRequest, proofs: Proofs = {}): Allow | Refusal
     return Object.freeze({ ok: true as const, neverRetry: !req.idempotent || NEVER_RETRY_EFFECTS.includes(req.effect) });
 }
 
+/**
+ * Copies every field the policy reads exactly once into a frozen plain object, so a getter,
+ * proxy or later mutation of the caller's object cannot show the checks one value and the
+ * ledger or executor another. Unknown fields are dropped. The egress decision is kept by
+ * reference (it is frozen and its brand is its identity).
+ */
+export function snapshotRequest(req: ActionRequest): ActionRequest {
+    const cred = req.credential;
+    const tp = req.thirdParty;
+    const m = req.money;
+    const snap: Record<string, unknown> = {
+        actionId: req.actionId, mode: req.mode, tier: req.tier, effect: req.effect, evidence: req.evidence, idempotent: req.idempotent, now: req.now,
+    };
+    const optional = { idempotencyKey: req.idempotencyKey, requiresAuth: req.requiresAuth, item: req.item };
+    for (const [k, v] of Object.entries(optional)) if (v !== undefined) snap[k] = v;
+    if (cred !== undefined) {
+        const scopes = cred.scopes;
+        snap.credential = Object.freeze({ kind: cred.kind, scopes: Object.freeze(Array.isArray(scopes) ? [...scopes] : scopes) });
+    }
+    if (tp !== undefined) snap.thirdParty = Object.freeze({ robots: tp.robots, tos: tp.tos });
+    if (m !== undefined) {
+        snap.money = Object.freeze({ egress: m.egress, merchant: m.merchant, item: m.item, totalMinor: m.totalMinor, currency: m.currency, payee: m.payee });
+    }
+    return Object.freeze(snap) as unknown as ActionRequest;
+}
+
 export interface AuthorizeDeps {
     readonly mandateVerifier: Verifier;
     readonly confirmationVerifier: Verifier;
@@ -235,6 +269,8 @@ export interface Tokens {
 
 export interface Authorization {
     readonly ok: true;
+    /** The frozen request that was authorized. Send exactly this, not the caller's original object. */
+    readonly request: ActionRequest;
     readonly neverRetry: boolean;
     readonly mandateId: string | null;
     readonly confirmationId: string | null;
@@ -248,13 +284,16 @@ export interface Authorization {
  * effects (reserve spend, consume the confirmation). If consuming fails the
  * reservation is released, so a replayed confirmation neither executes nor spends.
  */
-export async function authorize(req: ActionRequest, tokens: Tokens, deps: AuthorizeDeps): Promise<Authorization | Refusal> {
+export async function authorize(input: ActionRequest, tokens: Tokens, deps: AuthorizeDeps): Promise<Authorization | Refusal> {
+    const req = snapshotRequest(input);
     const s = checkStatic(req);
     if (s) return s;
 
+    const mandateToken = tokens.mandate;
+    const confirmationToken = tokens.confirmation;
     const proofs: { mandate?: VerifiedMandate; confirmation?: VerifiedConfirmation } = {};
-    if (req.effect === "financial" && tokens.mandate !== undefined) {
-        const v = await verifyMandate(tokens.mandate, deps.mandateVerifier, {
+    if (req.effect === "financial" && mandateToken !== undefined) {
+        const v = await verifyMandate(mandateToken, deps.mandateVerifier, {
             now: req.now,
             ...(deps.maxMandateLifetimeMs !== undefined ? { maxLifetimeMs: deps.maxMandateLifetimeMs } : {}),
             ...(deps.revokedMandates ? { revoked: deps.revokedMandates } : {}),
@@ -262,8 +301,8 @@ export async function authorize(req: ActionRequest, tokens: Tokens, deps: Author
         if (!v.ok) return v;
         proofs.mandate = v.mandate;
     }
-    if (NEVER_RETRY_EFFECTS.includes(req.effect) && tokens.confirmation !== undefined) {
-        const v = await verifyConfirmation(tokens.confirmation, deps.confirmationVerifier, bindingFor(req), {
+    if (NEVER_RETRY_EFFECTS.includes(req.effect) && confirmationToken !== undefined) {
+        const v = await verifyConfirmation(confirmationToken, deps.confirmationVerifier, bindingFor(req), {
             now: req.now,
             ...(deps.maxConfirmationTtlMs !== undefined ? { maxTtlMs: deps.maxConfirmationTtlMs } : {}),
         });
@@ -293,6 +332,7 @@ export async function authorize(req: ActionRequest, tokens: Tokens, deps: Author
     let settled = false;
     return {
         ok: true,
+        request: req,
         neverRetry: d.neverRetry,
         mandateId: proofs.mandate?.id ?? null,
         confirmationId: proofs.confirmation?.jti ?? null,

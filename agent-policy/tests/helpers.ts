@@ -2,7 +2,16 @@ import { InMemoryConsumedStore } from "../src/confirm.ts";
 import { generateEd25519, hmacSigner, type Signer, type Verifier } from "../src/sign.ts";
 import { InMemorySpendLedger, issueMandate, type MandatePayload } from "../src/mandate.ts";
 import { issueConfirmation, type ConfirmationBinding } from "../src/confirm.ts";
+import { compileEgressPolicy, evaluateEgress, type EgressAllow } from "../src/egress.ts";
 import type { ActionRequest, AuthorizeDeps } from "../src/policy.ts";
+
+const egressPolicy = compileEgressPolicy({ allowHosts: ["shop.example.com", "b.example.com", "a.example.com", "other.example.com", "evil.example.net", "attacker.example.com"] });
+/** An egress decision issued by the library for `host` (public documentation-range-free address). */
+export function egressFor(host: string): EgressAllow {
+    const d = evaluateEgress(`https://${host.replace(/\.$/, "").toLowerCase()}/`, egressPolicy, ["93.184.216.34"]);
+    if (!d.allow) throw new Error(`egressFor(${host}) refused: ${d.code}`);
+    return d;
+}
 
 export const NOW = 1_800_000_000_000;
 export const HOUR = 3_600_000;
@@ -61,7 +70,7 @@ export const moneyReq = (over: Partial<ActionRequest> = {}): ActionRequest => ({
     idempotent: true,
     idempotencyKey: "idem-key-0001",
     credential: { kind: "oauth", scopes: ["financial"] },
-    money: { egressHost: "shop.example.com", merchant: "shop.example.com", item: "sku-42", totalMinor: 4_999, currency: "USD", payee: "shop.example.com" },
+    money: { egress: egressFor("shop.example.com"), merchant: "shop.example.com", item: "sku-42", totalMinor: 4_999, currency: "USD", payee: "shop.example.com" },
     now: NOW,
     ...over,
 });

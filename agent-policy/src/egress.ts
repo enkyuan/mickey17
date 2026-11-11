@@ -69,8 +69,17 @@ export type EgressRefusalCode =
     | "redirect-cross-host-write"
     | "not-a-redirect";
 
+const issuedEgress = new WeakSet<object>();
+
+/** True only for an allow decision produced by evaluateEgress/evaluateRedirect in this process. */
+export function isIssuedEgress(x: unknown): x is EgressAllow {
+    return typeof x === "object" && x !== null && issuedEgress.has(x);
+}
+
+export type EgressAllow = { allow: true; url: string; host: string; port: number; /** connect to exactly these addresses */ pinned: readonly string[]; stripCredentials: boolean };
+
 export type EgressDecision =
-    | { allow: true; url: string; host: string; port: number; /** connect to exactly these addresses */ pinned: readonly string[]; stripCredentials: boolean }
+    | EgressAllow
     | { allow: false; code: EgressRefusalCode; message: string };
 
 const deny = (code: EgressRefusalCode, message: string): EgressDecision => ({ allow: false, code, message });
@@ -131,7 +140,9 @@ export function evaluateEgress(rawUrl: string, policy: EgressPolicy, resolved: r
     for (const a of addrs) {
         if (!classifyAddress(a).public) return deny("private-address", "Host resolves to a non-public address.");
     }
-    return { allow: true, url: u.href, host, port, pinned: [...addrs], stripCredentials: opts.stripCredentials ?? false };
+    const allowed: EgressAllow = Object.freeze({ allow: true as const, url: u.href, host, port, pinned: Object.freeze([...addrs]) as readonly string[], stripCredentials: opts.stripCredentials ?? false });
+    issuedEgress.add(allowed);
+    return allowed;
 }
 
 export interface RedirectInput {

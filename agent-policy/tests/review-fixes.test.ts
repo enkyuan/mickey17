@@ -10,7 +10,7 @@ import { evaluateRobots, parseRobots } from "../src/robots.ts";
 import { sanitizePageText } from "../src/sanitize.ts";
 import { describeTool, surfaceId } from "../src/tooldesc.ts";
 import { pageText, wrapPageText, type PageText } from "../src/wrap.ts";
-import { confirmToken, mandateToken, moneyReq, NOW, world } from "./helpers.ts";
+import { confirmToken, egressFor, mandateToken, moneyReq, NOW, world } from "./helpers.ts";
 
 const money = (over: Record<string, unknown> = {}) => ({ ...moneyReq().money!, ...over });
 
@@ -18,7 +18,7 @@ describe("1: the mandate allowlist limits who is paid", () => {
     test("payee that differs from the merchant is refused, even with a matching confirmation", async () => {
         const w = await world();
         const mt = await mandateToken(w, { merchants: ["a.example.com", "b.example.com"] });
-        for (const m of [money({ merchant: "shop.example.com", payee: "attacker.example.com" }), money({ egressHost: "b.example.com", merchant: "b.example.com", payee: "a.example.com" })]) {
+        for (const m of [money({ merchant: "shop.example.com", payee: "attacker.example.com" }), money({ egress: egressFor("b.example.com"), merchant: "b.example.com", payee: "a.example.com" })]) {
             const req = moneyReq({ money: m });
             const r = await authorize(req, { mandate: mt, confirmation: await confirmToken(w, req) }, w.deps);
             expect(r.ok ? "ok" : r.code).toBe("payee-merchant-mismatch");
@@ -27,10 +27,10 @@ describe("1: the mandate allowlist limits who is paid", () => {
     });
     test("the request must go to the authorized merchant (egress host bound into authorize)", async () => {
         const w = await world();
-        const req = moneyReq({ money: money({ egressHost: "evil.example.net" }) });
+        const req = moneyReq({ money: money({ egress: egressFor("evil.example.net") }) });
         const r = await authorize(req, { mandate: await mandateToken(w), confirmation: await confirmToken(w, req) }, w.deps);
         expect(r.ok ? "ok" : r.code).toBe("egress-host-mismatch");
-        const ok = moneyReq({ money: money({ egressHost: "SHOP.example.com." }) });
+        const ok = moneyReq({ money: money({ egress: egressFor("SHOP.example.com.") }) });
         expect((await authorize(ok, { mandate: await mandateToken(w), confirmation: await confirmToken(w, ok) }, w.deps)).ok).toBe(true);
     });
     test("the payee itself must be on the allowlist", async () => {

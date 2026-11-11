@@ -5,6 +5,7 @@ import { refuse, type Refusal } from "./types.ts";
 export const CONFIRMATION_DOMAIN = "mochi-agent-policy/confirmation/v1";
 const DEFAULT_MAX_TTL_MS = 15 * 60 * 1000;
 const CONSUMED_RETENTION_MS = 24 * 3600 * 1000;
+const MAX_RETENTION_MS = 7 * CONSUMED_RETENTION_MS;
 
 /**
  * What the human saw and approved (D5, D11): the action, the item, the total, the
@@ -101,7 +102,7 @@ export interface ConsumedStore {
 }
 
 export class InMemoryConsumedStore implements ConsumedStore {
-    readonly #seen = new Map<string, number>(); // jti -> monotonic time it was recorded
+    readonly #seen = new Map<string, number>(); // jti -> monotonic deadline until which it is remembered
     readonly #mono: () => number;
     /**
      * Retention runs on the store's own monotonic clock, never on the caller's `now`: a
@@ -111,11 +112,15 @@ export class InMemoryConsumedStore implements ConsumedStore {
     constructor(monotonicMs: () => number = () => performance.now()) {
         this.#mono = monotonicMs;
     }
-    consume(jti: string, _expiresAt: number, _now: number): Promise<boolean> {
+    consume(jti: string, expiresAt: number, now: number): Promise<boolean> {
         const t = this.#mono();
-        for (const [k, at] of this.#seen) if (at + CONSUMED_RETENTION_MS <= t) this.#seen.delete(k);
+        for (const [k, deadline] of this.#seen) if (deadline <= t) this.#seen.delete(k);
         if (this.#seen.has(jti)) return Promise.resolve(false);
-        this.#seen.set(jti, t);
+        // Remember at least 24 h, and for a token valid longer than that, until 24 h after it
+        // expires (the remaining validity is measured by the caller's clock but only ever
+        // lengthens retention, capped at 7 days to bound memory).
+        const remaining = Number.isFinite(expiresAt - now) ? Math.max(0, expiresAt - now) : 0;
+        this.#seen.set(jti, t + Math.min(MAX_RETENTION_MS, Math.max(CONSUMED_RETENTION_MS, remaining + CONSUMED_RETENTION_MS)));
         return Promise.resolve(true);
     }
 }

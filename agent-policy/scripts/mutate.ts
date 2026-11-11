@@ -23,7 +23,8 @@ function fresh(name: string): string {
 }
 
 async function runTests(dir: string): Promise<{ code: number; failed: string[] }> {
-    const p = Bun.spawn(["bun", "test"], { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
+    // 120 s per run: a mutant that hangs (module-scope loop) is reported as INVALID, not waited on forever.
+    const p = Bun.spawn(["bun", "test"], { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" }, timeout: 120_000, killSignal: "SIGKILL" });
     const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
     const code = await p.exited;
     const failed = [...(out + err).matchAll(/^\(fail\) (.+?)(?: \[[\d.]+ms\])?$/gm)].map((m) => m[1]!);

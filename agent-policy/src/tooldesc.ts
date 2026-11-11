@@ -75,37 +75,51 @@ export interface ToolDescriptor {
 
 const has = <T extends object>(o: T, k: unknown): k is keyof T => typeof k === "string" && Object.hasOwn(o, k);
 
-/** Throws on anything outside the vocabularies; the error never echoes the input. */
+/**
+ * Throws on anything outside the vocabularies; the error never echoes the input. Every
+ * caller-supplied value is read exactly once into a local (getters and proxies may change
+ * between reads) and only the validated locals are emitted.
+ */
 export function describeTool(spec: ToolSpec): ToolDescriptor {
     const bad = (): never => {
         throw new TypeError("tool spec outside the closed vocabulary");
     };
-    if (typeof spec.id !== "string" || !ID_RE.test(spec.id)) bad();
-    if (!has(KIND_TEXT, spec.kind) || !has(EFFECT_TEXT, spec.effect) || !has(TIER_TEXT, spec.tier)) bad();
-    if (typeof spec.idempotent !== "boolean") bad();
+    const id = spec.id;
+    const kind = spec.kind;
+    const effect = spec.effect;
+    const tier = spec.tier;
+    const idempotent = spec.idempotent;
+    const rawParams = spec.params;
+    const label = spec.pageLabel;
+    const rawLabels = spec.paramLabels;
+    if (typeof id !== "string" || !ID_RE.test(id)) bad();
+    if (!has(KIND_TEXT, kind) || !has(EFFECT_TEXT, effect) || !has(TIER_TEXT, tier)) bad();
+    if (typeof idempotent !== "boolean") bad();
+    if (!Array.isArray(rawParams)) bad();
     const description = [
-        KIND_TEXT[spec.kind],
-        EFFECT_TEXT[spec.effect],
-        TIER_TEXT[spec.tier],
-        spec.idempotent ? "Idempotent." : "Not idempotent: never retried automatically.",
+        KIND_TEXT[kind],
+        EFFECT_TEXT[effect],
+        TIER_TEXT[tier],
+        idempotent ? "Idempotent." : "Not idempotent: never retried automatically.",
         PAGE_NOTICE,
     ].join(" ");
-    const params = spec.params.map((p) => {
-        if (typeof p.id !== "string" || !ID_RE.test(p.id) || !(PARAM_TYPES as readonly string[]).includes(p.type) || typeof p.required !== "boolean") bad();
-        return { name: p.id, type: p.type, required: p.required, description: `Parameter of type ${p.type}${p.required ? ", required" : ""}.` };
+    const params = Array.from(rawParams as readonly ParamSpec[], (p) => {
+        const pid = p.id;
+        const ptype = p.type;
+        const required = p.required;
+        if (typeof pid !== "string" || !ID_RE.test(pid) || !(PARAM_TYPES as readonly string[]).includes(ptype as string) || typeof required !== "boolean") bad();
+        return { name: pid as string, type: ptype as ParamType, required: required as boolean, description: `Parameter of type ${ptype}${required ? ", required" : ""}.` };
     });
-    // Read each caller-controlled value exactly once (getters and proxies may change between reads).
-    const label = spec.pageLabel;
     if (label !== undefined && !isPageText(label)) bad();
     const paramIds = new Set<string>(params.map((p) => p.name));
     const labels: Record<string, PageText> = {};
-    for (const [k, v] of Object.entries(spec.paramLabels ?? {})) {
+    for (const [k, v] of Object.entries(rawLabels ?? {})) {
         // keys are surface ids of declared parameters; never free-form strings
         if (!ID_RE.test(k) || !paramIds.has(k) || !isPageText(v)) bad();
         labels[k] = v;
     }
     return {
-        name: spec.id,
+        name: id as string,
         description,
         params,
         pageLabels: { origin: "page", action: label ?? null, params: labels },
