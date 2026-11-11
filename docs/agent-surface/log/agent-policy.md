@@ -1,0 +1,358 @@
+# agent-policy log
+
+Owner: the policy-library session. Files: `agent-policy/**` and this log. Design source:
+`docs/AGENT_SURFACE.md` (D2, D5, D7, D8, D10, D11, section 6 Security).
+
+Status: library implemented and tested. 283 tests, strict `tsc --noEmit` clean, 124 of 124
+one-edit mutants killed. Not yet migrated to `agent-schema` (its first PR is unmerged; see
+"Interface notes").
+
+## 1. Threat model
+
+The library is the last check before a request leaves the executor. It assumes the
+*agent* (the model, and anything it was talked into) is adversarial or confused, and
+that *page content* is adversarial. It assumes the operator's process, clock, key store
+and the human who approves a confirmation are honest.
+
+### Assets
+
+1. Money: a spend the owner did not authorize, or more than they authorized.
+2. Irreversible or account-level changes (delete, change email/password, close account).
+3. Credentials and instruments: sessions, API keys, tokens, card numbers.
+4. Internal network reachability of the executor host (cloud metadata, intranet).
+5. Third-party sites' terms: robots.txt, rate limits, `Retry-After`.
+6. The agent's own instruction channel (D8).
+
+### Adversaries and what they try
+
+| # | Adversary | Attempt | Control (section) |
+| --- | --- | --- | --- |
+| A1 | Page author | Hidden or invisible text telling the agent to act | 7: hidden-text exclusion, invisible-character stripping, wrapping |
+| A2 | Page author | Forged delimiters, fake system turns, markdown/HTML exfil | 7: escape, per-line prefix, hash-bearing markers |
+| A3 | Page author | Text in labels/placeholders that ends up in a tool description | 7: closed-vocabulary `describeTool`, separate marked `pageLabels` |
+| A4 | Confused or injected agent | Calls a write or money action in `read-only` mode | 2.1: mode x tier x effect, default deny |
+| A5 | Confused or injected agent | Calls a money action with no human in the loop | 2.2 and 2.3: mandate and confirmation both required |
+| A6 | Confused or injected agent | Re-uses an old confirmation for a bigger amount, another payee, a second call | 2.3: field-bound, single-use, short-lived |
+| A7 | Confused or injected agent | Spends past the cap by splitting calls or racing them | 2.2: atomic cumulative ledger |
+| A8 | Confused or injected agent | Retries a failed charge hoping it goes through | 2.4: no automatic retry for non-idempotent or money/irreversible effects; unknown outcome blocks re-execution |
+| A9 | Confused agent / page | Forges a "verified" mandate or confirmation object | 2.2: branded via module-private `WeakSet`; only verification creates one |
+| A10 | Network attacker or page | Redirects, DNS rebinding, IP spelling tricks into metadata or intranet | 6: allowlist, SSRF classification, pinned addresses, redirect re-check |
+| A11 | Compromised executor *process* (not agent) | Mint a mandate | 2.2: Ed25519, executor holds the public key only |
+| A12 | Anyone reading output | Harvest secrets from receipts, errors, logs | 5: allowlisted receipt fields + redactor + canary tests |
+| A13 | Hostile server | Huge/garbled `Retry-After`, robots.txt designed to stall matching | 6: strict parsers, caps, linear-time matcher |
+| A14 | Hostile server | Slow-leak via pathological inputs (1 MB text, very long tokens) | 7: truncation and flags |
+
+### Explicitly out of scope (stated so nobody assumes otherwise)
+
+- **A malicious in-process caller.** JavaScript has no privilege boundary inside one
+  process. Anything that can import this package can call `verifyMandate` with its own
+  verifier. The boundary is *key custody*: the agent must not hold a signing key, and
+  must not be able to construct the executor's `AuthorizeDeps`. Run the policy in the
+  executor, not in the agent's process.
+- **Hardware constant time.** `constantTimeEqual` removes the data-dependent branch; it
+  cannot promise that the JS engine's timing is flat. The only secret comparisons are MAC
+  verification (done by WebCrypto) and token digests; neither is compared with `===`.
+- **Enforcing DNS pinning.** The library returns the validated addresses
+  (`EgressDecision.pinned`). The HTTP client must connect to exactly those. A second
+  lookup reopens the rebinding window. This is an executor obligation.
+- **Clock honesty.** Every function takes `now` from the caller. A caller that lies about
+  the time defeats expiry. The executor owns the clock.
+- **Deciding that a confirmation was shown correctly.** The library proves a token was
+  issued for exactly this action/item/total/currency/payee. Whether the human saw those
+  values is the confirmation UI's job.
+- **Unicode confusables completeness.** The confusable table is a small, deliberate
+  subset (Cyrillic/Greek look-alikes of Latin letters). It flags, it does not prove
+  absence.
+
+## 2. Decisions
+
+### 2.1 Mode x tier x effect (`policy.ts`)
+
+`modeCell(mode, tier, effect)` is the whole matrix, default deny:
+
+| | T0/T1 | T2 | T3 | T4 |
+| --- | --- | --- | --- | --- |
+| `read-only` | read | refused | refused | refused |
+| `owner`, `delegated` | read | any effect | read (local state, no network) | refused (`unsupported`) |
+
+- A write effect on T0/T1/T3 is refused as incoherent (only T2 carries side effects).
+- Evidence: T2/T3 need `declared` or `observed`; `derived` or `inferred` alone is refused
+  (D5, section 3). Reads at T0/T1 may rest on any evidence.
+- `read-only` additionally needs a positive robots result *and* a recorded ToS check
+  (D2, legal gates). The library takes these as evaluated inputs; it does not fetch.
+- Credentials: any non-read, or an authenticated read, needs `service` (owner) or
+  `user-session`/`oauth` (delegated), scoped to the effect. A mismatched kind is refused.
+- Confirmation is required for `write-irreversible`, `financial`, `account-control`
+  (D5). `financial` additionally needs a verified mandate and an idempotency key.
+- Every refusal has a stable `code`, a D10 `status`, `missing` (what to supply) and a
+  `message`. Messages never echo caller strings, only enumerated values, so a refusal
+  cannot carry a secret or injected text (tested with canaries).
+- Unknown enum values, malformed ids, non-finite `now` are refused (`invalid-request`).
+
+`authorize()` is the executor entry point. Order: static checks, token verification,
+proof binding, and only then side effects (reserve spend, then consume the confirmation;
+if consuming fails the reservation is released). A refusal before the side effects
+changes nothing.
+
+### 2.2 Mandates (`mandate.ts`, `sign.ts`)
+
+A mandate: id, issuer, subject, exact-host merchant allowlist (no wildcards), exact
+action ids (no wildcards), one ISO currency, cumulative cap, optional per-call cap,
+`notBefore`, `expiresAt`. Amounts are positive safe integers in minor units; floats,
+NaN, negatives and unsafe integers are rejected. Unknown or missing payload keys are
+rejected (fail closed).
+
+**Signature choice: Ed25519 (WebCrypto), HMAC-SHA256 supported.**
+
+- Mandates are issued by the *user's* side and verified by the *executor*. With HMAC the
+  verifier holds the signing key, so a compromised executor, or anything that can read
+  its key, can mint authority over money. With Ed25519 the executor holds only the
+  public key (`ed25519Verifier(rawPublicKey)` returns an object with no `sign`).
+- Ed25519 verification compares no secret, so there is no MAC-compare timing to get
+  wrong; WebCrypto does the verification.
+- Ed25519 is in Bun, Node 20+, and current browsers. A malformed or wrong-length
+  signature is `false`, never a throw.
+- HMAC is kept for confirmation tokens, where issuer and verifier are the same trusted
+  side. It is used through `subtle.verify`, which compares the tag in constant time.
+  HMAC mandates also work (tested) for single-party deployments.
+- The algorithm is fixed by the *verifier's key*, never read from the token, so there is
+  no algorithm-confusion path. Signatures cover `domain + "\n" + payloadSegment` with
+  distinct domains for mandates and confirmations, so one cannot be replayed as the
+  other even under the same key (tested).
+- Token = `base64url(canonical JSON) "." base64url(signature)`. Decoding is strict
+  (canonical base64url only), size-capped (8 KiB), and the payload is parsed only after
+  the signature verifies.
+
+Checks: bad signature, malformed, not yet valid, expired (the expiry instant itself is
+expired), lifetime over the maximum (default 7 days), revoked, action not in scope,
+merchant not on the allowlist (exact match after lowercase and trailing-dot removal; no
+suffix or substring match), currency mismatch, amount invalid, per-call cap, cap.
+
+**Cumulative spend.** `SpendLedger.reserve(mandateId, ref, amount, cap)` is atomic: the
+check and the write happen with no `await` between them in the in-memory implementation,
+and the interface requires atomicity of any real store. Ten concurrent 3000-unit calls
+against a 10000 cap admit exactly three. A failed call releases its reservation; an
+ambiguous outcome is *not* released (over-counting is the safe direction). A duplicate
+reservation `ref` is refused.
+
+**Forgery.** `VerifiedMandate`/`VerifiedConfirmation` are frozen objects registered in a
+module-private `WeakSet`. A hand-built object, or a spread copy of a real one, is not
+accepted by `decide`/`checkMandateScope` (tested). This stops accidents and a confused
+caller; it is not a defence against code in the same process (see out of scope).
+
+### 2.3 Confirmation tokens (`confirm.ts`)
+
+Bound to `actionId`, `item`, `totalMinor`, `currency`, `payee`. Fields that do not apply
+are explicit `null` and must be `null` on both sides, and the three money fields travel
+together, so a no-money token cannot be widened to authorize money and vice versa.
+Any one-minor-unit change in the total is a mismatch (`confirmation-binding-mismatch`,
+naming the field). Short TTL (default maximum 15 minutes), `iat`/`exp` checked at both
+verification and again in `decide` against the call about to run. Single use: `jti` is
+consumed in an atomic store after every other check has passed; a replay is refused and
+releases any spend reserved for it. A mismatched or expired token is *not* consumed, so
+the honest call can still use it.
+
+### 2.4 Idempotency and retries (`idempotency.ts`)
+
+`IdempotencyStore` interface + in-memory implementation. A key is bound to a request
+fingerprint (SHA-256 of canonical JSON of action id + args): same key with a different
+request is a `conflict` and never runs. States: `new`, `in-flight`, `unknown-outcome`,
+`completed` (returns the stored result, never re-executes).
+
+`shouldRetry` is pure. It is false when the action is not idempotent, and *also* for
+`write-irreversible`, `financial` and `account-control` even if declared idempotent
+(D5 and D11: money calls are never retried automatically). Only idempotent `read` and
+`write-reversible` retry, only if the failure is marked retryable, up to `maxAttempts`
+(default 1: no retry unless asked). An attempt that throws, or fails after the request may
+have been sent, leaves `unknown-outcome` and blocks re-execution until the key expires or
+a human reconciles. Only a failure marked `neverSent` releases the key.
+
+### 2.5 Receipts and redaction (`receipt.ts`, `redact.ts`)
+
+Receipts are built field by field from an allowlist (mode, tier, effect, action id,
+evidence ids, request class, engine, host, result, timing, mandate and confirmation ids,
+money summary, redacted error). Headers, bodies, cookies and query strings have no field
+to land in. The idempotency key is stored as a 16-hex digest. Every string then passes
+the `Redactor`.
+
+`Redactor` holds run-time secrets and removes each in raw, percent-encoded,
+JSON-escaped, hex, base64 (all three alignments inside a larger string) and base64url
+form, plus unregistered shapes: bearer/basic tokens, JWTs, `sk_live_`-style keys, AWS
+and GitHub token shapes, PEM private keys, `key=value` and `"key":"value"` for sensitive
+names, and Luhn-valid card numbers. Object keys that look sensitive are blanked
+regardless of value. Cycle-safe. Registering a secret under 4 characters throws (a
+one-character "secret" would shred every string; failing loudly beats failing open).
+The logger redacts messages, fields and errors and swallows sink failures without
+surfacing the input.
+
+Canary tests seed secrets into every string field of a receipt, into an error's message,
+into log fields, into every mandate/confirmation failure path, and scan the JSON output.
+
+### 2.6 Egress and rate (`egress.ts`, `ip.ts`, `rate.ts`, `robots.ts`)
+
+All pure; the caller does I/O and passes results in.
+
+- `compileEgressPolicy` throws on a malformed allowlist (bare `*`, `*.com`, scheme or
+  path in an entry): a typo must not become allow-all. Wildcards are subdomain-only.
+- `evaluateEgress(url, policy, resolved)`: https only (opt-in http), no userinfo
+  (including password-only), port allowlist, host lowercased and dot-stripped, internal
+  names and single-label hosts refused even if allowlisted, IP literals refused by
+  default. The WHATWG URL parser normalizes decimal/hex/octal/short/fullwidth IPv4
+  spellings before the check (tested with `2130706433`, `0x7f000001`, `017700000001`,
+  `127.1`, `127。0。0。1`).
+- DNS rebinding: the name's resolved addresses are an *input*. Missing, empty,
+  unparsable, or *any* non-public address in the set refuses the request. The decision
+  returns `pinned` addresses to connect to. No second lookup.
+- IPv4 deny list (RFC 1918, CGNAT, loopback, link-local/metadata, benchmarking,
+  documentation, multicast, reserved, broadcast, Azure wireserver). IPv6 is an
+  *allowlist*: only 2000::/3 minus 2001::/23 (Teredo, protocol assignments),
+  2001:db8::/32, 2002::/16 (6to4), 3fff::/20. Mapped (`::ffff:a.b.c.d` in either
+  notation), compatible and NAT64 forms inherit the embedded IPv4 verdict; ULA, link-local,
+  multicast, loopback and unspecified are outside 2000::/3. Zone ids are refused.
+  Property tests compare IPv4 classification to an independently written reference
+  (including boundary-biased inputs) and check the mapped/NAT64 inheritance.
+- `evaluateRedirect` re-runs everything on the target; refuses scheme downgrade, hop
+  overflow, and any cross-origin redirect of a non-GET/HEAD request; asks the caller to
+  strip credentials on cross-origin hops.
+- Rate: per-host concurrency cap, minimum spacing, `Retry-After` (delta-seconds or
+  IMF-fixdate only; anything else is "no value" and falls back to exponential backoff;
+  a later header never shortens an earlier floor; a value over the cap is reported as
+  `tooLong` so the caller returns `blocked` rather than sleeping), `Crawl-delay` raises
+  the spacing floor.
+- robots.txt per RFC 9309: group selection by product token (a specific group replaces
+  `*`, no merging), longest-pattern match, Allow wins ties, `*` and `$`, percent-encoding
+  normalized, 500 KiB cap. The matcher is iterative (no regex): a 1000-star pattern runs
+  in bounded time. Fetch outcomes: 2xx parse; 404/410 allow; 5xx, redirect/other and
+  unreachable disallow (RFC 9309); **401/403 also disallow, stricter than the RFC**
+  (which allows 4xx), because a site refusing the robots file is not inviting automated
+  access. Say so to site owners if it ever matters.
+
+### 2.7 Prompt-injection hygiene (`sanitize.ts`, `wrap.ts`, `hidden.ts`, `tooldesc.ts`)
+
+- `sanitizePageText` strips zero-width and format characters (including soft hyphen,
+  word joiner, BOM, ZWJ), bidi controls, Unicode **tag characters** and variation
+  selectors (both are used to smuggle text invisibly), C0/C1 controls, private-use and
+  unassigned code points; converts all line-break variants to `\n`; applies NFKC; then
+  flags (and optionally folds) mixed-script tokens and all-confusable tokens; caps length.
+  It returns flags with counts, never positions or page text. Tag-smuggled text is
+  decoded into `quarantined` for audit only and must never reach a surface field.
+  Known cost: stripping ZWJ breaks emoji ZWJ sequences into their parts. Safety over
+  fidelity; revisit if it matters.
+- `wrapPageText` output: `[[PAGE-CONTENT ... ref= sha= flags=]]`, a fixed rule line,
+  then every content line prefixed `| `, then a closing marker with the same hash.
+  Content is escaped (`& < > [ ] backtick`) so no markup, markdown link/image or fence
+  survives. The prefix is the structural guarantee: no content line can equal a marker
+  line, whatever the content (property-tested over hostile strings including forged
+  markers). The hash is a tamper check, not a security boundary. `unwrapPageText` is
+  strict and used by the tests to prove a round trip. `ref` must be a surface-generated
+  id.
+- `collectText` implements the hidden-text rules over a plain node description carrying
+  computed style: excluded tags, `display:none`, `visibility` (with descendant opt-in),
+  `hidden`, `aria-hidden`, `inert`, `opacity` <= 0.01, font < 2px, contrast < 1.1 or
+  transparent colour, off-screen positioning or `text-indent`, `clip`/`clip-path`,
+  zero-size overflow-hidden, `scale(0)`, `content-visibility:hidden`, closed `<details>`.
+  A hidden box hides its subtree; computed font size, colour and visibility are judged
+  per node. Excluded segments record reasons and length only, never the text. Opt-in
+  `includeHidden` returns it tagged with reasons.
+- `describeTool` builds names and descriptions from closed vocabularies and ids of the
+  form `act_<hex>`; any field outside the vocabulary throws a `TypeError` that does not
+  echo the input; vocabulary membership uses `Object.hasOwn` (so `__proto__`,
+  `constructor` are not vocabulary). Page labels travel in a separate `pageLabels` field
+  marked `origin: "page"`. Property test: for arbitrary page labels on valid specs no
+  page string reaches name, description or parameters; for arbitrary strings in any
+  surface field the call throws and the error does not contain them.
+- Corpus: `fixtures/injection/corpus.json`, 35 items generated by
+  `scripts/gen-corpus.ts` (invisible characters are `\uXXXX` escapes in the file). 16
+  hidden-DOM cases, 18 text cases (zero-width, bidi, tag and variation-selector
+  smuggling, controls, three homoglyph kinds, fullwidth/ligature, forged open/close
+  markers, line-separator breakout, role-prefix lines, fence/tool-call breakout, HTML,
+  markdown exfil image, 1M characters, 5000-char token), and a tool-description
+  injection case. Each has machine-checked expectations; the same invariants are applied
+  to every item and to random hostile strings.
+
+## 3. Test inventory
+
+`bun test` (283 tests, ~1 s):
+
+| File | What it pins |
+| --- | --- |
+| `policy.table.test.ts` | all 75 mode x tier x effect cells, end to end through `authorize` with every proof supplied, against a hand-written table; the 15-cell mode x effect table; what each effect demands when proofs are missing; default deny; evidence; credentials; `neverRetry` |
+| `mandate.test.ts` | signature, expiry/notBefore boundaries, over-cap, per-call cap, wrong merchant (suffix and substring tricks), currency, action scope, lifetime, revocation, unknown keys, forged brand, cumulative cap, concurrent reserve, release/ambiguous, domain separation, public-key verifier cannot sign |
+| `confirm.test.ts` | each bound field mismatch, one-unit total change, null bindings, expiry, TTL, foreign key, single use incl. concurrency and replay-does-not-spend, non-consumption on mismatch, re-check in `decide` |
+| `idempotency.test.ts` | retry rules for every effect, conflict, in-flight, unknown outcome, never-sent release, expiry, fingerprint stability |
+| `redact.test.ts` | canary scan over receipts, errors, logs, refusals, authorization results; every encoding and embedding |
+| `egress.test.ts`, `rate.test.ts`, `robots.test.ts` | allowlist and wildcard edges, userinfo tricks, IP spellings, IPv6 forms, rebinding sets, redirects; Retry-After; RFC 9309 behaviour |
+| `injection.test.ts`, `hidden.test.ts` | corpus; wrapper contract; hidden rules |
+| `properties.test.ts` | fast-check (4.5.3, exact-pinned): wrapper structure, sanitizer invariants and idempotence, tool descriptions never interpolate page text, IPv4 vs reference, mapped/NAT64 inheritance, global-unicast-only IPv6, rebinding sets, confirmation binding equality, ledger never exceeds cap, redaction, codecs, robots matching. `FC_SEED=<n>` reproduces a run |
+| `mutation-guard.test.ts` | every mutation still applies to exactly one place |
+
+**Mutation tests.** `bun run mutate` applies each of 124 one-edit mutants (flip a
+comparison, drop a negation, remove an escape, narrow a CIDR, widen a cap, delete a
+check) to a throwaway copy and requires `bun test` to go red; it refuses to run on a red
+baseline and reports the first failing test per mutant. Result: **124/124 killed**.
+First run killed 120/125: the survivors exposed real gaps, now closed with tests:
+`neverRetry` for irreversible/financial/account-control in `authorize` was untested;
+a password-only userinfo URL was untested; sensitive-key blanking was masked by the
+value patterns; propagation of hidden reasons to descendants was untested. One further
+mutant (removing the explicit `%` check in `parseIPv6`) is an equivalent mutant (the group
+parser rejects `%` anyway) and was dropped, noted in `scripts/mutations.ts`.
+
+## 4. API sketch
+
+```ts
+import { authorize, InMemorySpendLedger, InMemoryConsumedStore, ed25519Verifier, hmacSigner } from "agent-policy";
+
+const r = await authorize(request, { mandate, confirmation }, {
+    mandateVerifier, confirmationVerifier, ledger, consumed,
+});
+if (!r.ok) return { status: r.status, code: r.code, missing: r.missing }; // D10
+try { /* send; never retry when r.neverRetry */ await r.settle("committed"); }
+catch { /* outcome unknown: do not release */ }
+```
+
+Executor obligations (library cannot do them): connect only to `EgressDecision.pinned`;
+own the clock; evaluate robots per URL and pass the verdict; use `runWithIdempotency` for
+every non-read call; build receipts with a `Redactor` that has every run-time secret
+registered; never log before redacting.
+
+## 5. Interface notes for the parent session (agent-schema)
+
+`agent-schema` branch `claude/agent-schema-82d14a` (unmerged) was read, not changed.
+
+Aligned already (identical vocabularies): `Mode`, `Tier`, `Effect`, evidence source order,
+`OperationStatus`. My `types.ts` can be replaced by re-exports once merged.
+
+Differences to agree before migration:
+
+1. **Mandate shape.** Schema `Mandate` has `spend_cap_minor`, `per_call_cap_minor`,
+   `scope` of `{kind: action|flow, id}`, `issued_at`/`expires_at`, and a content `hash`,
+   but **no signature**. The policy library signs the *canonical mandate* in an envelope
+   (`token = payload.sig`). Proposal: keep `Mandate` as the payload that is signed and add
+   a `SignedMandate = { mandate, signature }` (or keep the compact token) to the schema; I
+   will adapt field names (`capMinor` -> `spend_cap_minor`, etc.) and accept `flow` scope.
+   Wildcard scopes should stay out of the schema's `merchants`/`scope`.
+2. **Confirmation binding.** Schema binds a confirmation to `request_digest` +
+   `idempotency_key` (one exact request). Mine binds explicit fields (action, item, total,
+   currency, payee), which gives a precise mismatch message but is weaker if two requests
+   share those fields. Proposal: bind **both** (fields for the refusal message, digest for
+   exactness) and add `request_digest` to my token.
+3. **PageText.** Schema: `{origin:"page", value}`; mine: `{origin:"page", text, flags}`.
+   I will switch to `value` and carry `flags` beside it.
+4. **Blocked reasons.** Schema's `BlockedReason` enum (`robots`, `rate_limit`,
+   `host_not_allowed`, `private_address`, `redirect_off_host`, `mode_forbids_tier`,
+   `mode_forbids_effect`, `mandate_*`, `confirmation_mismatch`, ...) is the right surface
+   for my refusal `code`s. I will map each code to a `BlockedReason` plus keep my finer
+   code as `detail`.
+5. **IdempotencyKey** pattern in the schema is `[A-Za-z0-9_-]{16,128}`; mine accepts
+   printable ASCII 8-128. I will tighten to the schema's.
+
+## 6. Open items
+
+- Migrate to `agent-schema` types after its first PR merges (section 5).
+- Real `SpendLedger`, `IdempotencyStore`, `ConsumedStore` for a multi-process executor
+  need an atomic backing store; the interfaces state the required atomicity.
+- Decide whether `read-only` T1 navigation to *other* hosts needs its own allowlist
+  entry (it does today: egress is allowlist-only).
+- ToS check result is a caller-supplied boolean-like input; its provenance is recorded
+  in the manifest, not verified here.
+- Emoji ZWJ sequences are split by sanitization (documented cost).
