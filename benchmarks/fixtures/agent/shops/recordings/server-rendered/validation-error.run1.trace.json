@@ -1,0 +1,346 @@
+{
+ "version": 1,
+ "stack": "server-rendered",
+ "scenario": "validation-error",
+ "run": 1,
+ "seed": 21,
+ "inputs": {
+  "sku": "mug",
+  "quantity": "1",
+  "rate": "Express",
+  "address": {
+   "name": "Ada Quill",
+   "line1": "12 Larch Lane",
+   "city": "Portland",
+   "region": "OR",
+   "postalCode": "97201",
+   "country": "US"
+  },
+  "badQuantity": "0",
+  "badAddress": {
+   "postalCode": "ABC"
+  }
+ },
+ "events": [
+  {
+   "id": "e0",
+   "type": "load",
+   "target": "document",
+   "inputs": {},
+   "requests": [
+    "r1",
+    "r2",
+    "r3",
+    "r4"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#start-cart",
+     "#flow"
+    ],
+    "removed": [
+     "#catalog"
+    ]
+   }
+  },
+  {
+   "id": "e1",
+   "type": "click",
+   "target": "#start-cart",
+   "inputs": {},
+   "requests": [
+    "r5"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ]
+   }
+  },
+  {
+   "id": "e2",
+   "type": "click",
+   "target": "li[data-sku=\"mug\"] [data-action=add]",
+   "inputs": {
+    "quantity": "0"
+   },
+   "requests": [
+    "r6"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ]
+   }
+  },
+  {
+   "id": "e3",
+   "type": "click",
+   "target": "li[data-sku=\"mug\"] [data-action=add]",
+   "inputs": {
+    "quantity": "1"
+   },
+   "requests": [
+    "r7"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ]
+   }
+  },
+  {
+   "id": "e4",
+   "type": "click",
+   "target": "#save-address",
+   "inputs": {
+    "name": "Ada Quill",
+    "line1": "12 Larch Lane",
+    "city": "Portland",
+    "region": "OR",
+    "postalCode": "ABC",
+    "country": "US"
+   },
+   "requests": [
+    "r8"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ]
+   }
+  },
+  {
+   "id": "e5",
+   "type": "click",
+   "target": "#save-address",
+   "inputs": {
+    "name": "Ada Quill",
+    "line1": "12 Larch Lane",
+    "city": "Portland",
+    "region": "OR",
+    "postalCode": "97201",
+    "country": "US"
+   },
+   "requests": [
+    "r9",
+    "r10"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow",
+     "#rates"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow",
+     "#rates"
+    ]
+   }
+  },
+  {
+   "id": "e6",
+   "type": "click",
+   "target": "#save-rate",
+   "inputs": {
+    "rate": "Express"
+   },
+   "requests": [
+    "r11"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow"
+    ]
+   }
+  },
+  {
+   "id": "e7",
+   "type": "click",
+   "target": "#pay",
+   "inputs": {
+    "method": "test_ok"
+   },
+   "requests": [
+    "r12",
+    "r13",
+    "r14"
+   ],
+   "domChanges": {
+    "added": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow",
+     "#order-status"
+    ],
+    "removed": [
+     "#alert",
+     "#catalog",
+     "#cart",
+     "#flow",
+     "#order-status"
+    ]
+   }
+  }
+ ],
+ "requests": [
+  {
+   "id": "r1",
+   "method": "GET",
+   "path": "/",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r2",
+   "method": "GET",
+   "path": "/static/enhance.js",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r3",
+   "method": "GET",
+   "path": "/static/sign.js",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r4",
+   "method": "GET",
+   "path": "/catalog",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r5",
+   "method": "POST",
+   "path": "/carts",
+   "status": 201,
+   "initiator": "e1"
+  },
+  {
+   "id": "r6",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/items",
+   "status": 422,
+   "initiator": "e2"
+  },
+  {
+   "id": "r7",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/items",
+   "status": 200,
+   "initiator": "e3"
+  },
+  {
+   "id": "r8",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/address",
+   "status": 422,
+   "initiator": "e4"
+  },
+  {
+   "id": "r9",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/address",
+   "status": 200,
+   "initiator": "e5"
+  },
+  {
+   "id": "r10",
+   "method": "GET",
+   "path": "/carts/cart_7a0999fd/shipping-rates",
+   "status": 200,
+   "initiator": "e5"
+  },
+  {
+   "id": "r11",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/shipping-rate",
+   "status": 200,
+   "initiator": "e6"
+  },
+  {
+   "id": "r12",
+   "method": "POST",
+   "path": "/payments-stub/v1/tokens",
+   "status": 201,
+   "initiator": "e7"
+  },
+  {
+   "id": "r13",
+   "method": "POST",
+   "path": "/carts/cart_7a0999fd/orders",
+   "status": 201,
+   "initiator": "e7"
+  },
+  {
+   "id": "r14",
+   "method": "GET",
+   "path": "/orders/ord_715e3b45",
+   "status": 200,
+   "initiator": "e7"
+  }
+ ],
+ "finalDom": {
+  "orderId": "ord_715e3b45",
+  "orderStatus": "confirmed",
+  "alert": null
+ },
+ "note": "events are scripted user actions; `load` (e0) covers the document, script loads and requests issued on page load; DOM-level listener inventory is not available in this recorder"
+}

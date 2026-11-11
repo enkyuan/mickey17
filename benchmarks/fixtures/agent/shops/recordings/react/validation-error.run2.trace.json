@@ -1,0 +1,271 @@
+{
+ "version": 1,
+ "stack": "react",
+ "scenario": "validation-error",
+ "run": 2,
+ "seed": 22,
+ "inputs": {
+  "sku": "kettle",
+  "quantity": "2",
+  "rate": "Standard",
+  "address": {
+   "name": "Bo Tanaka",
+   "line1": "900 Harbor Way",
+   "city": "Austin",
+   "region": "TX",
+   "postalCode": "78701",
+   "country": "US"
+  },
+  "badQuantity": "abc",
+  "badAddress": {
+   "name": "",
+   "region": "Texas"
+  }
+ },
+ "events": [
+  {
+   "id": "e0",
+   "type": "load",
+   "target": "document",
+   "inputs": {},
+   "requests": [
+    "r1",
+    "r2",
+    "r3"
+   ],
+   "domChanges": {
+    "added": [
+     "#root"
+    ],
+    "removed": []
+   }
+  },
+  {
+   "id": "e1",
+   "type": "click",
+   "target": "#start-cart",
+   "inputs": {},
+   "requests": [
+    "r4"
+   ],
+   "domChanges": {
+    "added": [
+     "#cart-summary"
+    ],
+    "removed": [
+     "#start-cart"
+    ]
+   }
+  },
+  {
+   "id": "e2",
+   "type": "click",
+   "target": "li[data-sku=\"kettle\"] [data-action=add]",
+   "inputs": {
+    "quantity": "abc"
+   },
+   "requests": [
+    "r5"
+   ],
+   "domChanges": {
+    "added": [],
+    "removed": []
+   }
+  },
+  {
+   "id": "e3",
+   "type": "click",
+   "target": "li[data-sku=\"kettle\"] [data-action=add]",
+   "inputs": {
+    "quantity": "2"
+   },
+   "requests": [
+    "r6"
+   ],
+   "domChanges": {
+    "added": [
+     "#address-form"
+    ],
+    "removed": []
+   }
+  },
+  {
+   "id": "e4",
+   "type": "click",
+   "target": "#save-address",
+   "inputs": {
+    "name": "",
+    "line1": "900 Harbor Way",
+    "city": "Austin",
+    "region": "Texas",
+    "postalCode": "78701",
+    "country": "US"
+   },
+   "requests": [
+    "r7"
+   ],
+   "domChanges": {
+    "added": [],
+    "removed": []
+   }
+  },
+  {
+   "id": "e5",
+   "type": "click",
+   "target": "#save-address",
+   "inputs": {
+    "name": "Bo Tanaka",
+    "line1": "900 Harbor Way",
+    "city": "Austin",
+    "region": "TX",
+    "postalCode": "78701",
+    "country": "US"
+   },
+   "requests": [
+    "r8",
+    "r9"
+   ],
+   "domChanges": {
+    "added": [
+     "#rates"
+    ],
+    "removed": []
+   }
+  },
+  {
+   "id": "e6",
+   "type": "click",
+   "target": "#save-rate",
+   "inputs": {
+    "rate": "Standard"
+   },
+   "requests": [
+    "r10"
+   ],
+   "domChanges": {
+    "added": [
+     "#payment"
+    ],
+    "removed": []
+   }
+  },
+  {
+   "id": "e7",
+   "type": "click",
+   "target": "#pay",
+   "inputs": {
+    "method": "test_ok"
+   },
+   "requests": [
+    "r11",
+    "r12",
+    "r13"
+   ],
+   "domChanges": {
+    "added": [
+     "#confirmation"
+    ],
+    "removed": []
+   }
+  }
+ ],
+ "requests": [
+  {
+   "id": "r1",
+   "method": "GET",
+   "path": "/",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r2",
+   "method": "GET",
+   "path": "/static/app.js",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r3",
+   "method": "GET",
+   "path": "/api/products",
+   "status": 200,
+   "initiator": "e0"
+  },
+  {
+   "id": "r4",
+   "method": "POST",
+   "path": "/api/carts",
+   "status": 201,
+   "initiator": "e1"
+  },
+  {
+   "id": "r5",
+   "method": "POST",
+   "path": "/api/carts/cart_5d549a37/items",
+   "status": 422,
+   "initiator": "e2"
+  },
+  {
+   "id": "r6",
+   "method": "POST",
+   "path": "/api/carts/cart_5d549a37/items",
+   "status": 200,
+   "initiator": "e3"
+  },
+  {
+   "id": "r7",
+   "method": "PUT",
+   "path": "/api/carts/cart_5d549a37/address",
+   "status": 422,
+   "initiator": "e4"
+  },
+  {
+   "id": "r8",
+   "method": "PUT",
+   "path": "/api/carts/cart_5d549a37/address",
+   "status": 200,
+   "initiator": "e5"
+  },
+  {
+   "id": "r9",
+   "method": "GET",
+   "path": "/api/carts/cart_5d549a37/shipping-rates",
+   "status": 200,
+   "initiator": "e5"
+  },
+  {
+   "id": "r10",
+   "method": "PUT",
+   "path": "/api/carts/cart_5d549a37/shipping-rate",
+   "status": 200,
+   "initiator": "e6"
+  },
+  {
+   "id": "r11",
+   "method": "POST",
+   "path": "/payments-stub/v1/tokens",
+   "status": 201,
+   "initiator": "e7"
+  },
+  {
+   "id": "r12",
+   "method": "POST",
+   "path": "/api/carts/cart_5d549a37/orders",
+   "status": 201,
+   "initiator": "e7"
+  },
+  {
+   "id": "r13",
+   "method": "GET",
+   "path": "/api/orders/ord_bea7bf68",
+   "status": 200,
+   "initiator": "e7"
+  }
+ ],
+ "finalDom": {
+  "orderId": "ord_bea7bf68",
+  "orderStatus": "confirmed",
+  "alert": null
+ },
+ "note": "events are scripted user actions; `load` (e0) covers the document, script loads and requests issued on page load; DOM-level listener inventory is not available in this recorder"
+}
