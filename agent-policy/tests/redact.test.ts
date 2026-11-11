@@ -139,7 +139,7 @@ describe("canary scan: receipts, errors, logs, refusals", () => {
         );
         assertClean("receipt", rc);
         expect(rc.error?.message).toContain(REDACTED);
-        expect(rc.idempotencyKeyDigest).toMatch(/^[0-9a-f]{16}$/);
+        expect(rc.idempotencyKeyDigest).toMatch(/^[0-9a-f]{32}$/);
     });
 
     test("attributes not on the allowlist (headers, bodies, cookies) cannot be attached", async () => {

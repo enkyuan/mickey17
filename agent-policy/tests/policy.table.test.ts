@@ -20,6 +20,13 @@ const MODE_EFFECT: Record<Mode, Record<Effect, boolean>> = {
     delegated: { read: true, "write-reversible": true, "write-irreversible": true, financial: true, "account-control": true },
 };
 
+/** Independent oracle for *which* refusal a denied cell must produce. */
+function expectedDenyCode(mode: Mode, tier: Tier): string {
+    if (tier === "T4") return "tier-opaque";
+    if (mode === "read-only") return tier !== "T0" && tier !== "T1" ? "mode-read-only-tier" : "mode-read-only-effect";
+    return "tier-effect-incoherent";
+}
+
 function requestFor(mode: Mode, tier: Tier, effect: Effect): ActionRequest {
     const base: ActionRequest = {
         actionId: "act_pay",
@@ -59,7 +66,7 @@ describe("mode x tier x effect (every cell, with every proof supplied)", () => {
                         if (!r.ok) {
                             expect(r.missing.length).toBeGreaterThan(10);
                             expect(r.message.length).toBeGreaterThan(10);
-                            expect(r.code).toMatch(/^[a-z0-9-]+$/);
+                            expect(r.code).toBe(expectedDenyCode(mode, tier));
                         }
                     }
                 });
@@ -125,8 +132,11 @@ describe("default deny and evidence", () => {
 
     test("derived or inferred evidence never suffices for T2/T3", () => {
         for (const evidence of ["derived", "inferred"] as const) {
-            expect(decide({ ...requestFor("owner", "T2", "read"), evidence }).ok).toBe(false);
-            expect(decide({ ...requestFor("owner", "T3", "read"), evidence }).ok).toBe(false);
+            for (const tier of ["T2", "T3"] as const) {
+                const r = decide({ ...requestFor("owner", tier, "read"), evidence });
+                expect(!r.ok && r.code).toBe("evidence-insufficient");
+                expect(!r.ok && r.status).toBe("unsupported");
+            }
         }
         for (const evidence of ["declared", "observed"] as const) expect(decide({ ...requestFor("owner", "T2", "read"), evidence }).ok).toBe(true);
     });

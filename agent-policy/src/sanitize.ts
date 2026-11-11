@@ -38,7 +38,9 @@ export interface SanitizeOptions {
     readonly foldConfusables?: boolean;
 }
 
-const ZERO_WIDTH = new Set([0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x180e, 0x00ad, 0x2061, 0x2062, 0x2063, 0x2064, 0x034f, 0x115f, 0x1160, 0x3164, 0xffa0]);
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+const EMOJI = /\p{Extended_Pictographic}/u;
+const ZERO_WIDTH = new Set([0x2800, 0x17b4, 0x17b5, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x180e, 0x00ad, 0x2061, 0x2062, 0x2063, 0x2064, 0x034f, 0x115f, 0x1160, 0x3164, 0xffa0]);
 const BIDI = new Set([0x200e, 0x200f, 0x061c, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]);
 
 /** Cyrillic/Greek letters that render like Latin ones. Not exhaustive; flags, not proofs. */
@@ -49,9 +51,20 @@ const CONFUSABLES: Readonly<Record<string, string>> = {
     "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
 };
 
+/** Scripts that have Latin look-alikes. Han/Hiragana/Katakana/Hangul/Bopomofo count as one (CJK text mixes them legitimately). */
+const SCRIPT_TESTS: ReadonlyArray<readonly [string, RegExp]> = [
+    ["Latin", /\p{Script=Latin}/u], ["Cyrillic", /\p{Script=Cyrillic}/u], ["Greek", /\p{Script=Greek}/u], ["Armenian", /\p{Script=Armenian}/u],
+    ["Cherokee", /\p{Script=Cherokee}/u], ["Georgian", /\p{Script=Georgian}/u], ["Hebrew", /\p{Script=Hebrew}/u], ["Arabic", /\p{Script=Arabic}/u],
+    ["Coptic", /\p{Script=Coptic}/u], ["Lisu", /\p{Script=Lisu}/u], ["Canadian_Aboriginal", /\p{Script=Canadian_Aboriginal}/u],
+    ["Thai", /\p{Script=Thai}/u], ["Devanagari", /\p{Script=Devanagari}/u], ["Ethiopic", /\p{Script=Ethiopic}/u],
+    ["CJK", /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u],
+];
+function scriptOf(ch: string): string | null {
+    if (ch < "\u0080") return /[A-Za-z]/.test(ch) ? "Latin" : null;
+    for (const [name, re] of SCRIPT_TESTS) if (re.test(ch)) return name;
+    return null;
+}
 const LATIN = /\p{Script=Latin}/u;
-const CYR = /\p{Script=Cyrillic}/u;
-const GRK = /\p{Script=Greek}/u;
 const TOKEN = /[\p{L}\p{M}\p{N}_'-]+/gu;
 
 function bump(m: Map<FlagKind, number>, k: FlagKind, n = 1): void {
@@ -86,6 +99,12 @@ function stripInvisible(input: string, flags: Map<FlagKind, number>, tags: numbe
             bump(flags, "zero-width");
         } else if ((cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef)) {
             bump(flags, "variation-selector");
+        } else if (cp === 0xfe0e || cp === 0xfe0f) {
+            // emoji presentation selectors are only legitimate right after an emoji
+            if (EMOJI.test(Array.from(out).at(-1) ?? "")) out += ch;
+            else bump(flags, "variation-selector");
+        } else if (DEFAULT_IGNORABLE.test(ch)) {
+            bump(flags, "zero-width");
         } else if (cp === 0xfffc || cp === 0xfffd || (cp >= 0xfff9 && cp <= 0xfffb) || /\p{Cf}/u.test(ch) || /\p{Co}/u.test(ch) || /\p{Cn}/u.test(ch) || /\p{Cs}/u.test(ch)) {
             bump(flags, "format-char");
         } else {
@@ -107,6 +126,13 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
         text = stripInvisible(folded, flags, tagRuns);
     }
 
+    const max = opts.maxChars ?? 20_000;
+    const cps = Array.from(text);
+    if (cps.length > max) {
+        bump(flags, "truncated", cps.length - max);
+        text = cps.slice(0, max).join("");
+    }
+
     // Look-alike detection per token.
     let result = "";
     let last = 0;
@@ -116,21 +142,19 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
         result += text.slice(last, start);
         last = start + tok.length;
         if (tok.length > 200) bump(flags, "long-token");
+        const scripts = new Set<string>();
         let hasLatin = false;
-        let hasCyr = false;
-        let hasGrk = false;
         let allMapped = true;
         let anyMapped = false;
         for (const ch of tok) {
-            if (LATIN.test(ch)) hasLatin = true;
-            else if (CYR.test(ch)) hasCyr = true;
-            else if (GRK.test(ch)) hasGrk = true;
+            const sc = scriptOf(ch);
+            if (sc) scripts.add(sc);
+            if (sc === "Latin") hasLatin = true;
             if (CONFUSABLES[ch] !== undefined) anyMapped = true;
             else if (!/[\p{N}_'-]/u.test(ch) && !LATIN.test(ch)) allMapped = false;
         }
-        const scripts = Number(hasLatin) + Number(hasCyr) + Number(hasGrk);
         let flagged = false;
-        if (scripts > 1) {
+        if (scripts.size > 1) {
             bump(flags, "mixed-script");
             flagged = true;
         } else if (anyMapped && allMapped && !hasLatin) {
@@ -141,13 +165,6 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
     }
     result += text.slice(last);
     text = result;
-
-    const max = opts.maxChars ?? 20_000;
-    const cps = Array.from(text);
-    if (cps.length > max) {
-        bump(flags, "truncated", cps.length - max);
-        text = cps.slice(0, max).join("");
-    }
 
     const quarantined = tagRuns
         .map((run) => run.map((cp) => (cp >= 0xe0020 && cp <= 0xe007e ? String.fromCharCode(cp - 0xe0000) : "")).join("").slice(0, 200))

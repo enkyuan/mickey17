@@ -1,5 +1,5 @@
 import type { Effect, Tier } from "./types.ts";
-import type { PageText } from "./wrap.ts";
+import { isPageText, type PageText } from "./wrap.ts";
 
 /**
  * Tool and parameter descriptions are surface-authored (D8): built only from closed
@@ -94,6 +94,12 @@ export function describeTool(spec: ToolSpec): ToolDescriptor {
         if (typeof p.id !== "string" || !ID_RE.test(p.id) || !(PARAM_TYPES as readonly string[]).includes(p.type) || typeof p.required !== "boolean") bad();
         return { name: p.id, type: p.type, required: p.required, description: `Parameter of type ${p.type}${p.required ? ", required" : ""}.` };
     });
+    if (spec.pageLabel !== undefined && !isPageText(spec.pageLabel)) bad();
+    const paramIds = new Set<string>(params.map((p) => p.name));
+    for (const [k, v] of Object.entries(spec.paramLabels ?? {})) {
+        // keys are surface ids of declared parameters; never free-form strings
+        if (!ID_RE.test(k) || !paramIds.has(k) || !isPageText(v)) bad();
+    }
     return {
         name: spec.id,
         description,

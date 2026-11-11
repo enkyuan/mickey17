@@ -121,6 +121,8 @@ export async function verifyMandate(
 export interface SpendRequest {
     readonly actionId: string;
     readonly merchant: string;
+    /** Who receives the money. Must also be on the allowlist (and equal the merchant, see policy.ts). */
+    readonly payee: string;
     readonly currency: string;
     readonly amountMinor: number;
 }
@@ -133,6 +135,7 @@ export function checkMandateScope(m: VerifiedMandate, s: SpendRequest, now: numb
     if (!isSafePosInt(s.amountMinor)) return refuse("blocked", "mandate-amount-invalid", "a positive integer amount in minor units", "Amount is not a positive integer.");
     if (!m.actions.includes(s.actionId)) return refuse("requires_auth", "mandate-action-not-scoped", "a mandate scoped to this action", "Mandate does not cover this action.");
     if (!m.merchants.includes(normalizeHost(s.merchant))) return refuse("requires_auth", "mandate-merchant-not-allowed", "a mandate whose allowlist names this merchant", "Merchant is not on the mandate allowlist.");
+    if (!m.merchants.includes(normalizeHost(s.payee))) return refuse("requires_auth", "mandate-payee-not-allowed", "a mandate whose allowlist names this payee", "Payee is not on the mandate allowlist.");
     if (s.currency !== m.currency) return refuse("requires_auth", "mandate-currency-mismatch", "a mandate in the call's currency", "Currency differs from the mandate currency.");
     if (m.perTxCapMinor !== null && s.amountMinor > m.perTxCapMinor) return refuse("requires_auth", "mandate-per-tx-cap-exceeded", "an amount within the mandate's per-call cap", "Amount exceeds the per-call cap.");
     if (s.amountMinor > m.capMinor) return refuse("requires_auth", "mandate-cap-exceeded", "an amount within the mandate cap", "Amount exceeds the mandate cap.");
@@ -175,7 +178,8 @@ export class InMemorySpendLedger implements SpendLedger {
 
     settle(mandateId: string, ref: string, outcome: SettleOutcome): Promise<void> {
         const e = this.#m.get(mandateId)?.get(ref);
-        if (e) {
+        // Only a reservation can be released; a committed spend is permanent.
+        if (e && e.state === "reserved") {
             if (outcome === "released") this.#m.get(mandateId)?.delete(ref);
             else e.state = "committed";
         }

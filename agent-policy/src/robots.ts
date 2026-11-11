@@ -34,7 +34,7 @@ export function parseRobots(text: string): Robots {
                 cur = { agents: [], rules: [], crawlDelay: null };
                 groups.push(cur);
             }
-            cur.agents.push(value.toLowerCase());
+            cur.agents.push(value.toLowerCase().replace(/\/.*$/, "").trim()); // "MochiAgent/1.0" -> "mochiagent"
             lastWasAgent = true;
             continue;
         }
@@ -71,7 +71,9 @@ export function robotsFromFetch(status: number | null, body: string): Robots {
 }
 
 /** Uppercase %XX; decode %XX of unreserved characters so equal paths compare equal. */
-function normalizePct(s: string): string {
+function normalizePct(input: string): string {
+    // non-ASCII is compared in its UTF-8 percent-encoded form (RFC 9309 2.2.2)
+    const s = input.replace(/[^\x00-\x7f]/gu, (c) => encodeURIComponent(c));
     return s.replace(/%([0-9a-fA-F]{2})/g, (_m, h: string) => {
         const c = String.fromCharCode(parseInt(h, 16));
         return /[A-Za-z0-9\-._~]/.test(c) ? c : `%${h.toUpperCase()}`;
@@ -122,12 +124,21 @@ export function evaluateRobots(robots: Robots, productToken: string, target: str
     const groups = matching.length > 0 ? matching : robots.groups.filter((g) => g.agents.includes("*"));
     const delay = groups.map((g) => g.crawlDelay).find((d) => d !== null) ?? null;
     if (groups.length === 0) return { allowed: true, reason: "no applicable group", crawlDelay: null };
-    const path = target === "" ? "/" : target.startsWith("/") ? target : `/${target}`;
+    // Evaluate the path the server will actually see: dot-segments and %2e are resolved by the URL parser.
+    let path: string;
+    try {
+        const u = new URL(target === "" ? "/" : target.startsWith("/") ? target : `/${target}`, "https://robots.invalid");
+        path = u.pathname + u.search;
+    } catch {
+        return { allowed: false, reason: "unparsable target", crawlDelay: delay };
+    }
     let best: RobotsRule | null = null;
     for (const g of groups) {
         for (const r of g.rules) {
             if (!patternMatches(r.pattern, path)) continue;
-            if (!best || r.pattern.length > best.pattern.length || (r.pattern.length === best.pattern.length && r.allow && !best.allow)) best = r;
+            const len = normalizePct(r.pattern).length;
+            const bestLen = best ? normalizePct(best.pattern).length : -1;
+            if (!best || len > bestLen || (len === bestLen && r.allow && !best.allow)) best = r;
         }
     }
     if (!best) return { allowed: true, reason: "no matching rule", crawlDelay: delay };

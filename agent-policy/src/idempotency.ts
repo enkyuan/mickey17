@@ -40,7 +40,10 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
 
     begin(key: string, fingerprint: string, now: number, ttlMs: number): Promise<Begin> {
         const e = this.#m.get(key);
-        if (e && e.expiresAt > now) {
+        // An entry that may have reached the server never silently expires into "new":
+        // an expired in-flight or unknown entry stays blocked as unknown-outcome.
+        if (e && e.expiresAt <= now && e.state !== "completed") e.state = "unknown";
+        if (e && (e.expiresAt > now || e.state === "unknown")) {
             if (e.fingerprint !== fingerprint) return Promise.resolve({ state: "conflict" });
             if (e.state === "completed" && e.result) return Promise.resolve({ state: "completed", result: e.result });
             return Promise.resolve({ state: e.state === "unknown" ? "unknown-outcome" : "in-flight" });

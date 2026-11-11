@@ -25,6 +25,8 @@ interface PatternRule {
 }
 
 const PATTERNS: readonly PatternRule[] = [
+    // Header-shaped credentials: everything to the end of the line (scheme words, several cookies).
+    { re: /(\b(?:set-cookie|cookie|proxy-authorization|authorization)\s*[:=]\s*)(?!["'])[^\r\n]+/gi, replace: (_m, pre) => `${pre}${REDACTED}` },
     { re: /\b(Bearer|Basic|Digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi, replace: (_m, scheme) => `${scheme} ${REDACTED}` },
     { re: /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g },
     { re: /\b(?:sk|rk|pk_live|whsec|xox[abprs])[-_](?:live|test)?[-_]?[A-Za-z0-9]{12,}/g },
@@ -44,7 +46,12 @@ const CARD = /\b(?:\d[ -]?){12,18}\d\b/g;
 /** Variants of one secret as it might appear after ordinary encoding. */
 function variants(secret: string): string[] {
     const out = new Set<string>([secret]);
-    out.add(encodeURIComponent(secret));
+    const enc = encodeURIComponent(secret);
+    out.add(enc);
+    out.add(enc.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase())); // lowercase %xx
+    out.add(enc.replaceAll("%20", "+")); // application/x-www-form-urlencoded
+    out.add(enc.replaceAll("%20", "+").replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase()));
+    out.add(encodeURI(secret));
     out.add(JSON.stringify(secret).slice(1, -1));
     out.add(JSON.stringify(secret).slice(1, -1).replaceAll("/", "\\/"));
     const bytes = utf8(secret);
@@ -97,9 +104,16 @@ export class Redactor {
     /** Deep copy with every string redacted and sensitive-named keys blanked. Cycle-safe. */
     redactDeep(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
         if (typeof value === "string") return this.redactString(value);
+        if (typeof value === "number" || typeof value === "bigint") {
+            // A secret or card number can travel as a number: judge its decimal text.
+            const text = String(value);
+            return this.redactString(text) === text ? value : REDACTED;
+        }
         if (value === null || typeof value !== "object") {
             return typeof value === "function" || typeof value === "symbol" ? REDACTED : value;
         }
+        // Raw bytes may hold a secret in any encoding: never emit them.
+        if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return REDACTED;
         if (seen.has(value)) return "[Circular]";
         seen.add(value);
         if (value instanceof Error) return this.errorToJson(value);

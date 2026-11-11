@@ -1,6 +1,10 @@
 import { sanitizePageText, type Flag, type SanitizeOptions } from "./sanitize.ts";
 
-/** Branded so a page string cannot be passed where surface-authored text is required. */
+/**
+ * Page-origin text. Only `pageText()` can create one: instances are registered in a
+ * module-private WeakSet and `wrapPageText`/`describeTool` refuse anything else, so a
+ * hand-built object (unsanitised text, forged flags) cannot reach a marker line.
+ */
 export interface PageText {
     readonly origin: "page";
     readonly text: string;
@@ -43,9 +47,17 @@ export function unescapePage(s: string): string {
         .replaceAll("&amp;", "&");
 }
 
+const issued = new WeakSet<object>();
+
+export function isPageText(x: unknown): x is PageText {
+    return typeof x === "object" && x !== null && issued.has(x);
+}
+
 export function pageText(raw: string, opts?: SanitizeOptions): PageText {
     const r = sanitizePageText(raw, opts);
-    return Object.freeze({ origin: "page" as const, text: r.text, flags: r.flags });
+    const p = Object.freeze({ origin: "page" as const, text: r.text, flags: Object.freeze(r.flags.map((f) => Object.freeze({ ...f }))) });
+    issued.add(p);
+    return p;
 }
 
 /**
@@ -56,6 +68,7 @@ export function pageText(raw: string, opts?: SanitizeOptions): PageText {
  */
 export function wrapPageText(page: PageText, ref: string): string {
     if (typeof ref !== "string" || !REF.test(ref)) throw new TypeError("ref must be a surface-generated id");
+    if (!isPageText(page)) throw new TypeError("page text must come from pageText()");
     const body = escapePage(page.text);
     const sha = fnv1a64(body);
     const flags = page.flags.length ? page.flags.map((f) => f.kind).join(",") : "none";

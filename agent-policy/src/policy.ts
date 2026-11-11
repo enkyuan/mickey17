@@ -135,6 +135,9 @@ export function checkStatic(req: ActionRequest): Refusal | null {
         if (tp.tos !== "ok") return refuse("blocked", "tos-not-cleared", "a recorded terms-of-service check that permits access", "The terms-of-service check is missing or negative.");
     }
 
+    if (req.mode === "read-only" && (req.requiresAuth === true || req.credential !== undefined)) {
+        return refuse("blocked", "read-only-private-endpoint", "owner or delegated mode (read-only never replays private endpoints or attaches credentials)", "Mode read-only does not permit authenticated requests.");
+    }
     const needsCredential = req.effect !== "read" || req.requiresAuth === true;
     if (needsCredential && req.mode !== "read-only") {
         const c = req.credential;
@@ -152,10 +155,16 @@ export function checkStatic(req: ActionRequest): Refusal | null {
         if (!m || typeof m.merchant !== "string" || typeof m.item !== "string" || typeof m.payee !== "string" || typeof m.currency !== "string" || !isSafePosInt(m.totalMinor)) {
             return refuse("blocked", "invalid-request", "a well-formed money object (merchant, item, totalMinor, currency, payee)", "Financial action lacks well-formed money details.");
         }
+        if (normalizeHost(m.payee) !== normalizeHost(m.merchant)) {
+            return refuse("blocked", "payee-merchant-mismatch", "a payee equal to the merchant the mandate allows", "The payee differs from the merchant being called.");
+        }
         if (req.idempotencyKey === undefined) return refuse("blocked", "idempotency-key-missing", "an idempotency key (money-moving calls must carry one)", "Financial action has no idempotency key.");
     }
-    if ((req.effect === "write-irreversible" || req.effect === "account-control") && req.item !== undefined && (typeof req.item !== "string" || req.item.length === 0 || req.item.length > 256)) {
-        return refuse("blocked", "invalid-request", "a well-formed item", "Request field item is malformed.");
+    if (req.effect === "write-irreversible" || req.effect === "account-control") {
+        if (req.item === undefined) return refuse("blocked", "item-missing", "the item or target the confirmation is bound to", "Irreversible and account-control actions must name their target.");
+        if (typeof req.item !== "string" || req.item.length === 0 || req.item.length > 256) {
+            return refuse("blocked", "invalid-request", "a well-formed item", "Request field item is malformed.");
+        }
     }
     return null;
 }
@@ -172,7 +181,7 @@ export function checkProofs(req: ActionRequest, proofs: Proofs): Refusal | null 
     if (req.effect === "financial" && req.money) {
         const m = proofs.mandate;
         if (!m) return refuse("requires_auth", "mandate-missing", "a verified mandate (scoped, expiring, merchant allowlist, spend cap, currency)", "No mandate was supplied for a money-moving action.");
-        const scope = checkMandateScope(m, { actionId: req.actionId, merchant: req.money.merchant, currency: req.money.currency, amountMinor: req.money.totalMinor }, req.now);
+        const scope = checkMandateScope(m, { actionId: req.actionId, merchant: req.money.merchant, payee: req.money.payee, currency: req.money.currency, amountMinor: req.money.totalMinor }, req.now);
         if (scope) return scope;
         if (!isVerifiedMandate(m)) return refuse("requires_auth", "mandate-unverified", "a verified mandate", "Mandate was not produced by verification.");
     }
@@ -188,7 +197,10 @@ export function checkProofs(req: ActionRequest, proofs: Proofs): Refusal | null 
     return null;
 }
 
-/** Synchronous decision over already-verified proofs. Default deny. */
+/**
+ * Synchronous decision over already-verified proofs. Default deny. It does NOT reserve
+ * spend or consume a confirmation: executors must call `authorize`, never this alone.
+ */
 export function decide(req: ActionRequest, proofs: Proofs = {}): Allow | Refusal {
     const s = checkStatic(req);
     if (s) return s;
@@ -271,15 +283,26 @@ export async function authorize(req: ActionRequest, tokens: Tokens, deps: Author
         }
     }
     const res = reserved;
+    let settled = false;
     return {
         ok: true,
         neverRetry: d.neverRetry,
         mandateId: proofs.mandate?.id ?? null,
         confirmationId: proofs.confirmation?.jti ?? null,
         async settle(outcome) {
+            if (settled) return; // one-shot: a second settle can never undo the first
+            settled = true;
             if (res) await deps.ledger.settle(res.id, res.ref, outcome);
         },
     };
+}
+
+/**
+ * Executor obligation: the host a financial request is actually sent to must be the
+ * merchant that was authorized. Call this with the egress decision's host.
+ */
+export function hostMatchesMerchant(egressHost: string, merchant: string): boolean {
+    return normalizeHost(egressHost) === normalizeHost(merchant);
 }
 
 export { normalizeHost };

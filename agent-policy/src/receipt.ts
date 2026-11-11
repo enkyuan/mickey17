@@ -40,7 +40,7 @@ export interface Receipt {
     readonly durationMs: number;
     readonly mandateId: string | null;
     readonly confirmationId: string | null;
-    /** Digest only: the key itself may be guessable or sensitive. */
+    /** Digest only (128 bits of SHA-256): the key itself may be sensitive. Not a secret-hiding construction for low-entropy keys. */
     readonly idempotencyKeyDigest: string | null;
     readonly money: { readonly totalMinor: number; readonly currency: string; readonly payee: string } | null;
     readonly error: { readonly name: string; readonly message: string } | null;
@@ -70,7 +70,7 @@ export async function buildReceipt(i: ReceiptInput, redactor: Redactor): Promise
         durationMs: i.durationMs,
         mandateId: i.mandateId == null ? null : r(i.mandateId),
         confirmationId: i.confirmationId == null ? null : r(i.confirmationId),
-        idempotencyKeyDigest: i.idempotencyKey === undefined ? null : (await sha256Hex(i.idempotencyKey)).slice(0, 16),
+        idempotencyKeyDigest: i.idempotencyKey === undefined ? null : (await sha256Hex(i.idempotencyKey)).slice(0, 32),
         money: i.money ? { totalMinor: i.money.totalMinor, currency: r(i.money.currency), payee: r(i.money.payee) } : null,
         error: i.error === undefined ? null : redactor.errorToJson(i.error),
     };

@@ -4,6 +4,7 @@ import { refuse, type Refusal } from "./types.ts";
 
 export const CONFIRMATION_DOMAIN = "mochi-agent-policy/confirmation/v1";
 const DEFAULT_MAX_TTL_MS = 15 * 60 * 1000;
+const CONSUMED_RETENTION_MS = 24 * 3600 * 1000;
 
 /**
  * What the human saw and approved (D5, D11): the action, the item, the total, the
@@ -101,8 +102,12 @@ export interface ConsumedStore {
 
 export class InMemoryConsumedStore implements ConsumedStore {
     readonly #seen = new Map<string, number>();
+    #highWater = Number.NEGATIVE_INFINITY;
     consume(jti: string, expiresAt: number, now: number): Promise<boolean> {
-        for (const [k, exp] of this.#seen) if (exp <= now) this.#seen.delete(k);
+        // Prune against the highest clock value ever seen, with a long margin, so a clock
+        // that steps backwards cannot make an already-spent token spendable again.
+        this.#highWater = Math.max(this.#highWater, now);
+        for (const [k, exp] of this.#seen) if (exp + CONSUMED_RETENTION_MS <= this.#highWater) this.#seen.delete(k);
         if (this.#seen.has(jti)) return Promise.resolve(false);
         this.#seen.set(jti, expiresAt);
         return Promise.resolve(true);

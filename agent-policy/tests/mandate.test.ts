@@ -6,7 +6,7 @@ import { ed25519Verifier, generateEd25519, hmacSigner } from "../src/sign.ts";
 import { issueConfirmation } from "../src/confirm.ts";
 import { baseMandate, confirmToken, HOUR, mandateToken, moneyReq, NOW, world } from "./helpers.ts";
 
-const spend = { actionId: "act_pay", merchant: "shop.example.com", currency: "USD", amountMinor: 4_999 };
+const spend = { actionId: "act_pay", merchant: "shop.example.com", payee: "shop.example.com", currency: "USD", amountMinor: 4_999 };
 
 async function verified(w: Awaited<ReturnType<typeof world>>, over = {}): Promise<VerifiedMandate> {
     const r = await verifyMandate(await mandateToken(w, over), w.mandateVerifier, { now: NOW });

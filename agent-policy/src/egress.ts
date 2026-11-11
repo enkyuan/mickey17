@@ -18,6 +18,9 @@ export interface EgressPolicy {
     readonly maxRedirects: number;
 }
 
+/** A small, non-exhaustive guard against wildcards on public suffixes. */
+const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.jp", "co.nz", "co.in", "co.za", "com.br", "com.cn", "com.mx", "github.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "appspot.com", "cloudfront.net", "amazonaws.com", "blogspot.com"]);
+
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /** Throws on a malformed allowlist: a typo must not become a silent allow-all. */
@@ -36,7 +39,7 @@ export function compileEgressPolicy(p: EgressPolicyInput): EgressPolicy {
         }
         const labels = body.split(".");
         if (!labels.every((l) => LABEL.test(l))) throw new RangeError("invalid allowlist entry");
-        if (wild && labels.length < 2) throw new RangeError("wildcard must cover a registrable domain");
+        if (wild && (labels.length < 2 || PUBLIC_SUFFIXES.has(body))) throw new RangeError("wildcard must cover a registrable domain");
         if (wild) suffixes.push(`.${body}`);
         else exact.add(body);
     }
@@ -63,7 +66,8 @@ export type EgressRefusalCode =
     | "resolution-empty"
     | "redirect-limit"
     | "redirect-scheme-downgrade"
-    | "redirect-cross-host-write";
+    | "redirect-cross-host-write"
+    | "not-a-redirect";
 
 export type EgressDecision =
     | { allow: true; url: string; host: string; port: number; /** connect to exactly these addresses */ pinned: readonly string[]; stripCredentials: boolean }
@@ -145,6 +149,7 @@ export interface RedirectInput {
  * effects, or carry credentials to another origin.
  */
 export function evaluateRedirect(r: RedirectInput, policy: EgressPolicy, resolved: readonly string[] | undefined): EgressDecision {
+    if (![301, 302, 303, 307, 308].includes(r.status)) return deny("not-a-redirect", "Response status is not a redirect.");
     if (r.hop + 1 > policy.maxRedirects) return deny("redirect-limit", "Too many redirects.");
     let from: URL;
     let to: URL;
