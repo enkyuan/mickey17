@@ -14,11 +14,11 @@ use super::classes::Theme;
 use super::emit::{apply_css, pseudo_css, recipe_css, render_classes};
 use super::layers::{
     ElementLayers, ForcedDom, Layer, Overlay, Settle, State, layer_for, layer_of, place,
-    settle_plan, width_breakpoints,
+    reveal_plan, settle_plan, width_breakpoints,
 };
 use super::par;
 use super::tailwind;
-use super::verify::{StyleCheck, check, unreachable_state_rules};
+use super::verify::{RevealRanges, StyleCheck, check, unreachable_state_rules};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -112,6 +112,108 @@ fn per_width<T: Clone>(
     out
 }
 
+/// How many text-bearing elements the emitted styles show or hide at the captured width (a
+/// static reading of the translated layers, with opacity, `display` and inherited `visibility`).
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct TextVisibility {
+    pub text_elements: usize,
+    pub visible: usize,
+    pub hidden_by_opacity: usize,
+    pub hidden_by_visibility: usize,
+    pub hidden_by_display: usize,
+}
+
+/// What one element's final layer says about being seen.
+#[derive(Debug, Clone, Copy)]
+struct Visual {
+    opacity: f64,
+    /// `Some(true)` = `visibility: hidden` declared on the element itself.
+    visibility_hidden: Option<bool>,
+    display_none: bool,
+}
+
+/// `0.5`, `.5`, `50%`.
+fn parse_opacity(v: &str) -> Option<f64> {
+    let v = v.trim();
+    match v.strip_suffix('%') {
+        Some(p) => p.trim().parse::<f64>().ok().map(|n| n / 100.0),
+        None => v.parse::<f64>().ok(),
+    }
+}
+
+/// `computed` is the captured computed style: an opacity written as an expression (`var(--fade)`,
+/// `calc(...)`) is read from it instead of counting as fully visible.
+fn visual_of(layer: &Layer, computed: Option<&BTreeMap<String, String>>) -> Visual {
+    let decl = |p: &str| layer.decls.get(p).map(|v| v.trim());
+    Visual {
+        opacity: decl("opacity")
+            .map(|v| {
+                parse_opacity(v)
+                    .or_else(|| {
+                        computed
+                            .and_then(|c| c.get("opacity"))
+                            .and_then(|c| parse_opacity(c))
+                    })
+                    .unwrap_or(1.0)
+            })
+            .unwrap_or(1.0),
+        visibility_hidden: match decl("visibility") {
+            Some("hidden") | Some("collapse") => Some(true),
+            Some("visible") => Some(false),
+            _ => None,
+        },
+        display_none: decl("display") == Some("none"),
+    }
+}
+
+fn text_visibility(snap: &Snapshot, visuals: &HashMap<usize, Visual>) -> TextVisibility {
+    let mut out = TextVisibility::default();
+    for node in snap.elements() {
+        let Some(e) = snap.element(node) else {
+            continue;
+        };
+        if !snap.has_own_text(node) || matches!(e.tag.as_str(), "script" | "style" | "noscript") {
+            continue;
+        }
+        // Text in <head> (the title) is not page text.
+        let mut up = Some(node);
+        let mut in_head = false;
+        while let Some(n) = up {
+            if snap.element(n).is_some_and(|x| x.tag == "head") {
+                in_head = true;
+                break;
+            }
+            up = snap.element(n).and_then(|x| x.parent);
+        }
+        if in_head {
+            continue;
+        }
+        out.text_elements += 1;
+        let (mut opacity, mut display_none, mut hidden) = (1.0f64, false, None);
+        let mut cur = Some(node);
+        while let Some(n) = cur {
+            if let Some(v) = visuals.get(&n) {
+                opacity *= v.opacity;
+                display_none |= v.display_none;
+                if hidden.is_none() {
+                    hidden = v.visibility_hidden;
+                }
+            }
+            cur = snap.element(n).and_then(|e| e.parent);
+        }
+        if display_none {
+            out.hidden_by_display += 1;
+        } else if hidden == Some(true) {
+            out.hidden_by_visibility += 1;
+        } else if opacity < 0.01 {
+            out.hidden_by_opacity += 1;
+        } else {
+            out.visible += 1;
+        }
+    }
+    out
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct OverlayReport {
     pub viewport: String,
@@ -166,6 +268,7 @@ impl Untranslated {
         add_counts(&mut self.recovered_from_computed, o.recovered_from_computed);
         add_counts(&mut self.recovered_in_states, o.recovered_in_states);
         add_counts(&mut self.settled_from_computed, o.settled_from_computed);
+        self.reveal_pre_state_elements += o.reveal_pre_state_elements;
         for (k, v) in o.viewport_overridden {
             *self.viewport_overridden.entry(k).or_default() += v;
         }
@@ -197,6 +300,10 @@ pub struct Untranslated {
     /// Property -> elements whose author declaration was replaced by the captured end state
     /// (script-driven reveal: opacity 0 -> 1, translate offset -> none).
     pub settled_from_computed: BTreeMap<String, usize>,
+    /// Elements at opacity 0 that look like a once-only reveal (named so, offset with a fade, or
+    /// shown under reduced motion) and were written in their revealed state.
+    pub reveal_pre_state_elements: usize,
+    pub text_visibility: TextVisibility,
     /// Conditions under which rules never apply at any sampled width/environment (`@media print`,
     /// `prefers-reduced-motion: reduce`): their declarations are not in the output.
     pub never_applicable_conditions: BTreeMap<String, usize>,
@@ -404,6 +511,9 @@ fn tick(counter: &std::sync::atomic::AtomicU64, since: std::time::Instant) {
 
 struct NodeOut {
     part: Parts,
+    /// `(from, to, plan)`: the reveal of the width intervals `from..to` (0 = unbounded).
+    reveal_ranges: RevealRanges,
+    visual: Visual,
     settle: Vec<Settle>,
     sensitive: bool,
     untranslated: Untranslated,
@@ -564,6 +674,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
     let mut arbitrary_by_property: BTreeMap<String, usize> = BTreeMap::new();
     let captured_ix = bounds.iter().rposition(|&b| b <= snap.width).unwrap_or(0);
     let mut settle_map: HashMap<usize, Vec<Settle>> = HashMap::new();
+    let mut reveal_map: HashMap<usize, RevealRanges> = HashMap::new();
 
     // Other captured viewports: each paired element's own layer at that viewport's width.
     let mut overlays: Vec<Overlay> = Vec::new();
@@ -667,16 +778,28 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
                 let recover = other.computed(o);
                 // The paired element resolved on its own DOM and cascade: at rest, in every forced
                 // state and under reduced motion (never guessed from the primary's layers).
-                let plan = |l: &Layer| match recover {
-                    Some(c) if !other.animated.contains(&o) => settle_plan(l, c),
+                let toggles = cascade.opacity_toggles(&plain_other, o);
+                let plan = |l: &Layer, states: &BTreeMap<State, &Layer>| match recover {
+                    Some(c) => {
+                        let mut plan = settle_plan(l, c, other.animated.contains(&o));
+                        let attributes = other
+                            .element(o)
+                            .map_or(&[][..], |e| e.attributes.as_slice());
+                        if !other.animated.contains(&o) {
+                            for r in reveal_plan(attributes, l, states, c, &toggles) {
+                                if !plan.iter().any(|x| x.prop == r.prop) {
+                                    plan.push(r);
+                                }
+                            }
+                        }
+                        plan
+                    }
                     _ => Vec::new(),
                 };
                 let mut layer = layer_of(cascade, &plain_other, o, recover);
-                let settle = plan(&layer);
-                layer.apply_settle(&settle);
                 let mut states: BTreeMap<State, Layer> = BTreeMap::new();
                 for &state in &states_wanted {
-                    let mut l = if state == State::ReducedMotion {
+                    let l = if state == State::ReducedMotion {
                         match reduced {
                             Some(r) => layer_of(r, &plain_other, o, recover),
                             None => layer.clone(),
@@ -693,8 +816,12 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
                             layer.clone()
                         }
                     };
-                    l.apply_settle(&settle);
                     states.insert(state, l);
+                }
+                let settle = plan(&layer, &states.iter().map(|(s, l)| (*s, l)).collect());
+                layer.apply_settle(&settle);
+                for l in states.values_mut() {
+                    l.apply_settle(&settle);
                 }
                 (w, layer, states)
             },
@@ -777,11 +904,38 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             }
             // End states reached by the original's script (reveals): see `settle_plan`.
             tick(&T_STATES, t_states);
+            // Elements the capture lists with an animation (`animation_states`) carry the end values
+            // of that animation as their computed style, which is the state to keep.
             let settle: Vec<Settle> = match (recover, rest.get(captured_ix)) {
-                // An element captured with an animation in flight has transient computed values.
-                (Some(c), Some(at)) if !snap.animated.contains(&node) => settle_plan(at, c),
+                (Some(c), Some(at)) => settle_plan(at, c, snap.animated.contains(&node)),
                 _ => Vec::new(),
             };
+            // Reveals are decided per group of widths that activate the same rules (the reveal
+            // rule can be inactive at some widths), and not for elements the capture lists with an
+            // animation: it owns their opacity and may not have finished.
+            let mut reveals: Vec<(usize, Vec<Settle>)> = Vec::new();
+            if let Some(c) = recover
+                && !snap.animated.contains(&node)
+            {
+                let attributes = snap
+                    .element(node)
+                    .map_or(&[][..], |e| e.attributes.as_slice());
+                for r in 0..rest.len() {
+                    if rep_of[r] != r {
+                        continue;
+                    }
+                    let at_states: BTreeMap<State, &Layer> =
+                        states.iter().map(|(s, v)| (*s, &v[r])).collect();
+                    let toggles = cascades[r].opacity_toggles(&plain, node);
+                    let plan = reveal_plan(attributes, &rest[r], &at_states, c, &toggles);
+                    if !plan.is_empty() {
+                        reveals.push((r, plan));
+                    }
+                }
+                if reveals.iter().any(|(r, _)| *r == rep_of[captured_ix]) {
+                    untranslated.reveal_pre_state_elements += 1;
+                }
+            }
             if !settle.is_empty() {
                 for l in rest.iter_mut().chain(states.values_mut().flatten()) {
                     l.apply_settle(&settle);
@@ -791,6 +945,39 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
                         .settled_from_computed
                         .entry(sp.prop.clone())
                         .or_default() += 1;
+                }
+            }
+            let reveal_ranges: RevealRanges = (0..rest.len())
+                .filter_map(|i| {
+                    reveals
+                        .iter()
+                        .find(|(r, _)| *r == rep_of[i])
+                        .map(|(_, plan)| {
+                            (
+                                bounds[i],
+                                bounds.get(i + 1).copied().unwrap_or(0),
+                                plan.clone(),
+                            )
+                        })
+                })
+                .collect();
+            for (r, plan) in &reveals {
+                for i in 0..rest.len() {
+                    if rep_of[i] != *r {
+                        continue;
+                    }
+                    rest[i].apply_settle(plan);
+                    for layers in states.values_mut() {
+                        layers[i].apply_settle(plan);
+                    }
+                }
+                if *r == rep_of[captured_ix] {
+                    for sp in plan {
+                        *untranslated
+                            .settled_from_computed
+                            .entry(sp.prop.clone())
+                            .or_default() += 1;
+                    }
                 }
             }
             // Another captured viewport's own styles for this element (see `Overlay`).
@@ -952,6 +1139,8 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             }
             tick(&T_PSEUDO, t_pseudo);
             NodeOut {
+                reveal_ranges,
+                visual: visual_of(&rest[captured_ix], recover),
                 part: Parts {
                     node,
                     utilities,
@@ -966,9 +1155,14 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             }
         },
     );
+    let mut visuals: HashMap<usize, Visual> = HashMap::new();
     for out in outs {
+        visuals.insert(out.part.node, out.visual);
         if !out.settle.is_empty() {
             settle_map.insert(out.part.node, out.settle.clone());
+        }
+        if !out.reveal_ranges.is_empty() {
+            reveal_map.insert(out.part.node, out.reveal_ranges.clone());
         }
         if out.sensitive {
             state_sensitive.insert(out.part.node);
@@ -988,6 +1182,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             .or_default() += n;
     }
     untranslated.viewport_overlays = std::mem::take(&mut overlay_reports);
+    untranslated.text_visibility = text_visibility(snap, &visuals);
     lap(&format!(
         "layers+placement (cpu s: rest {:.1}, states {:.1}, place {:.1}, pseudo {:.1})",
         T_REST.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
@@ -1240,6 +1435,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         &|n| state_sensitive.contains(&n),
         &pseudo_nodes,
         &settle_map,
+        &reveal_map,
         &overlays,
     );
 
@@ -1451,6 +1647,14 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         gaps.push(format!(
             "Empty-valued longhands recovered from the captured computed style ({:?}) are frozen at that resting value at every width and state ({:?} also recovered inside forced states); the static check does not count them ({} comparisons) because the output carries the same text. var()-driven variation of these values is lost.",
             untranslated.recovered_from_computed, untranslated.recovered_in_states, verification.recovered_unverified
+        ));
+    }
+    {
+        let t = &untranslated.text_visibility;
+        gaps.push(format!(
+            "Text elements at the captured width: {} visible, {} hidden by opacity 0, {} by visibility: hidden, {} by display: none (of {}). {} opacity-0 elements were revealed as once-only fades; visibility/display panels (pinned story steps, carousels, responsive duplicates) stay as captured because showing them all at once would stack them.",
+            t.visible, t.hidden_by_opacity, t.hidden_by_visibility, t.hidden_by_display,
+            t.text_elements, untranslated.reveal_pre_state_elements
         ));
     }
     if untranslated.reduced_motion_with_state > 0 {
@@ -1742,6 +1946,7 @@ mod tests {
             &BTreeSet::new(),
             &|_| true,
             &[],
+            &HashMap::new(),
             &HashMap::new(),
             &[],
         );

@@ -115,12 +115,15 @@ pub struct Snapshot {
     pub nodes: Vec<Option<Element>>,
     /// Indices of element nodes with non-whitespace text children, for `:empty`.
     has_text: Vec<bool>,
+    /// Non-whitespace text of the element's own.
+    has_ink: Vec<bool>,
     children: Vec<Vec<usize>>,
     pub styles: Vec<BTreeMap<String, String>>,
     pub sheets: Vec<SheetRef>,
     /// Shadow/frame surfaces whose subtree is not covered by document stylesheets.
     pub shadow_roots: Vec<usize>,
-    /// Elements captured with an animation in flight; their computed values are not cascade values.
+    /// Elements the capture lists under `animation_states` (a running or finished animation was
+    /// sampled): their computed values may be mid-flight and are not cascade values.
     pub animated: std::collections::BTreeSet<usize>,
 }
 
@@ -254,6 +257,7 @@ impl Corpus {
         let mut nodes = Vec::with_capacity(raw.nodes.len());
         let mut children = vec![Vec::new(); raw.nodes.len()];
         let mut has_text = vec![false; raw.nodes.len()];
+        let mut has_ink = vec![false; raw.nodes.len()];
         for (index, node) in raw.nodes.iter().enumerate() {
             // Nodes are in document order: a parent always precedes its children. Anything
             // else (out-of-range or cyclic parents) is a corrupt capture, not something to walk.
@@ -304,6 +308,9 @@ impl Corpus {
                         if !text.is_empty() {
                             has_text[parent] = true;
                         }
+                        if !text.trim().is_empty() {
+                            has_ink[parent] = true;
+                        }
                     }
                     nodes.push(None);
                 }
@@ -330,6 +337,7 @@ impl Corpus {
             color_scheme: raw.color_scheme,
             nodes,
             has_text,
+            has_ink,
             children,
             styles,
             sheets,
@@ -354,6 +362,11 @@ impl Snapshot {
             .iter()
             .enumerate()
             .filter_map(|(i, n)| n.as_ref().map(|_| i))
+    }
+
+    /// Does the element have non-whitespace text of its own?
+    pub fn has_own_text(&self, node: usize) -> bool {
+        self.has_ink.get(node).copied().unwrap_or(false)
     }
 
     pub fn computed(&self, node: usize) -> Option<&BTreeMap<String, String>> {

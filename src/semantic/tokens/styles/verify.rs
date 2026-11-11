@@ -45,6 +45,9 @@ pub struct StyleCheck {
     pub samples: Vec<StyleDifference>,
 }
 
+/// Per node: `(from, to, plan)`, the reveal of the width intervals `from..to` (0 = unbounded).
+pub type RevealRanges = Vec<(u32, u32, Vec<Settle>)>;
+
 const SAMPLES: usize = 40;
 
 fn describe(snapshot: &Snapshot, node: usize) -> String {
@@ -119,6 +122,7 @@ pub fn check(
     state_nodes: &(dyn Fn(usize) -> bool + Sync),
     pseudo_nodes: &[(usize, Vec<String>)],
     settle: &HashMap<usize, Vec<Settle>>,
+    reveals: &HashMap<usize, RevealRanges>,
     overlays: &[Overlay],
 ) -> StyleCheck {
     let mut result = StyleCheck {
@@ -206,6 +210,12 @@ pub fn check(
                     let mut lb = layer_of(cb, &dom_before, node, recover);
                     if let Some(plan) = settle.get(&node) {
                         lb.apply_settle(plan);
+                    }
+                    // Reveals are decided per group of widths: only the one active at this width.
+                    for (from, to, plan) in reveals.get(&node).into_iter().flatten() {
+                        if width >= *from && (*to == 0 || width < *to) {
+                            lb.apply_settle(plan);
+                        }
                     }
                     // Widths that follow another captured viewport compare with that capture's own
                     // layer of the paired element.
