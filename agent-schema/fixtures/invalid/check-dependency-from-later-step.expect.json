@@ -1,0 +1,24 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        1,
+        "requests",
+        0,
+        "values",
+        0,
+        "value",
+        "edge",
+        "source",
+        "step"
+      ],
+      "code": "dependency_not_earlier"
+    }
+  ],
+  "why": "a derived value is sourced from the same or an earlier step"
+}

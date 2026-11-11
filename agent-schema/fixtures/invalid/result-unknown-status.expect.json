@@ -1,0 +1,13 @@
+{
+  "schema": "result",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "status"
+      ],
+      "code": "invalid_union"
+    }
+  ],
+  "why": "status is one of the D10 statuses"
+}

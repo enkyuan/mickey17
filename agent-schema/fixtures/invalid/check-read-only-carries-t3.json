@@ -1,0 +1,132 @@
+{
+  "kind": "agent-surface",
+  "schema_version": "1.0.0",
+  "hash": "sha256:72ba3ca81a9c81c6cce36dd3e187a17bcb35820b8b51fc79ba7289d6938d04b1",
+  "capture": {
+    "hash": "sha256:90c80e17c9159ef71190d3d9a423ef59e4f64c703fec2a82ce401e417aea7e60",
+    "captured_at": "2026-11-10T12:00:00Z",
+    "tool": {
+      "name": "mochi",
+      "version": "0.1.0"
+    }
+  },
+  "mode": "read-only",
+  "site": {
+    "host": "docs.example.test",
+    "scheme": "https"
+  },
+  "gates": {
+    "robots_txt": "allowed",
+    "llms_txt": "present",
+    "tos": "not-checked"
+  },
+  "options": {
+    "include_hidden": false
+  },
+  "coverage": {
+    "tiers": [
+      {
+        "tier": "T0",
+        "routes": 1,
+        "actions": 0,
+        "unsupported": 0
+      },
+      {
+        "tier": "T1",
+        "routes": 1,
+        "actions": 0,
+        "unsupported": 0
+      },
+      {
+        "tier": "T3",
+        "routes": 0,
+        "actions": 1,
+        "unsupported": 0
+      }
+    ],
+    "unsupported_reasons": []
+  },
+  "routes": [
+    {
+      "id": "index",
+      "url": {
+        "origin": "page",
+        "value": "/"
+      },
+      "tiers": [
+        "T0",
+        "T1"
+      ],
+      "nodes": [
+        {
+          "id": "n_daa00fb582363bd8",
+          "role": "heading",
+          "level": 1,
+          "name": {
+            "origin": "page",
+            "value": "Docs"
+          },
+          "text": {
+            "origin": "page",
+            "value": "Docs"
+          },
+          "visibility": "visible"
+        },
+        {
+          "id": "n_fd5340f57de00f85",
+          "role": "link",
+          "name": {
+            "origin": "page",
+            "value": "Guide"
+          },
+          "href": {
+            "origin": "page",
+            "value": "/guide"
+          },
+          "visibility": "visible",
+          "confidence": 80
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-guide",
+      "kind": "state",
+      "tier": "T3",
+      "effect": "read",
+      "node": "n_fd5340f57de00f85",
+      "label": {
+        "origin": "page",
+        "value": "Details"
+      },
+      "description": {
+        "origin": "surface",
+        "value": "Show the details panel."
+      },
+      "inputs": [],
+      "auth": {
+        "kind": "none"
+      },
+      "preconditions": [],
+      "postconditions": [],
+      "idempotency": {
+        "idempotent": true
+      },
+      "state": "enabled",
+      "affects": [
+        "n_daa00fb582363bd8"
+      ],
+      "evidence": [
+        {
+          "source": "observed",
+          "type": "interaction-trace",
+          "ref": "trace:3",
+          "hash": "sha256:f9ca13bd590b24969b9c38a297287ef332c52df33fc7ba08569b1cd25ddf755b"
+        }
+      ]
+    }
+  ],
+  "flows": [],
+  "unsupported": []
+}

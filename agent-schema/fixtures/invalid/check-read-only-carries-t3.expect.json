@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "tier"
+      ],
+      "code": "mode_forbids_tier"
+    }
+  ],
+  "why": "read-only surfaces carry T0/T1 only (D2)"
+}

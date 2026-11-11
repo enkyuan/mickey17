@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "title"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "page strings must be wrapped with origin: page (D8)"
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1
+      ],
+      "code": "unrecognized_keys"
+    }
+  ],
+  "why": "objects are strict: unknown fields fail (field drift)"
+}

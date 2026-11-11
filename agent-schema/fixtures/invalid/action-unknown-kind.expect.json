@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "kind"
+      ],
+      "code": "invalid_union"
+    }
+  ],
+  "why": "kind must be navigate|submit|fetch|state|download"
+}

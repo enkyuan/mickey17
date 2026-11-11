@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        0,
+        "route"
+      ],
+      "code": "dangling_reference"
+    }
+  ],
+  "why": "a navigate action points at a route that exists"
+}

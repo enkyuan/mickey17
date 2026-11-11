@@ -1,0 +1,6 @@
+{
+  "status": "requires_confirmation",
+  "action": "add-to-cart",
+  "effect": "financial",
+  "confirmation": "confirm-1"
+}

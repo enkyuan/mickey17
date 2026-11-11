@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "merchants"
+      ],
+      "code": "too_small"
+    }
+  ],
+  "why": "a mandate is tied to a merchant allowlist"
+}

@@ -1,0 +1,105 @@
+# agent-schema
+
+The single definition of the agent-surface wire format
+([docs/AGENT_SURFACE.md](../docs/AGENT_SURFACE.md), D1/D2/D4/D5/D8/D10/D11, section 6).
+Zod v4 schemas in `src/`; a JSON Schema generated from them is committed at
+`schema/agent-surface.schema.json` as the language-neutral contract.
+
+```bash
+cd agent-schema
+bun install --frozen-lockfile
+bun run check      # tsc --noEmit, generated-schema check, bun test
+bun run generate   # rewrite schema/agent-surface.schema.json
+```
+
+## What is here
+
+| Area | File | Contents |
+| --- | --- | --- |
+| Vocabulary | `src/policy.ts` | `Mode`, `Tier`, `Effect` (ordered), confirmation rule, evidence classes |
+| Origin | `src/origin.ts` | `PageText` / `SurfaceText` / `MarkedValue`: every string carries `origin: "page" \| "surface"` (D8) |
+| Results | `src/result.ts` | `OperationResult`, one variant per D10 status, including `requires_human` |
+| Actions | `src/action.ts` | `Action` (kind, inputs, effect, preconditions, postconditions, idempotency, evidence), `UnsupportedItem` |
+| Flows | `src/flow.ts`, `src/values.ts` | `Flow`, steps, requests, `ValueClass` (constant / input / derived / client-computed) with `DependencyEdge` |
+| Authority | `src/authority.ts` | `Mandate`, `ConfirmationRequest`, `ConfirmationToken`, `Receipt` |
+| Document | `src/surface.ts` | `AgentSurface`: version, content hash, capture pin, mode, gates, coverage, routes/nodes, actions, flows |
+| Code checks | `src/check.ts` | invariants the wire format cannot express; `validateSurface()` = parse + check |
+| Hash | `src/hash.ts` | RFC 8785 canonical form and `sha256:` content address |
+
+## Wire-format rules
+
+- Only constructs that convert cleanly to JSON Schema: no transforms, refinements, defaults, coercion, dates.
+  Anything else (cross-references, uniqueness, the hash, coverage totals, mode rules) is in `src/check.ts`
+  and runs after parsing. Consumers must run both: use `validateSurface()`.
+- Objects are strict. An unknown field is an error, so field drift between emitter and schema fails loudly.
+- Optional fields are absent, never `null`.
+- No floating point on the wire. Money is integer minor units; confidence is an integer percentage.
+  This keeps the canonical hash identical in JS and Rust.
+- Invariants that *can* be structural are: a non-navigate action's first evidence must be declared or
+  observed; each action kind fixes its tier; a derived value must carry its dependency edge; a blocked
+  flow lists its unclassified values and a ready flow has none; money confirmations carry item, total and payee.
+- No secret appears anywhere. Auth names a requirement; sensitive inputs are typed, never valued; there
+  is no card-number input type. A test fails if any schema property is named like a secret.
+- Free text is only ever inside `PageText`/`PageValue`/`PageUrl` (page) or `SurfaceText` (surface). A test
+  fails if a new bare string property appears without being added to a reviewed list.
+
+## Content hash
+
+`hash` = `sha256:` + hex of SHA-256 over the RFC 8785 canonical JSON of the document with the `hash` field
+omitted (`computeHash`). With no floats on the wire, canonical form is: UTF-8, object keys sorted by UTF-16
+code unit, no whitespace, strings as `JSON.stringify` writes them, integers in shortest decimal form.
+The Rust emitter must produce the same bytes; `fixtures/valid/*.json` are the shared test vectors.
+
+## Compatibility policy
+
+`schema_version` is `MAJOR.MINOR.PATCH` (currently `1.0.0`).
+
+- **Within a major, changes are additive:** new optional fields, new enum values, new union variants,
+  new documents. Nothing is removed, renamed, retyped or made required. A new required field is a major.
+- **Minor** bumps for additive change; **patch** for documentation or a fix that accepts no new documents
+  and rejects no previously valid ones.
+- A reader accepts a document of the same major and a minor **at most its own**: it knows every field
+  and enum value that document can use. A reader meeting a newer minor must refuse (strict objects make
+  this automatic) rather than guess.
+- An emitter writes the lowest minor that covers what it emitted, so older readers keep working.
+- Every change that alters `schema/agent-surface.schema.json` ships with the regenerated file and fixtures;
+  the check script and a test fail otherwise.
+- A major bump needs a migration note in `docs/agent-surface/log/agent-schema.md` and keeps the previous
+  major's schema file alongside.
+
+## How the Rust side validates
+
+The Rust emitter is not a second definition (design section 6). Two checks, both in CI:
+
+1. **Emit validates against this package.** The test that runs the emitter writes each document it
+   produces to a temp file and runs
+
+   ```bash
+   bun agent-schema/scripts/validate.ts <file.json>...
+   ```
+
+   Exit `0` means every file passed schema and checks; exit `1` prints a JSON report of
+   `{file, schema, phase, issues: [{path, code, message}]}`; exit `2` is a usage error. The schema is
+   inferred from `kind: "agent-surface"` or the file prefix (`result.x.json`, `receipt.x.json`), or pass
+   `--schema <surface|result|mandate|confirmation-request|confirmation-token|receipt>`.
+   A non-TS consumer can instead validate with `schema/agent-surface.schema.json` (draft 2020-12; point at
+   `#/$defs/<Name>`), which covers the wire format but not `check.ts` invariants.
+2. **Round trip on the Rust side.** Deserialise every file in `fixtures/valid/` into the Rust types and
+   serialise it back; the result must be byte-identical after canonicalisation. Serde structs should use
+   `#[serde(deny_unknown_fields)]` and `skip_serializing_if = "Option::is_none"` to mirror strict, absent-not-null.
+
+The invalid fixtures in `fixtures/invalid/` (each with a `.expect.json` naming phase, issue path and code)
+are the other half: the Rust deserialiser should reject the schema-phase ones too.
+
+## Fixtures
+
+`fixtures/valid/<schema>[.<case>].json` are bare documents. `fixtures/invalid/<case>.json` sit beside
+`<case>.expect.json` (`schema`, `phase`, exact `issues` as `{path, code}`, and `why`). Both are written
+by `scripts/fixtures.ts` (`bun scripts/build-fixtures.ts`); a test fails if the committed files differ.
+Tests assert the full issue list, so a fixture fails only for the stated reason, and also check that the
+generated JSON Schema accepts every valid fixture and rejects every schema-phase invalid one.
+
+## Dependencies
+
+`zod` 4.6.7 (runtime), `typescript` 5.9.3, `@types/bun` 1.4.4, `ajv` 8.20.0 (dev). All exact-pinned; the
+lockfile is committed; `@types/node` is overridden to a version at least two weeks old.

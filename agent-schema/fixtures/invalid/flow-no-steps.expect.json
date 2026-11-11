@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps"
+      ],
+      "code": "too_small"
+    }
+  ],
+  "why": "a flow has at least one step"
+}

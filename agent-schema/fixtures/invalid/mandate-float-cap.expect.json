@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "spend_cap_minor"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "money is integer minor units"
+}

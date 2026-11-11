@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0,
+        "steps",
+        3,
+        "effect"
+      ],
+      "code": "payment_effect_mismatch"
+    }
+  ],
+  "why": "the step that moves money declares how it is paid (D11)"
+}

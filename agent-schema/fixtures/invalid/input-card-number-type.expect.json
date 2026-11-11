@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "inputs",
+        0,
+        "type"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "there is no raw card-number input type (D11)"
+}

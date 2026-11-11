@@ -1,0 +1,9 @@
+{
+  "status": "blocked",
+  "reason": "mode_forbids_effect",
+  "mode": "read-only",
+  "message": {
+    "origin": "surface",
+    "value": "read-only mode refuses writes."
+  }
+}

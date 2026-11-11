@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "hash"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "hash is sha256: plus 64 lowercase hex"
+}

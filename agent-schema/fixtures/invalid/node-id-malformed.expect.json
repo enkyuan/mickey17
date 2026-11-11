@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "nodes",
+        0,
+        "id"
+      ],
+      "code": "invalid_format"
+    }
+  ],
+  "why": "node ids are n_ plus 16 lowercase hex"
+}

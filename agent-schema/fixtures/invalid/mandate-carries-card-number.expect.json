@@ -1,0 +1,11 @@
+{
+  "schema": "mandate",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [],
+      "code": "unrecognized_keys"
+    }
+  ],
+  "why": "no secret or instrument value anywhere in a mandate (D7, D11)"
+}

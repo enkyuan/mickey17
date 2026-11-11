@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        0,
+        "nodes",
+        2,
+        "confidence"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "confidence is an integer percentage; the wire format has no floats"
+}

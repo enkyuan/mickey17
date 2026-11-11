@@ -1,0 +1,13 @@
+{
+  "schema": "confirmation-request",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "total"
+      ],
+      "code": "invalid_type"
+    }
+  ],
+  "why": "a money confirmation shows the total (D11)"
+}

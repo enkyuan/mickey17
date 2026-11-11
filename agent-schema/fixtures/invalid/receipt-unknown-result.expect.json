@@ -1,0 +1,13 @@
+{
+  "schema": "receipt",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "result"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "a receipt result is a D10 status"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "confirmation-request",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "effect"
+      ],
+      "code": "invalid_union"
+    }
+  ],
+  "why": "plain reads need no confirmation"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "mandate",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "expires_at"
+      ],
+      "code": "time_order"
+    }
+  ],
+  "why": "a mandate expires after it is issued"
+}

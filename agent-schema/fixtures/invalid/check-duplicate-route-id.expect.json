@@ -1,0 +1,15 @@
+{
+  "schema": "surface",
+  "phase": "check",
+  "issues": [
+    {
+      "path": [
+        "routes",
+        3,
+        "id"
+      ],
+      "code": "duplicate_id"
+    }
+  ],
+  "why": "ids are unique within the document"
+}

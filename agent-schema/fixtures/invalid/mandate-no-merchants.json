@@ -1,0 +1,18 @@
+{
+  "id": "mandate-1",
+  "grantor": "grantor_7f3a",
+  "mode": "delegated",
+  "merchants": [],
+  "currency": "USD",
+  "spend_cap_minor": 5000,
+  "per_call_cap_minor": 2500,
+  "scope": [
+    {
+      "kind": "flow",
+      "id": "checkout"
+    }
+  ],
+  "issued_at": "2026-11-10T12:00:00Z",
+  "expires_at": "2026-11-10T13:00:00Z",
+  "hash": "sha256:2889ec811b3d4a563f8375eb82cdf0b30a75221ae4b5a06392e8561e0e4eb172"
+}

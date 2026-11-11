@@ -1,0 +1,13 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "mode"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "mode is owner, delegated or read-only (D2)"
+}

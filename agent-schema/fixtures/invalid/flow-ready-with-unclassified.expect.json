@@ -1,0 +1,14 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "flows",
+        0
+      ],
+      "code": "unrecognized_keys"
+    }
+  ],
+  "why": "a ready flow has no unclassified values"
+}

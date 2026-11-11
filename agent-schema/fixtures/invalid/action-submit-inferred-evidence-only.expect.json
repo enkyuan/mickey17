@@ -1,0 +1,17 @@
+{
+  "schema": "surface",
+  "phase": "schema",
+  "issues": [
+    {
+      "path": [
+        "actions",
+        1,
+        "evidence",
+        0,
+        "source"
+      ],
+      "code": "invalid_value"
+    }
+  ],
+  "why": "a non-navigate action must rest on declared or observed evidence first (D5)"
+}
