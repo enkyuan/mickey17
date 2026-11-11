@@ -394,3 +394,87 @@ describe('second review regressions', () => {
     await expect(rediff(dir, join(dir, 'out'))).rejects.toThrow(/itself a rediff/);
   });
 });
+
+describe('base-ui-added-aria (named equivalence agreed with the tokens session)', () => {
+  const spec = { name: 's', route: '/', viewport: [1440, 900] as [number, number], reducedMotion: false, phase: 'initial' as const, steps: [], tags: [] };
+  const run = (mutRef: (c: Collection) => void, mutCand: (c: Collection) => void) => {
+    const ref = page(), cand = page(); mutRef(ref); mutCand(cand);
+    const d = diffCollections(ref, cand, opts);
+    const [r, c] = gateStates(spec, ref, cand, d, opts, [], [], [true, true]);
+    return { status: d.status, rules: d.summary.minorRules, gate: gateDifferences(r, c).size > 0 };
+  };
+  const BTN = 6; // the page() fixture's <button>
+  const none = (c: Collection) => { c.els[BTN].aria = undefined; };
+  test('expanded / haspopup / disabled added to a button, link or summary are minor and equal in the gate', () => {
+    const r = run(none, c => { c.els[BTN].aria = { 'aria-expanded': 'false', 'aria-haspopup': 'dialog', 'aria-disabled': 'false' }; });
+    expect(r).toEqual({ status: 'minor_only', rules: { 'base-ui-added-aria': 3 }, gate: false });
+    expect(run(c => { c.els[2].aria = undefined; }, c => { c.els[2].aria = { 'aria-expanded': 'false' }; }).status).toBe('minor_only'); // the <a>
+    const summary = (c: Collection) => { c.els[BTN].tag = 'summary'; };
+    expect(run(c => { none(c); summary(c); }, c => { summary(c); c.els[BTN].aria = { 'aria-haspopup': 'menu' }; }).status).toBe('minor_only');
+    const roleButton = (c: Collection) => { c.els[1].role = 'button'; };
+    expect(run(c => roleButton(c), c => { roleButton(c); c.els[1].aria = { 'aria-expanded': 'false' }; }).status).toBe('minor_only');
+  });
+  test('everything else stays a real difference, in the report and in the gate', () => {
+    const cases: [string, (c: Collection) => void, (c: Collection) => void][] = [
+      ['aria-expanded added on a plain div', c => { c.els[1].aria = undefined; }, c => { c.els[1].aria = { 'aria-expanded': 'false' }; }],
+      ['aria-hidden added to a button', none, c => { c.els[BTN].aria = { 'aria-hidden': 'true' }; }],
+      ['aria-modal removed', c => { c.els[1].aria = { 'aria-modal': 'true' }; }, c => { c.els[1].aria = undefined; }],
+      ['aria-expanded removed', c => { c.els[BTN].aria = { 'aria-expanded': 'false' }; }, none],
+      ['aria-expanded value changed', c => { c.els[BTN].aria = { 'aria-expanded': 'false' }; }, c => { c.els[BTN].aria = { 'aria-expanded': 'true' }; }],
+      ['aria-label added', none, c => { c.els[BTN].aria = { 'aria-label': 'Open' }; }],
+      ['aria-selected added', none, c => { c.els[BTN].aria = { 'aria-selected': 'true' }; }],
+      ['role swapped while aria-expanded is added', none, c => { c.els[BTN].role = 'tab'; c.els[BTN].aria = { 'aria-expanded': 'false' }; }],
+      ['tabindex -1 added to a button', none, c => { c.els[BTN].aria = undefined; c.els[BTN].tabindex = '-1'; }],
+    ];
+    for (const [label, mr, mc] of cases) {
+      const r = run(mr, mc);
+      expect(r.status, label).toBe('different');
+      expect(r.gate, label + ' (gate)').toBe(true);
+    }
+  });
+  test('a status/alert/log region may gain its implicit live attributes, nothing else qualifies', () => {
+    const region = (role: string, aria?: Record<string, string>) => (c: Collection) => { c.els[1].role = role; c.els[1].aria = aria; };
+    const equivalent: [string, Record<string, string>, number][] = [
+      ['status', { 'aria-live': 'polite', 'aria-atomic': 'true' }, 2], ['alert', { 'aria-live': 'assertive', 'aria-atomic': 'true' }, 2], ['log', { 'aria-live': 'polite', 'aria-atomic': 'false' }, 2],
+    ];
+    for (const [role, aria, n] of equivalent) {
+      expect(run(region(role), region(role, aria)), role).toEqual({ status: 'minor_only', rules: { 'base-ui-added-aria': n }, gate: false });
+    }
+    const different: [string, string, Record<string, string> | undefined, Record<string, string>][] = [
+      ['aria-live alone on a main landmark', 'main', undefined, { 'aria-live': 'assertive' }],
+      ['assertive on a status region', 'status', undefined, { 'aria-live': 'assertive', 'aria-atomic': 'true' }],
+      ['atomic value not implicit', 'status', undefined, { 'aria-live': 'polite', 'aria-atomic': 'false' }],
+      ['atomic without live', 'status', undefined, { 'aria-atomic': 'true' }],
+      ['reference already polite, atomic added', 'status', { 'aria-live': 'polite' }, { 'aria-live': 'polite', 'aria-atomic': 'true' }],
+      ['reference had live off', 'status', { 'aria-live': 'off' }, { 'aria-live': 'polite', 'aria-atomic': 'true' }],
+      ['region on a div with no role', '', undefined, { 'aria-live': 'polite', 'aria-atomic': 'true' }],
+    ];
+    for (const [label, role, refAria, candAria] of different) {
+      const r = run(c => { if (role) c.els[1].role = role; c.els[1].aria = refAria; }, c => { if (role) c.els[1].role = role; c.els[1].aria = candAria; });
+      expect(r.status, label).toBe('different');
+      expect(r.gate, label + ' (gate)').toBe(true);
+    }
+    // the region role itself changing is a role swap, never excused by the aria addition
+    const swapped = run(c => { c.els[1].tag = 'div'; c.els[1].role = ''; c.els[1].aria = undefined; }, c => { c.els[1].tag = 'section'; c.els[1].role = 'region'; c.els[1].aria = { 'aria-live': 'polite', 'aria-atomic': 'true' }; });
+    expect(swapped.status).toBe('different');
+  });
+  test('trigger roles: tabs, comboboxes and menu items never qualify; values must be harmless', () => {
+    const asRole = (role: string, aria?: Record<string, string>) => (c: Collection) => { c.els[BTN].role = role; c.els[BTN].aria = aria; };
+    for (const role of ['tab', 'combobox', 'menuitem', 'switch', 'option']) {
+      expect(run(asRole(role), asRole(role, { 'aria-expanded': 'false' })).status, role).toBe('different');
+    }
+    expect(run(c => { c.els[2].aria = undefined; c.els[2].role = 'menuitem'; }, c => { c.els[2].role = 'menuitem'; c.els[2].aria = { 'aria-haspopup': 'true' }; }).status).toBe('different');
+    for (const [name, value] of [['aria-disabled', 'true'], ['aria-expanded', 'true'], ['aria-haspopup', 'false']]) {
+      const r = run(none, c => { c.els[BTN].aria = { [name]: value }; });
+      expect(r.status, `${name}=${value}`).toBe('different');
+      expect(r.gate, `${name}=${value} (gate)`).toBe(true);
+    }
+    expect(run(none, c => { c.els[BTN].aria = { 'aria-haspopup': 'true' }; }).status).toBe('minor_only');
+  });
+  test('an equivalent addition next to a real ARIA difference does not hide it from the gate', () => {
+    const r = run(none, c => { c.els[BTN].aria = { 'aria-expanded': 'false', 'aria-hidden': 'true' }; });
+    expect(r.status).toBe('different');
+    expect(r.gate).toBe(true);
+    expect(r.rules['base-ui-added-aria']).toBe(1);
+  });
+});

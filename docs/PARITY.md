@@ -128,11 +128,15 @@ graphics, behavior, routing, semantics, interaction). Only these named equivalen
 (`tabindex="0"` added to a natively focusable element; not to an `<a>` without `href`),
 `container-retag` (the **tag** of a `div`/`section`/`article`/`span` changes to another of
 them and neither side has a `role` attribute; `aside`, headings, lists, controls and any
-explicit role are never covered) and `added-component-attributes` (the candidate only
-*adds* `data-base-ui-*`, `data-slot`, `data-state`-style attributes). The Rust gate sees the
+explicit role are never covered), `added-component-attributes` (the candidate only
+*adds* `data-base-ui-*`, `data-slot`, `data-state`-style attributes) and `base-ui-added-aria`
+(the candidate only *adds* `aria-expanded="false"` / `aria-disabled="false"` / `aria-haspopup` to an element whose role is
+`button` (a plain button or summary) or an `<a>` link, or its implicit `aria-live` / `aria-atomic` values to a
+`status` / `alert` / `log` region that had neither; tabs, comboboxes, menu items and switches never qualify; see
+`docs/parity-reports/named-equivalences.md`). The Rust gate sees the
 same equivalences: style/href values are canonicalised on both sides, and tag / role / data /
-tabindex facts of a pair are set to the reference value only when the pair carries that minor
-item. `tests/parity-diff.test.ts` asserts, over a catalogue of mutations, that the gate's facts
+tabindex / aria facts of a pair are set to the reference value (aria: only the equivalent
+additions are dropped from the candidate) only when the pair carries that minor item. `tests/parity-diff.test.ts` asserts, over a catalogue of mutations, that the gate's facts
 differ exactly when the TS report has a major item.
 State-level checks add focus order (tab sequence incl. `:focus-visible` outline and
 box-shadow), failed interaction steps, candidate-only console/page errors, reached scroll

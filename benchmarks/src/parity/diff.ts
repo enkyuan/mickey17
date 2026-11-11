@@ -70,6 +70,30 @@ export const isInvisibleShell = (e: El) => e.w === 0 && e.h === 0 && !e.text && 
 /** The focus-order entry as compared: tabindex="0" on a natively focusable element is the same stop (the redundant-tabindex-0 equivalence). */
 export const FOCUS_KEYS = ['tag', 'role', 'name', 'focusVisible', 'outline', 'boxShadow', 'tabindex'] as const;
 export const focusSig = (f: Record<string, unknown>): unknown[] => FOCUS_KEYS.map(k => (k === 'tabindex' && f.tabindex === '0' && ['button', 'a', 'input', 'select', 'textarea', 'summary'].includes(String(f.tag)) ? null : f[k] ?? null));
+/**
+ * Base UI adds `aria-expanded` / `aria-haspopup` / `aria-disabled` to its triggers and buttons, and `aria-live` / `aria-atomic`
+ * to its status regions. Candidate-only additions of exactly these, with the harmless values below, are a named minor equivalence:
+ *  - triggers: the element's role is `button` (a `<button>` or `<summary>` without an explicit role) or `link` on an `<a>`;
+ *    a button with another role (`tab`, `combobox`, `menuitem`, `switch`, …) never qualifies. `aria-expanded` and `aria-disabled`
+ *    only as `"false"`; `aria-haspopup` with any value but `"false"`.
+ *  - live regions: both sides have the same `status` / `alert` / `log` role, the reference had neither `aria-live` nor
+ *    `aria-atomic`, and the added values equal that role's implicit ones (status: polite + atomic true; alert: assertive + atomic true;
+ *    log: polite, atomic false), so they change nothing a screen reader would announce.
+ * A removal, a value change, any other ARIA attribute, a role swap, or the same attribute on another kind of element stays a difference.
+ */
+const IMPLICIT_LIVE: Record<string, [string, string]> = { status: ['polite', 'true'], alert: ['assertive', 'true'], log: ['polite', 'false'] };
+export const baseUiAddedAria = (name: string, a: El, b: El): boolean => {
+  const ra = a.aria ?? {}, rb = b.aria ?? {};
+  if (ra[name] !== undefined || rb[name] === undefined || (a.role ?? '') !== (b.role ?? '')) return false;
+  if (name === 'aria-expanded' || name === 'aria-disabled') return rb[name] === 'false' && (b.role === 'button' || (b.tag === 'a' && b.role === 'link'));
+  if (name === 'aria-haspopup') return rb[name] !== 'false' && (b.role === 'button' || (b.tag === 'a' && b.role === 'link'));
+  if (name === 'aria-live' || name === 'aria-atomic') {
+    const implicit = IMPLICIT_LIVE[b.role ?? ''];
+    if (!implicit || ra['aria-live'] !== undefined || ra['aria-atomic'] !== undefined) return false;
+    return name === 'aria-live' ? rb[name] === implicit[0] : rb[name] === implicit[1] && rb['aria-live'] === implicit[0];
+  }
+  return false;
+};
 export const dimOfStyle = (p: string): Dimension => (LAYOUT.has(p) ? 'layout' : TYPO.has(p) ? 'typography' : MOTION.has(p) ? 'motion' : INTERACTION.has(p) ? 'interaction' : 'styling');
 
 /** Named, auditable equivalences. Anything not listed here is compared exactly. */
@@ -137,7 +161,7 @@ export function comparePair(r: Collection, c: Collection, a: El, b: El, o: Optio
   for (const k of ['effOpacity', 'effFx', 'effHidden'] as const) if (a[k] !== b[k]) push(items, 'styling', k, a[k], b[k], undefined, ign);
   if (a.inert !== b.inert) push(items, 'behavior', 'inert', a.inert, b.inert, undefined, ign);
   const names = new Set([...Object.keys(a.aria ?? {}), ...Object.keys(b.aria ?? {})]);
-  for (const n of names) if ((a.aria ?? {})[n] !== (b.aria ?? {})[n]) push(items, 'behavior', n, (a.aria ?? {})[n], (b.aria ?? {})[n], undefined, ign);
+  for (const n of names) if ((a.aria ?? {})[n] !== (b.aria ?? {})[n]) push(items, 'behavior', n, (a.aria ?? {})[n], (b.aria ?? {})[n], baseUiAddedAria(n, a, b) ? 'base-ui-added-aria' : undefined, ign);
   if ((a.ariaRefs ?? '') !== (b.ariaRefs ?? '')) push(items, 'behavior', 'aria-relationships', a.ariaRefs, b.ariaRefs, undefined, ign);
   if ((a.tabindex ?? '') !== (b.tabindex ?? '')) {
     // tabindex="0" on a natively focusable element does not change the tab order
