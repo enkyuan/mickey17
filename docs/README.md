@@ -2,7 +2,7 @@
 
 Index of everything under `docs/`, plus the naming convention that
 `bun scripts/docs/check-links.ts` enforces (it also fails on a broken relative link, a
-`docs/….md` mention or `#anchor` that does not resolve, or a retired name from
+`docs/….md` mention or `#anchor` that does not resolve, with exact case against the git file list, or a retired name from
 [`scripts/docs/renamed.txt`](../scripts/docs/renamed.txt)).
 
 ## Convention
@@ -12,8 +12,8 @@ Index of everything under `docs/`, plus the naming convention that
   A topic that needs several files gets a lowercase directory (`designs/`, later `agent-surface/`);
   do not nest further.
 - Dated reports and audits: `docs/reports/YYYY-MM-DD-<slug>.md`, the date being when the measurement or
-  audit was made. A document that is kept current and not tied to a date is a guide, not a report
-  (`parity-named-equivalences.md`).
+  audit was made. A document that is kept current and not tied to one date is a guide, not a report:
+  `parity-named-equivalences.md`, and `real-world-trials.md`, a running log with several dated sections.
 - Release notes: `docs/releases/<version>.md`, and `docs/releases/NEXT.md` for the draft of the next
   release. [`releasing.md`](releasing.md) and `AGENTS.md` name these paths; do not rename them.
 - Repository-root convention files keep their names: `README.md`, `CONTRIBUTING.md`, `AGENTS.md`,

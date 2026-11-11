@@ -1498,7 +1498,7 @@ fn runs_can_be_pinned_by_a_keep_file_or_by_keep() {
         write(runs.join(name).join("run.json"), "{}");
         set_age_all(&runs.join(name), age);
     }
-    write(runs.join("cited/KEEP"), "cited by docs/parity-reports");
+    write(runs.join("cited/KEEP"), "cited by docs/reports");
     set_age_all(&runs.join("cited"), 900);
     let (_, report) = apply(
         r,

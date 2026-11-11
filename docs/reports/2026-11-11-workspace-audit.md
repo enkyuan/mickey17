@@ -135,7 +135,7 @@ and docs cite. Deleting variants is **proposed, not done**, below.
 
 ## Parity runs
 
-Run directories are cited by name in five committed reports (docs/reports/*.md, docs/parity.md,
+Run directories are cited by name in five committed reports (docs/reports/2026-11-10-parity-*.md, docs/parity.md,
 VALIDATION.md). Cited runs (and the pins they need): `calibration-natural-1`, `-8`, `-9`, `garden-dr-bp-1`,
 `garden-dr-scroll-1`, `garden-dr-static-1`, `garden-hand-bp-1`, `garden-hand-core-1`, `garden-recover-core-1`,
 `garden-sem-final-core-1`, `msai-sem-final-core-1`, `natural-compat-core-1`, `natural-compat-scrollnoise-2`,
