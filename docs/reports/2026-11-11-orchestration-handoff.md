@@ -20,6 +20,8 @@ Rules the user set, which apply to every session:
 - Every change gets an adversarial **Opus 5.5 high** review before commit or any claim.
 - Clean build artifacts regularly; build outputs must be regenerable.
 - Framework default ports: TanStack Start / Vite app 3000, `mochi serve` 8000. Close stale ports.
+  The current export template pins 3000; older or hand-edited Vite projects that do not (for
+  example `.mochi/projects/natural`) fall back to Vite's 5173 (see `docs/workspace.md`).
 - Compat exports recover client programs by default (interim); the semantic generator is the
   real replacement for recovered bundles.
 - The repo is public: no secrets, no real merchant or personal data, never push `evidence/*`
@@ -45,11 +47,14 @@ the PR #12 commit without its review. Reset or fast-forward it after #12 merges.
 | #10 | `feat/workspace-layout` (`feat/tanstack-exporter`) | `.mochi` layout, `mochi clean --runs`, `migrate.sh`, `prune.sh` | open, unmerged; 41 clean tests |
 | #11 | `feat/docs-layout` (`feat/workspace-layout`) | docs renamed to kebab-case, `docs/README.md` index, `scripts/docs/check-links.ts` | open, **stacked on #10**; retarget to `feat/tanstack-exporter` after #10 merges |
 | #12 | `feat/tokens-reveal-end-state` (`feat/tanstack-exporter`) | reveal once-only fades; count visible text | open, **14 Sourcery findings being triaged** (section 4A) |
+| #13 | `docs/orchestration-handoff` (`feat/docs-layout`) | this handoff | open, **stacked on #11** so it is indexed by `docs/README.md`; retarget after #10 and #11 merge |
 | #4 | `feat/reconstruction-analysis` (`main`) | older work, predates this effort | open, not part of this effort |
 
-None of #6 to #12 is merged and none has had a human or bot review: Copilot had no quota and
-Sourcery skipped the large ones (it did review #12). The sessions' Opus reviews are the only
-review. Merging is the user's decision; no session or the parent has merged anything.
+None of #6 to #13 is merged and no human has reviewed any of them. Copilot reviewed none (no
+quota). Sourcery declined #6 to #10 (size or budget limits), posted only a summary guide on #11
+and #13, and left 14 inline findings on #12 (section 4A). The sessions' Opus reviews are
+otherwise the only review. Merging is the user's decision; no session or the parent has merged
+anything.
 
 Other local branches: `archive/agent-flows-rust` (the abandoned Rust port of flow inference,
 kept only as an archive), `feat/source-evidence`, `evidence/20261108` (local only, public repo:
@@ -70,7 +75,7 @@ branches to the parent, who pushes and opens PRs with the sandbox bypass.
 
 | Name | Id | Owns | State |
 | --- | --- | --- | --- |
-| semantic-generator-1-cen (tokens) | `local_0d527e2d-2907-491d-84ac-1b94a2823f2b` | `src/semantic/tokens/**`, `docs/tokens.md` (was TOKENS.md) | working: triaging the 14 findings on #12, then scroll-reveal work (`feat/tokens-scroll-reveal`) |
+| semantic-generator-1-cen (tokens) | `local_0d527e2d-2907-491d-84ac-1b94a2823f2b` | `src/semantic/tokens/**`, `docs/tokens.md` | working: triaging the 14 findings on #12, then scroll-reveal work (`feat/tokens-scroll-reveal`) |
 | semantic-generator-2-ir | `local_a14ddb0a-5c3d-43a9-b826-5b54bfedc8e8` | IR, Base UI patterns, emitters (`src/semantic/{ir,patterns,components,emit,project,js}`) | idle; last commit `ccfb178` (pushed); deferred: item 4 (per-viewport typography with tokens), item 7 (Garden canvas/WebGL is plan-only) |
 | semantic-generator-3-par | `local_fc37fc56-76bd-4259-99ed-b6f1a4904a94` | parity pipeline (`src/parity.rs`, `benchmarks/`, `scripts/parity/`) | idle; last commit `c01bdb0` (named Base UI ARIA equivalence); re-run needs the preview pane visible |
 | agent-schema | `local_daa9d76b-b79b-47f2-b309-e7454c8e6d04` | `agent-schema/**` | idle; PR #7; PR 2 (drift report shape) held until another session needs a shape |
@@ -115,7 +120,8 @@ compatibility). The tokens session verifies each, fixes the real ones with faili
 reviews the delta with Opus, re-measures the Garden page, and returns a table
 `comment_id | fixed (commit) | declined (reason)`. The parent then pushes, posts one-line replies
 ending with `_🤖 Addressed by [Claude Code](https://claude.com/claude-code)_` via
-`gh api repos/enkyuan/mochi/pulls/12/comments/<id>/replies`, and resolves the threads.
+`gh api --method POST repos/enkyuan/mochi/pulls/12/comments/<id>/replies -f body='<reply>'`, and
+resolves the threads (GraphQL `resolveReviewThread`).
 Comment ids: 4541672684, 4541672697, 4541672706, 4541672716, 4541672723, 4541672731,
 4541672737 (high), 4541672749, 4541672757, 4541672770, 4541672778, 4541672789, 4541672795,
 4541672804 (high).
@@ -128,7 +134,7 @@ generated after-scroll count is close to the original's (state the gap).
 
 ### 4B. Agent surface (browser-free, machine-readable site interface)
 
-Design: `docs/AGENT_SURFACE.md` (to become `docs/agent-surface.md` after #6 to #9 merge).
+Design: `docs/AGENT_SURFACE.md` (renamed to kebab-case in a follow-up after #6 to #9 merge).
 Decisions made with the user:
 
 - Primary target is functional use of transactional flows (checkout, payments), not reading
@@ -186,12 +192,14 @@ target (frees ~6.7 GiB and removes the built `mochi` binary). **Not approved and
 scripted:** original captures and the non-canonical capture variants (~1.45 GB, partly
 clone-linked); they are evidence.
 
-#11 renames docs to kebab-case (`SEMANTIC.md` to `semantic-conversion.md`, `TOKENS.md` to
-`tokens.md`, and so on) and adds `docs/README.md` as the index; the link checker requires every
-doc to be listed there. **This handoff file must be added to that index when #11 lands**
-(`docs/reports/` is created by #11; this file sits in it already). `docs/AGENT_SURFACE.md`,
+#11 renames the upper-case docs to kebab-case (the semantic doc becomes `semantic-conversion.md`,
+the tokens doc `tokens.md`, and so on) and adds `docs/README.md` as the index; the link checker requires every
+doc to be listed there. This handoff is stacked on #11 (PR #13 has base `feat/docs-layout`) and
+is listed in that index, so the checker passes; **doc paths in this file use the post-#11 names**
+(on a checkout without #11 the same docs have upper-case names and the parity reports sit in a
+`parity-reports` directory). `docs/AGENT_SURFACE.md`,
 `docs/agent-surface/**` and `docs/DISTRIBUTION.md` are renamed in a follow-up after #6 to #9
-merge. Expect a trivial rename conflict between #12 and #11 on `docs/TOKENS.md`.
+merge. Expect a trivial rename conflict between #12 and #11 on the tokens doc.
 
 ### 4D. Distribution (plan only)
 
@@ -254,5 +262,5 @@ Full-tree gates (not run by the parent since `7917885`): `cargo fmt --check`,
 - Session logs: `docs/agent-surface/log/{agent-schema,agent-fixtures,agent-policy,agent-flows}.md`
   on their PR branches (review verdicts, decisions, known gaps).
 - Workspace audit with sizes and the deletion allowlist: `docs/reports/2026-11-11-workspace-audit.md`
-  (after #11; `docs/workspace-audit-2026-11-11.md` on the #10 branch).
+  (after #11; the #10 branch has it at the top level of `docs/` under a different name).
 - Earlier handoff notes (gitignored, local): `.mochi/handoff/`.
