@@ -183,6 +183,71 @@ describe("request value classes behave as labelled", () => {
                 // an ordered cart cannot change its rate either
                 expect(code(await c.chooseRate(cartId, q2[0].id))).toBe("cart_closed");
             });
+            test("order-time guards: declined tokens are spent and not cached, closed carts refuse a second order", async () => {
+                const { client, cartId, token } = await ready(31);
+                const A = SCENARIOS.success.runs[0].address;
+                const bad = (await client.tokenize("test_declined")).view.token as string;
+                expect((await client.placeOrder(cartId, bad, { key: "d" })).status).toBe(402);
+                const again402 = await client.placeOrder(cartId, bad, { key: "d" });
+                expect([again402.status, code(again402)]).toEqual([422, "invalid_payment_token"]); // spent, and the 402 was not replayed from a cache
+                const ok = await client.placeOrder(cartId, token, { key: "d" }); // same key, a failure never claimed it
+                expect(ok.status).toBe(201);
+                const t2 = (await client.tokenize("test_ok")).view.token as string;
+                const second = await client.placeOrder(cartId, t2, { key: "e" });
+                expect([second.status, code(second)]).toEqual([409, "cart_closed"]);
+                expect(code(await client.address(cartId, A))).toBe("cart_closed");
+            });
+            test("CSRF tokens are bound to their session", async () => {
+                const { client, cartId, handler } = await ready(32);
+                const other = newClient(handler);
+                await other.open();
+                const mine = client.csrf;
+                client.csrf = other.csrf;
+                expect(code(await client.add(cartId, "mug", "1"))).toBe("csrf_invalid");
+                client.csrf = mine;
+                expect((await client.add(cartId, "mug", "1")).status).toBe(200);
+            });
+            test("quotes die with the address; a rate id is only good for its own cart's quote", async () => {
+                const { client, cartId } = await ready(33);
+                const quote = (await client.rates(cartId)).view.rates as { id: string }[];
+                await client.address(cartId, SCENARIOS.success.runs[1].address);
+                expect(code(await client.chooseRate(cartId, quote[0].id))).toBe("validation_failed");
+                const other = (await client.createCart()).view.cart.id as string;
+                await client.add(other, "tote", "1");
+                await client.address(other, SCENARIOS.success.runs[0].address);
+                const foreign = (await client.rates(other)).view.rates as { id: string }[];
+                await client.rates(cartId);
+                expect(code(await client.chooseRate(cartId, foreign[0].id))).toBe("validation_failed");
+            });
+            test("stock is re-checked for every line at order time", async () => {
+                const s = setup(stack, 35);
+                const c = s.client;
+                await c.open();
+                const build = async (items: [string, string][]) => {
+                    const id = (await c.createCart()).view.cart.id as string;
+                    for (const [sku, q] of items) expect((await c.add(id, sku, q)).status).toBe(200);
+                    await c.address(id, SCENARIOS.success.runs[0].address);
+                    await c.chooseRate(id, ((await c.rates(id)).view.rates as { id: string }[])[0].id);
+                    return id;
+                };
+                const a = await build([["mug", "1"], ["tote", "5"]]);
+                const b = await build([["tote", "5"]]);
+                expect((await c.placeOrder(b, (await c.tokenize("test_ok")).view.token, { key: "b" })).status).toBe(201);
+                const late = await c.placeOrder(a, (await c.tokenize("test_ok")).view.token, { key: "a" });
+                expect([late.status, code(late)]).toEqual([409, "out_of_stock"]);
+                expect(s.shop.snapshot().stock.mug).toBe(10); // the failed order took nothing
+            });
+            test("routes are strict: extra or empty segments are 404 before any auth", async () => {
+                const { handler } = setup(stack, 36);
+                const api = stack === "server-rendered" ? "" : "/api";
+                for (const [method, path] of [
+                    ["POST", `${api}/carts/cart_x/items/anything`],
+                    ["GET", `${api}/orders/ord_x/extra`],
+                    ["POST", `${api}/carts//items`],
+                    ["POST", `/${api}/carts/cart_x/items`.replace("///", "//")],
+                ] as const)
+                    expect([method, path, (await handler(new Request(`http://shop.test${path}`, { method }))).status]).toEqual([method, path, 404]);
+            });
             test("idempotency keys are scoped to the session", async () => {
                 const a = await ready(21);
                 const bClient = newClient(a.handler); // a second session of the same shop
@@ -385,6 +450,9 @@ describe("ground truth", () => {
                 ["rateId derived->input", (t) => { const v = requestsOf(t).find((r) => r.id === "select-shipping")!.values.find((x) => /rate/.test(x.at) && x.class === "derived")!; v.class = "input"; t.edges = t.edges.filter((e) => !e.from.startsWith("shipping-rates")); }],
                 ["cart id segment derived->input", (t) => { urlAt(t, "place-order").class = "input"; t.edges = t.edges.map((e) => ({ ...e, to: (Array.isArray(e.to) ? e.to : [e.to]).filter((x) => !x.startsWith("place-order:url")) })).filter((e) => e.to.length); }],
                 ["idempotency key -> constant", (t) => { const v = val(t, "place-order", "header.idempotency-key"); v.class = "constant"; v.value = "k"; delete v.role; }],
+                ["csrf header derived->input (first use is not the only use)", (t) => { val(t, "place-order", "header.x-csrf-token").class = "input"; t.edges = t.edges.map((e) => ({ ...e, to: (Array.isArray(e.to) ? e.to : [e.to]).filter((x) => x !== "place-order:header.x-csrf-token") })).filter((e) => e.to.length); }],
+                ["shipping-rates effect -> financial", (t) => { t.steps.find((s) => s.id === "shipping-rates")!.effect = "financial"; }],
+                ["quantity relabelled constant+automatic", (t) => { const v = requestsOf(t).find((r) => r.id === "add-item")!.values.find((x) => x.at.endsWith(".quantity"))!; v.class = "constant"; v.value = "1"; v.automatic = true; }],
                 ["signature -> input", (t) => { val(t, "place-order", "header.x-signature").class = "input"; t.clientComputedCount = 0; }],
                 ["place-order 201 relabelled 200", (t) => { (requestsOf(t).find((r) => r.id === "place-order")!.responses as any[])[0].status = 200; }],
                 ["add-item 409 dropped", (t) => { const r = requestsOf(t).find((r) => r.id === "add-item")!; r.responses = (r.responses as any[]).filter((x) => x.status !== 409); }],

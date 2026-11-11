@@ -44,8 +44,9 @@ export function validateTruth(t: Truth): string[] {
     for (const s of t.steps) {
         if (!EFFECTS.includes(s.effect)) p.push(`step ${s.id}: bad effect ${s.effect}`);
         if (s.effect === "read" && s.requests.some((r) => r.method !== "GET")) p.push(`step ${s.id}: effect read but a request is not GET`);
-        if (s.requests.some((r) => r.values.some((v) => v.role === "idempotency-key")) && s.effect !== "financial")
-            p.push(`step ${s.id}: carries an idempotency key but is not financial`);
+        const keyed = s.requests.some((r) => r.values.some((v) => v.role === "idempotency-key"));
+        if (keyed !== (s.effect === "financial")) p.push(`step ${s.id}: financial effect and idempotency key must go together`);
+        if (s.effect !== "read" && s.requests.every((r) => r.method === "GET")) p.push(`step ${s.id}: effect ${s.effect} but every request is a GET`);
     }
     const inbound = new Set<string>();
     for (const e of t.edges) {
@@ -64,7 +65,8 @@ export function validateTruth(t: Truth): string[] {
         for (const v of r.values) {
             if (!CLASSES.includes(v.class)) p.push(`${r.id}:${v.at}: bad class ${v.class}`);
             if (v.class === "derived" && !inbound.has(`${r.id}:${v.at}`)) p.push(`${r.id}:${v.at}: derived but no inbound edge`);
-            if (v.class === "constant" && !("value" in v) && !v.automatic) p.push(`${r.id}:${v.at}: constant without value`);
+            if (v.automatic && (v.class !== "derived" || !v.at.startsWith("cookie."))) p.push(`${r.id}:${v.at}: automatic is only for derived cookies`);
+            if (v.class === "constant" && !("value" in v)) p.push(`${r.id}:${v.at}: constant without value`);
             if (v.class !== "derived" && inbound.has(`${r.id}:${v.at}`)) p.push(`${r.id}:${v.at}: ${v.class} value has an inbound edge`);
         }
     const cc = reqs.flatMap((r) => r.values.filter((v) => v.class === "client-computed"));
@@ -116,6 +118,21 @@ const pathRegex = (tpl: string) => new RegExp("^" + tpl.replace(/[.*+?^$()|[\]\\
 export function matchRequest(t: Truth, e: HarEntry): TruthRequest | undefined {
     const url = new URL(e.request.url);
     return requestsOf(t).find((r) => r.method === e.request.method && pathRegex(r.path).test(url.pathname));
+}
+
+/** True when `value` is one of the caller-supplied body fields of `e` (not a header, not a cookie). */
+function bodyHas(e: HarEntry, value: string): boolean {
+    const text = e.request.postData?.text ?? "";
+    const ct = e.request.headers.find((h) => h.name.toLowerCase() === "content-type")?.value ?? "";
+    if (ct.includes("json")) {
+        const walk = (v: unknown): boolean => (v && typeof v === "object" ? Object.values(v).some(walk) : v === value);
+        try {
+            return walk(JSON.parse(text));
+        } catch {
+            return false;
+        }
+    }
+    return [...new URLSearchParams(text).values()].includes(value);
 }
 
 function readAt(e: HarEntry, at: string): string | undefined {
@@ -172,9 +189,11 @@ export function checkTruthAgainstHar(t: Truth, har: { log: { entries: HarEntry[]
             const enumerated = Array.isArray((v.constraints as { enum?: unknown[] } | undefined)?.enum);
             if (v.class === "input" && !v.domainFrom && !enumerated && got.length >= 8) {
                 const earlier = entries.slice(0, entries.indexOf(e));
-                const sentBefore = earlier.some((o) => decodeURIComponent((o.request.postData?.text ?? "").replace(/\+/g, " ")).includes(got) || o.request.headers.some((h) => h.value === got));
+                const sentBefore = earlier.some((o) => bodyHas(o, got));
                 if (!sentBefore && earlier.some((o) => responseText(o).includes(got))) p.push(`${r.id}: ${v.at} is labelled input but its value ${got.slice(0, 24)} appears in an earlier response`);
             }
+            if (v.class !== "client-computed" && /^v1\.\d+\.[0-9a-f]{14}$/.test(got) && sign(Number(got.split(".")[1]), e.request.postData?.text ?? "") === got)
+                p.push(`${r.id}: ${v.at} is a valid signature but is labelled ${v.class}`);
             if (v.class === "client-computed") {
                 const m = /^v1\.(\d+)\.[0-9a-f]{14}$/.exec(got);
                 const body = e.request.postData?.text ?? "";
@@ -190,11 +209,9 @@ export function checkTruthAgainstHar(t: Truth, har: { log: { entries: HarEntry[]
         }
         // every path segment that the template leaves open must be labelled
         const tpl = r.path.split("/").filter(Boolean);
-        const seg = new URL(e.request.url).pathname.split("/").filter(Boolean);
         tpl.forEach((t, i) => {
             if (/^\{.+\}$/.test(t) && !labelled.has(`url.path[${i}]`)) p.push(`${r.id}: path segment ${i} is not labelled`);
         });
-        if (tpl.length !== seg.length) p.push(`${r.id}: path has ${seg.length} segments, template ${tpl.length}`);
         // the recorded status must be one the truth lists
         const allowed = (r.responses as { status: number }[] | undefined)?.map((x) => x.status) ?? [];
         if (!allowed.includes(e.response.status)) p.push(`${r.id}: recorded status ${e.response.status} not in the labelled responses ${JSON.stringify(allowed)}`);

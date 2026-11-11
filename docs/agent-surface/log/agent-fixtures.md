@@ -9,7 +9,7 @@ Three shops (React, server-rendered with a ~70-line htmx-style script, Svelte), 
 scenarios × two runs each, hand-labelled ground truth per shop, a recorder that writes HAR 1.2 +
 interaction traces, and `benchmarks/tests/agent-shops.test.ts`.
 
-`bun test tests/agent-shops.test.ts` (from `benchmarks/`): **103 pass, 3 skipped, 0 fail** (after review round 1; was 89/3/0 at 359bf0c). `tsc
+`bun test tests/agent-shops.test.ts` (from `benchmarks/`): **118 pass, 3 skipped, 0 fail** (after review round 2; was 89/3/0 at 359bf0c). `tsc
 --noEmit` over the test and its imports is clean (run from a scratch tsconfig, see below).
 
 ## What could not be run here
@@ -162,14 +162,34 @@ Two false positives in my first stricter checker (echoed form values, enum optio
 in the checker, not by weakening the mutations: values the caller already sent, and enumerated
 domains, are exempt.
 
+## 2026-11-10 entry: review round 2 (Opus, adversarial, on 359bf0c..5894250) and fixes
+
+The reviewer confirmed round-1 fixes 1, 2, 3, 5, 7, 9 and the recorder changes by mutating `core.ts`
+(bundles rebuild byte-identically; recordings reproduce). New findings and verdicts:
+
+| Finding | Verdict | Action |
+| --- | --- | --- |
+| strict routes (fix 4) had no test | confirmed | test: extra/empty segments are 404 before auth on all stacks; SSR also rejects `//` paths |
+| "input already sent" exemption let a mislabelled CSRF token pass (header counted as "sent") | confirmed | exemption now only for caller-supplied *body fields*; mutation added |
+| `decodeURIComponent` crashed on `%` and mangled `+` in JSON bodies | confirmed | bodies are parsed (JSON walk / `URLSearchParams`), no decoding hacks |
+| untested guards: second order on a closed cart, CSRF bound to session, quote dies with address, `cart_closed` in set-address, failures not cached and declined token spent, rate id from another cart, stock re-check for every line | confirmed | tests added; four of the reviewer's mutants re-run here (route strictness, order-time `cart_closed`, session-bound CSRF, all-lines stock check) now fail 2/3/9/3 tests |
+| signature relabelled `input` caught only by the "exactly one" rule | confirmed | HAR check: a value that verifies as `sign(ts, body)` must be labelled client-computed |
+| effects only partly checked | partly fixed | financial effect and idempotency key must go together; non-read effect needs a non-GET request. Finer effect labels (e.g. `write-reversible` vs `write-irreversible`) cannot be derived from traffic and stay unchecked |
+| `automatic` switches off constant checks | confirmed | `automatic` is only valid on derived cookies |
+| dead segment-count check | confirmed | removed |
+| JSON stacks accept numeric quantities (`1e1` as the number 10) | accepted | valid JSON, same meaning as `10`; the text path (all the UI can send) is strict |
+| `responses` can only list statuses seen in recordings | accepted | known design limit; other statuses live under `controls` |
+
+Residual limits: the graph-equality test is a consistency check (two truth files were derived from
+the React file); per-stack truth is checked against that stack's own HARs.
+
 ## PR text (not opened until round-2 review is clean; base `feat/tanstack-exporter`)
 
 **Title:** `test(agent): fixture shops in three stacks with ground truth, recorder and cross-stack test`
 
 **What:** React, server-rendered (htmx-style) and Svelte shops with one flow and four scenarios;
 hand-labelled `flow.truth.json` per stack; HAR 1.2 + interaction-trace recorder (24 committed
-runs); `agent-shops.test.ts`. **Why:** M0 neutrality test and M2 ground truth. **Evidence:** 103
+runs); `agent-shops.test.ts`. **Why:** M0 neutrality test and M2 ground truth. **Evidence:** 118
 pass / 3 skip; mutation tests for the truth checks; recordings byte-reproducible. **Limits:**
 no socket runs, happy-dom not Chromium, no listener inventory, idempotency-key class pending,
-truth not yet in agent-schema types. **Review:** Opus adversarial round 1 (table above), round 2
-below.
+truth not yet in agent-schema types. **Review:** Opus adversarial rounds 1 and 2 (tables above); round 3 (delta only) pending.
