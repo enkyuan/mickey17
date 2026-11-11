@@ -4,7 +4,7 @@ Measured 2026-11-10 with the pipeline of commit `02c1bfa` (unchanged; the record
 projects `/tmp/claude-501/final-{natural,garden,msai}/project` (production builds, `bun .output/server/index.mjs` on 3000) and
 the originals served by `mochi serve <capture>` on 8000 (Microsoft AI: `capture-modules`). Headless Chromium 158, SwiftShader GL.
 **Evidence for the declared states of these builds only**; not a screenshot comparison, not a score. Raw captures, diffs and
-reports are in `.mochi/parity-runs/` (git-ignored): `natural-sem-final-core-1`, `garden-sem-final-core-1`,
+reports are in `.mochi/generated/parity-runs/` (git-ignored): `natural-sem-final-core-1`, `garden-sem-final-core-1`,
 `msai-sem-final-core-1`, `natural-sem-final-rerun-1`.
 
 Load average (1/5/15 min) was read by hand when the Natural run started (5.6 / 12.2 / 13.0; 13.3 one minute in), when the Microsoft

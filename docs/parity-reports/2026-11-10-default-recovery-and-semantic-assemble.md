@@ -5,11 +5,11 @@ Measured 2026-11-10 with the pipeline of commit `02c1bfa` (no pipeline code chan
 headless Chromium 158, Playwright 1.65, SwiftShader GL. Originals are served by `mochi serve <capture>` on 8000;
 candidates are production builds (`bun .output/server/index.mjs`) on 3000.
 **Evidence for the declared states of these builds only**: not a screenshot comparison, not a score, nothing about other
-states, routes, browsers or sites. Raw captures, diffs and reports are in `.mochi/parity-runs/` (git-ignored; run names
+states, routes, browsers or sites. Raw captures, diffs and reports are in `.mochi/generated/parity-runs/` (git-ignored; run names
 below); stopped or superseded runs are kept and labelled.
 
 Candidates (built 03:30–03:31 by the default-recovery commit `37a4dd3`, not rebuilt here):
-`.mochi/mochi-exports/natural-compat` (3 routes recovered; 3 client programs), `.mochi/mochi-exports/infinitegarden-compat`
+`.mochi/generated/exports/natural-compat` (3 routes recovered; 3 client programs), `.mochi/generated/exports/infinitegarden-compat`
 (home recovered; `/articles` and the article route are static replicas), and a fresh `mochi semantic --assemble` output
 (commit `60b99aa`; the generator reported 3 routes, 36 assets, 0 not copied; `bun install --frozen-lockfile`, `bun run check`
 and `bun run build` all exited 0; the logs were not retained and the project was deleted after measuring).

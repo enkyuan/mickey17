@@ -13,7 +13,7 @@
 //! still name the directories that were verified.
 use anyhow::{Context, Result, bail, ensure};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     io::Write,
     path::{Component, Path, PathBuf},
@@ -38,8 +38,31 @@ const EVIDENCE_NAMES: &[&str] = &[
 /// Further workspace-level evidence directories. They are honoured when scanning
 /// the workspace and build outputs, but not inside `node_modules` or cargo targets,
 /// where third-party packages may legitimately ship directories with these names.
-const WORKSPACE_EVIDENCE_NAMES: &[&str] = &["handoff", "references", "qualification"];
+///
+/// `evidence` is the directory the workspace layout keeps every irreplaceable item in
+/// (`evidence/trials`, `evidence/source-packs`, ...; see `docs/WORKSPACE.md`). Protecting
+/// the name as a whole means that nothing below it is ever planned, whatever it is called.
+const WORKSPACE_EVIDENCE_NAMES: &[&str] = &["handoff", "references", "qualification", "evidence"];
 const PROTECTED: &str = "protected evidence, not scanned: ";
+/// Workspace-relative directories whose *direct children* `--runs` may prune. Only these
+/// two exact locations: run output, never evidence.
+const RUN_DIRS: &[&[&str]] = &[&["generated", "parity-runs"], &["runs", "logs"]];
+/// A run directory holding a file with this name is pinned: never pruned. The same name
+/// directly inside `generated/parity-runs` or `runs/logs` is a list, one entry name or stem
+/// per line (`#` starts a comment), that pins those groups; it is the only way to pin a group
+/// that consists of files alone, and it is never itself a candidate.
+const RUN_PIN: &str = "KEEP";
+/// Suffixes of runs derived from another run (`x-gate`, `x-rediff`, ...): they follow the
+/// pin of the run they are derived from.
+const DERIVED_SUFFIXES: &[&str] = &[
+    "-rediff-aria2",
+    "-rediff-aria",
+    "-rediff",
+    "-gate",
+    "-final",
+];
+/// How many of the newest run groups `--runs` keeps when `--keep-runs` is not given.
+pub const DEFAULT_KEEP_RUNS: usize = 20;
 /// Relative locations removed when a project root is selected, build class.
 const BUILD_PATHS: &[&[&str]] = &[
     &[".output"],
@@ -57,6 +80,8 @@ pub enum Class {
     Build,
     Deps,
     Cargo,
+    /// A run directory or log below `generated/parity-runs` or `runs/logs`.
+    Runs,
 }
 impl Class {
     pub fn label(self) -> &'static str {
@@ -64,6 +89,7 @@ impl Class {
             Class::Build => "build",
             Class::Deps => "deps",
             Class::Cargo => "cargo",
+            Class::Runs => "runs",
         }
     }
 }
@@ -78,6 +104,10 @@ pub enum Status {
     Kept,
     /// Protected as the newest build of its site family (`--keep-latest`).
     KeptLatest,
+    /// Protected as one of the newest run groups (`--keep-runs`).
+    KeptRecent,
+    /// Protected by a `KEEP` file inside the run directory.
+    Pinned,
     /// Refused for the stated safety reason; never deleted.
     Refused(String),
 }
@@ -88,6 +118,8 @@ impl Status {
             Status::OptIn => "skipped (opt-in flag not given)".into(),
             Status::Kept => "kept (--keep)".into(),
             Status::KeptLatest => "kept (--keep-latest)".into(),
+            Status::KeptRecent => "kept (--keep-runs)".into(),
+            Status::Pinned => format!("kept ({RUN_PIN} file)"),
             Status::Refused(why) => format!("REFUSED: {why}"),
         }
     }
@@ -112,6 +144,12 @@ pub struct Options {
     pub cargo: bool,
     pub keep: Vec<PathBuf>,
     pub keep_latest: bool,
+    /// Also prune old run output (`generated/parity-runs`, `runs/logs`).
+    pub runs: bool,
+    /// With `runs`: how many of the newest run groups to keep (default
+    /// [`DEFAULT_KEEP_RUNS`], at least 1). A group is a directory and the files that share
+    /// its name apart from the extension (`x/`, `x.log`, `x.done`).
+    pub keep_runs: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -419,6 +457,8 @@ fn cargo_in_use(target: &Dir) -> bool {
 
 struct Tree {
     bytes: u64,
+    /// Newest modification time of the directory and everything inside it.
+    newest: Option<SystemTime>,
     /// First evidence directory found inside, if any.
     evidence: Option<PathBuf>,
     /// Entries that could not be read or verified; their contents were not checked.
@@ -457,6 +497,7 @@ fn name_of(path: &Path) -> String {
 fn survey(dir: &Dir, display: &Path, scope: Scope) -> Tree {
     let mut tree = Tree {
         bytes: 0,
+        newest: None,
         evidence: None,
         unreadable: Vec::new(),
     };
@@ -465,6 +506,7 @@ fn survey(dir: &Dir, display: &Path, scope: Scope) -> Tree {
             .push(format!("{}: cannot stat", display.display()));
         return tree;
     };
+    tree.newest = own.modified;
     // The directory itself may already be evidence (a capture layout).
     if tree_evidence(dir, &name_of(display), scope) {
         tree.evidence = Some(display.to_path_buf());
@@ -498,6 +540,7 @@ fn survey_into(dir: &Dir, path: &Path, scope: Scope, dev: u64, depth: usize, tre
             }
         };
         tree.bytes += meta.size;
+        tree.newest = tree.newest.max(meta.modified);
         if meta.kind != Kind::Dir {
             continue;
         }
@@ -989,7 +1032,7 @@ pub fn canonical_workspace(workspace: &Path) -> Result<PathBuf> {
     for component in root.components() {
         if let Component::Normal(name) = component {
             ensure!(
-                !is_core_evidence_name(&name.to_string_lossy()),
+                !is_evidence_name(&name.to_string_lossy()),
                 "refusing a workspace inside an evidence directory: {}",
                 root.display()
             );
@@ -1085,6 +1128,7 @@ pub fn plan(workspace: &Path, options: &Options) -> Result<Plan> {
         }
         candidates.push(c);
     }
+    candidates.extend(plan_runs(&root_dir, &root, options, &keep, &mut notes)?);
     candidates.sort_by(|a, b| a.path.cmp(&b.path));
     for c in &candidates {
         ensure!(
@@ -1099,6 +1143,240 @@ pub fn plan(workspace: &Path, options: &Options) -> Result<Plan> {
         candidates,
         notes,
     })
+}
+
+/// Name of a run output without its extension, so `x/`, `x.log` and `x.done` share a fate.
+fn run_stem(name: &str) -> &str {
+    for ext in [".log", ".done", ".sh", ".json", ".txt", ".md"] {
+        if let Some(stem) = name.strip_suffix(ext)
+            && !stem.is_empty()
+        {
+            return stem;
+        }
+    }
+    name
+}
+
+/// The run a derived stem (`x-gate`) is derived from.
+fn derived_base(stem: &str) -> Option<&str> {
+    DERIVED_SUFFIXES
+        .iter()
+        .find_map(|suffix| stem.strip_suffix(suffix))
+        .filter(|base| !base.is_empty())
+}
+
+/// One direct child of a run directory, inspected but not yet classified.
+struct RunEntry {
+    path: PathBuf,
+    id: FileId,
+    bytes: u64,
+    newest: Option<SystemTime>,
+    /// Refusal found while inspecting it (unreadable, other filesystem).
+    refused: Option<String>,
+    /// Evidence found inside: not a candidate at all, and its group is kept whole.
+    evidence_inside: bool,
+    pinned: bool,
+}
+
+/// Plan `--runs`: the direct children of [`RUN_DIRS`], grouped by name stem, newest
+/// groups kept, the rest `remove`. Entries with an evidence name or a capture layout, entries
+/// with evidence anywhere inside, and symlinks are never candidates; a group containing one
+/// (or an unreadable entry) is kept whole. A `KEEP` file or list, a derived name
+/// (`x-gate` of a pinned `x`) or `--keep` pins a group.
+fn plan_runs(
+    root: &Dir,
+    root_path: &Path,
+    options: &Options,
+    keep: &[Keep],
+    notes: &mut Vec<String>,
+) -> Result<Vec<Candidate>> {
+    let keep_n = options.keep_runs.unwrap_or(DEFAULT_KEEP_RUNS);
+    ensure!(
+        !options.runs || keep_n >= 1,
+        "--keep-runs must be at least 1"
+    );
+    let mut out = Vec::new();
+    for rel in RUN_DIRS {
+        let (dir, dir_path) = match resolve(root, root_path, rel) {
+            Ok(Some(found)) => found,
+            Ok(None) => continue,
+            Err(why) => {
+                notes.push(format!("skipped: {why}"));
+                continue;
+            }
+        };
+        let Ok(dir_meta) = dir.meta() else { continue };
+        let names = match dir.names() {
+            Ok(n) => n,
+            Err(e) => {
+                notes.push(format!("unreadable: {}: {e}", dir_path.display()));
+                continue;
+            }
+        };
+        let mut groups: BTreeMap<String, Vec<RunEntry>> = BTreeMap::new();
+        let mut count = 0usize;
+        let mut protected_stems: BTreeSet<String> = BTreeSet::new();
+        let listed: BTreeSet<String> = dir
+            .read_file(OsStr::new(RUN_PIN), 1 << 20)
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    // `x/`, `dir/x/` and `x.log` all name the group `x`.
+                    .map(|l| {
+                        run_stem(l.trim_end_matches('/').rsplit('/').next().unwrap_or(l)).to_owned()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for name in names {
+            let text = name.to_string_lossy().into_owned();
+            let path = dir_path.join(&name);
+            if text.starts_with('.') || text == RUN_PIN {
+                continue;
+            }
+            let meta = match dir.child_meta(&name) {
+                Ok(m) => m,
+                Err(e) => {
+                    notes.push(format!("unreadable: {}: {e}", path.display()));
+                    continue;
+                }
+            };
+            match meta.kind {
+                Kind::Symlink => {
+                    notes.push(format!("skipped symlink: {}", path.display()));
+                    continue;
+                }
+                Kind::Other => continue,
+                Kind::Dir | Kind::File => {}
+            }
+            let child = (meta.kind == Kind::Dir)
+                .then(|| {
+                    dir.child(&name)
+                        .ok()
+                        .filter(|c| c.meta().is_ok_and(|m| m.id == meta.id))
+                })
+                .flatten();
+            if is_evidence_name(&text) || child.as_ref().is_some_and(is_capture) {
+                notes.push(format!("{PROTECTED}{}", path.display()));
+                // Its group (`x/` with `x.log`, `x.done`) is kept whole.
+                protected_stems.insert(run_stem(&text).to_owned());
+                continue;
+            }
+            count += 1;
+            if !options.runs {
+                continue;
+            }
+            let mut entry = RunEntry {
+                path: path.clone(),
+                id: meta.id,
+                bytes: meta.size,
+                newest: meta.modified,
+                refused: None,
+                evidence_inside: false,
+                pinned: false,
+            };
+            if meta.id.0 != dir_meta.id.0 {
+                entry.refused = Some("on another filesystem (mount point)".into());
+            } else if meta.kind == Kind::Dir {
+                match &child {
+                    None => entry.refused = Some("changed while being read".into()),
+                    Some(child) => {
+                        let tree = survey(child, &path, Scope::Build);
+                        entry.bytes = tree.bytes;
+                        entry.newest = tree.newest;
+                        entry.pinned = child.child_meta(OsStr::new(RUN_PIN)).is_ok();
+                        if let Some(e) = tree.evidence {
+                            entry.evidence_inside = true;
+                            notes.push(format!("{PROTECTED}{}", e.display()));
+                        } else if let Some(first) = tree.unreadable.first() {
+                            notes
+                                .extend(tree.unreadable.iter().map(|u| format!("unreadable: {u}")));
+                            entry.refused =
+                                Some(format!("unreadable entry, contents not verified ({first})"));
+                        }
+                    }
+                }
+            }
+            if keep
+                .iter()
+                .any(|k| is_kept(k, &path) || k.0.starts_with(&path))
+            {
+                entry.pinned = true;
+            }
+            groups
+                .entry(run_stem(&text).to_owned())
+                .or_default()
+                .push(entry);
+        }
+        if !options.runs {
+            if count > 0 {
+                notes.push(format!(
+                    "{count} entr{} under {} not selected; pass --runs [--keep-runs N] to list the oldest for removal",
+                    if count == 1 { "y" } else { "ies" },
+                    dir_path
+                        .strip_prefix(root_path)
+                        .unwrap_or(&dir_path)
+                        .display()
+                ));
+            }
+            continue;
+        }
+        // Newest group first (ties broken by name). Pinned groups are extra: they do
+        // not use up one of the N places.
+        let mut order: Vec<(Option<SystemTime>, &String)> = groups
+            .iter()
+            .map(|(stem, members)| (members.iter().filter_map(|m| m.newest).max(), stem))
+            .collect();
+        order.sort_by(|a, b| b.cmp(a));
+        let mut recent = 0usize;
+        let mut statuses: BTreeMap<&String, Status> = BTreeMap::new();
+        // Directly pinned stems, then the runs derived from them.
+        let direct: BTreeSet<&str> = groups
+            .iter()
+            .filter(|(stem, members)| {
+                listed.contains(stem.as_str()) || members.iter().any(|m| m.pinned)
+            })
+            .map(|(stem, _)| stem.as_str())
+            .collect();
+        for (_, stem) in order {
+            let pinned = direct.contains(stem.as_str())
+                || protected_stems.contains(stem.as_str())
+                || derived_base(stem)
+                    .is_some_and(|base| direct.contains(base) || listed.contains(base))
+                || groups[stem]
+                    .iter()
+                    .any(|m| m.refused.is_some() || m.evidence_inside);
+            let status = if pinned {
+                Status::Pinned
+            } else {
+                recent += 1;
+                if recent <= keep_n {
+                    Status::KeptRecent
+                } else {
+                    Status::Remove
+                }
+            };
+            statuses.insert(stem, status);
+        }
+        for (stem, members) in &groups {
+            for m in members.iter().filter(|m| !m.evidence_inside) {
+                let status = match &m.refused {
+                    Some(why) => Status::Refused(why.clone()),
+                    None => statuses[stem].clone(),
+                };
+                out.push(Candidate {
+                    path: m.path.clone(),
+                    class: Class::Runs,
+                    bytes: m.bytes,
+                    status,
+                    project: None,
+                    id: Some(m.id),
+                });
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn human(bytes: u64) -> String {
@@ -1219,6 +1497,7 @@ fn remove_verified(plan: &Plan, c: &Candidate) -> Result<()> {
             "cargo target has a project: {}",
             c.path.display()
         ),
+        Class::Runs => bail!("run entries are removed by remove_run_entry"),
     }
     let below_root: Vec<OsString> = c
         .path
@@ -1332,6 +1611,133 @@ fn remove_verified(plan: &Plan, c: &Candidate) -> Result<()> {
     Ok(())
 }
 
+/// Open `name` below `dir` as a plain directory on the planned device, by exact name.
+fn descend(dir: &Dir, name: &OsStr, dev: u64, shown: &Path) -> Result<Dir> {
+    ensure!(
+        dir.names()?.iter().any(|n| n == name),
+        "{} is not stored under exactly that name (or is gone)",
+        shown.display()
+    );
+    let meta = dir.child_meta(name)?;
+    ensure!(
+        meta.kind == Kind::Dir,
+        "{} is not a plain directory",
+        shown.display()
+    );
+    ensure!(
+        meta.id.0 == dev,
+        "{} is on another filesystem",
+        shown.display()
+    );
+    let next = dir.child(name)?;
+    ensure!(
+        next.meta()?.id == meta.id,
+        "{} changed while being opened",
+        shown.display()
+    );
+    Ok(next)
+}
+
+/// Re-verify a `--runs` candidate through held descriptors, then remove it. Only a
+/// direct child of an exact [`RUN_DIRS`] location qualifies: not hidden, not an evidence
+/// name, not pinned, no evidence inside, never a symlink.
+fn remove_run_entry(plan: &Plan, c: &Candidate) -> Result<()> {
+    let below: Vec<OsString> = c
+        .path
+        .strip_prefix(&plan.root)
+        .context("candidate is outside the workspace")?
+        .components()
+        .map(|x| match x {
+            Component::Normal(n) => Ok(n.to_os_string()),
+            _ => bail!("unexpected path component in {}", c.path.display()),
+        })
+        .collect::<Result<_>>()?;
+    ensure!(
+        below.len() == 3
+            && RUN_DIRS
+                .iter()
+                .any(|d| d.len() == 2 && below[0] == d[0] && below[1] == d[1]),
+        "not an allowed run location: {}",
+        c.path.display()
+    );
+    let last = &below[2];
+    let text = last.to_string_lossy();
+    ensure!(
+        !text.starts_with('.') && text != RUN_PIN && !is_evidence_name(&text),
+        "not a prunable run entry: {}",
+        c.path.display()
+    );
+    let root = Dir::open(&plan.root).context("opening the workspace")?;
+    ensure!(
+        root.meta()?.id == plan.root_id,
+        "the workspace was replaced since it was planned"
+    );
+    let dev = plan.root_id.0;
+    let first = descend(&root, &below[0], dev, &plan.root.join(&below[0]))?;
+    let parent = descend(
+        &first,
+        &below[1],
+        dev,
+        &plan.root.join(&below[0]).join(&below[1]),
+    )?;
+    ensure!(
+        parent.names()?.iter().any(|n| n == last),
+        "{} is gone",
+        c.path.display()
+    );
+    let meta = parent.child_meta(last)?;
+    ensure!(
+        c.id == Some(meta.id),
+        "{} is not the entry that was planned",
+        c.path.display()
+    );
+    ensure!(
+        meta.id.0 == dev,
+        "{} is on another filesystem",
+        c.path.display()
+    );
+    match meta.kind {
+        Kind::File => parent
+            .unlink(last)
+            .with_context(|| format!("removing {}", c.path.display()))?,
+        Kind::Dir => {
+            let dir = descend(&parent, last, dev, &c.path)?;
+            ensure!(
+                dir.meta()?.id == meta.id,
+                "{} is not the directory that was planned",
+                c.path.display()
+            );
+            ensure!(
+                dir.child_meta(OsStr::new(RUN_PIN)).is_err(),
+                "{} is pinned by a {RUN_PIN} file",
+                c.path.display()
+            );
+            let tree = survey(&dir, &c.path, Scope::Build);
+            ensure!(
+                tree.evidence.is_none(),
+                "contains evidence directory {}",
+                tree.evidence.unwrap_or_default().display()
+            );
+            ensure!(
+                tree.unreadable.is_empty(),
+                "unreadable entries: {}",
+                tree.unreadable.join("; ")
+            );
+            remove_contents(&dir, &c.path, Scope::Build, dev, 0)?;
+            parent
+                .rmdir(last)
+                .with_context(|| format!("removing {}", c.path.display()))?;
+        }
+        _ => bail!("{} is neither a file nor a directory", c.path.display()),
+    }
+    ensure!(
+        matches!(parent.child_meta(last), Err(e) if e.kind() == std::io::ErrorKind::NotFound),
+        "{} is still present after removal",
+        c.path.display()
+    );
+    Ok(())
+}
+
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod toctou_tests {
     use super::*;
@@ -1371,7 +1777,12 @@ pub fn apply(plan: &Plan, out: &mut dyn Write) -> Result<Report> {
     {
         writeln!(out, "removing {} ({})", show_path(&c.path), human(c.bytes))?;
         out.flush()?;
-        match remove_verified(plan, c) {
+        let removed = if c.class == Class::Runs {
+            remove_run_entry(plan, c)
+        } else {
+            remove_verified(plan, c)
+        };
+        match removed {
             Ok(()) => {
                 report.bytes += c.bytes;
                 report.removed.push(c.path.clone());

@@ -61,7 +61,7 @@ png = "0.18"
 name = "editing"
 harness = false
 
-# Dev/test builds dominate the Cargo cache in .mochi/target. Full debuginfo for every
+# Dev/test builds dominate the Cargo cache in .mochi/cache/target. Full debuginfo for every
 # dependency was most of it. One-off measurements on one macOS machine (not reproducible from
 # the repository; sizes drift with the dependency set and seconds were taken while other builds
 # ran), with `cargo test --no-run` into a fresh target dir each time:

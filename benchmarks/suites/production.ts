@@ -14,7 +14,7 @@ const sites = [
         origin: "https://www.natural.com",
         port: 4184,
         routes: ["/", "/pay", "/request"],
-        capture: ".mochi/trials/20261108-normalized/natural/capture",
+        capture: ".mochi/evidence/trials/20261108-normalized/natural/capture",
     },
     {
         name: "infinitegarden",
@@ -25,14 +25,14 @@ const sites = [
             "/articles",
             "/articles/commercial-intelligence-with-infinite-memory",
         ],
-        capture: ".mochi/trials/20261108-normalized/infinitegarden/capture",
+        capture: ".mochi/evidence/trials/20261108-normalized/infinitegarden/capture",
     },
     {
         name: "microsoft-ai",
         origin: "https://microsoft.ai",
         port: 4186,
         routes: ["/", "/models/", "/models/mai-cyber-1-1-flash/"],
-        capture: ".mochi/trials/20261108-microsoft-ai/capture-modules",
+        capture: ".mochi/evidence/trials/20261108-microsoft-ai/capture-modules",
     },
 ];
 for (const site of sites) {

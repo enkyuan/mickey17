@@ -214,7 +214,7 @@ pointer media features assume a desktop capture (listed in the report).
 into the classes its emitted elements carry, on top of the token pipeline above. It runs the
 token pipeline first and translates the tokenized stylesheets, so utilities reference the
 central `@theme` tokens. `--tailwind-dir` points at a Tailwind v4 package (default: found in
-`MOCHI_TAILWIND_DIR`, else below `.mochi/mochi-exports` relative to the working directory; pass `--tailwind-dir` when running from elsewhere. Without a Tailwind package or `bun` the check falls back to this crate's own model of the utilities and the report says so).
+`MOCHI_TAILWIND_DIR`, else below `.mochi/generated/exports` relative to the working directory; pass `--tailwind-dir` when running from elsewhere. Without a Tailwind package or `bun` the check falls back to this crate's own model of the utilities and the report says so).
 
 ## What it produces
 
