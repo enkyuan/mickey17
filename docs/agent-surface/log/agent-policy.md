@@ -468,3 +468,59 @@ Equivalent mutant added: `r4-scroll-clipped-flag`.
 
 Results: `bun test` 372 pass; `tsc` clean; mutation run 206/206 non-equivalent killed
 (16 new `r4-*` mutants).
+
+## 10. Entry 2026-11-10: review round 5, and mismatches with agent-schema (PR #7)
+
+Round 5 (Opus, high; diff 5caa46c..da04aa7) found 1 HIGH and 3 MEDIUM (all in my round-4
+patches), now fixed:
+
+| Finding | Verdict | Fix |
+| --- | --- | --- |
+| HIGH: U+FF9E/U+FF9F (category Lm) become combining marks under NFKC, so interleaving them with marks defeats the run cut (84 KB = 8.4 s) | confirmed; the reviewer's claim that these were the *only* two was wrong | The run cut counts them, and also U+0E33 and U+0EB3 (Thai/Lao SARA AM, found by the enumeration test that now scans code points 0..0x3FFFF for any non-mark whose NFKC starts with a mark). |
+| MEDIUM: any `overflow:auto|scroll` wrapper reset the clip, even an auto-height wrapper sticking out of a clipping ancestor | confirmed | A scroll container resets the clip only when it lies inside the inherited clip (or nothing clips above it); otherwise it is clipped like a hidden box. A 1 px scroll container is `zero-size`. |
+| MEDIUM: `text-indent` hiding inside a clipping ancestor was no longer detected | confirmed | A child of a clipper is hidden when its indent reaches the clipper's width (900 px when unknown). |
+| MEDIUM: `position:fixed` assumed to escape every clipping ancestor | confirmed | New `NodeStyle.containsFixed` (capture sets it for transform/filter/contain/... ancestors); fixed boxes are judged against `CollectOptions.viewport`. |
+| LOW | fixed | zero-area wrappers no longer count as "outside"; null/non-object `tokens` refused; NaN `maxTtlMs` ignored; `deps` read-once is now tested. |
+
+Capture requirements this makes explicit (so T0 is both safe and complete): bounding rects,
+document and viewport size, clipper sizes, sampled backdrop colour for image backgrounds,
+and `containsFixed`. Without them text is kept and reported (`unjudged`), never guessed.
+
+Results: `bun test` 388 pass; `tsc` clean; mutation run 216/216 non-equivalent killed.
+
+### Mismatches between this library and `agent-schema` (origin/feat/agent-schema b2ec4dc, PR #7)
+
+I read the schema from the local remote ref only (fetch is blocked in this sandbox: github.com:22).
+None is adopted yet; adoption waits for #7 to merge. For the parent:
+
+1. **Mandate has no signature.** Schema `Mandate` carries `hash` (content hash), `mode`,
+   `grantor`, `scope: [{kind: action|flow}]`, `spend_cap_minor`, optional
+   `per_call_cap_minor` (min 0), `issued_at`/`expires_at`. Nothing authenticates it. This
+   library needs a signed envelope (`token = payload.sig`, Ed25519 verifier held by the
+   executor). Proposal: schema adds `SignedMandate = { mandate, signature }` (or keeps the
+   compact token) and the executor verifies it; mandate `flow` scope must be supported here;
+   I require caps >= 1 (a zero cap authorizes nothing).
+2. **Confirmation binding.** Schema binds `request_digest` + `idempotency_key` + `subject`;
+   mine binds the field tuple (action, item, total, currency, payee). Proposal: bind both.
+   Mine also lacks `subject = {flow, step}`; I will add it.
+3. **Payee type.** Schema `payee` is `PageTextNonEmpty` (page-origin text). My policy requires
+   the payee to be a *host* that equals the merchant and is on the mandate allowlist; page
+   text cannot be compared to an allowlist. Proposal: `payee` becomes a `Host` (surface
+   value) and any display name stays a separate `PageText`.
+4. **Items.** Schema financial confirmation has `items[]` with `quantity` and required
+   `amount`, total checked against the sum; mine binds a single `item` string and a total.
+   I will bind a digest of the item list.
+5. **Idempotency key pattern.** Schema `[A-Za-z0-9_-]{16,128}`; mine accepts printable
+   ASCII 8-128. I will tighten to the schema's.
+6. **Ids.** Schema slugs `^[a-z][a-z0-9_-]{0,63}$` and `n_<16 hex>`; mine accept
+   `[A-Za-z0-9._:-]{1,128}` for action/mandate ids and `act_<hex>` for tool ids. I will
+   tighten to the schema.
+7. **PageText** is `{origin, value}` in the schema; mine `{origin, text, flags}`, issued
+   only by `pageText()`. I will carry `value` and keep flags beside it.
+8. **Receipt.** Schema `request: {method, host, path}`, `amount: Money`, tier excludes T4
+   (matches mine), read-only receipts T0/T1 reads (matches the matrix here). Mine has
+   `requestClass` and a money summary; I will adopt the schema's shape.
+9. **Refusal vocabulary.** The schema's `BlockedReason` enum is coarser than my refusal
+   codes; each of mine maps to one `BlockedReason` and keeps its code as detail.
+10. **Enforcement matrix** is not in the schema (it says so); agreed: it stays here, and the
+    schema's tier/effect/mode enums are identical to mine.

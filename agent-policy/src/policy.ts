@@ -290,6 +290,7 @@ export interface Authorization {
  */
 export async function authorize(input: ActionRequest, tokens: Tokens, deps: AuthorizeDeps): Promise<Authorization | Refusal> {
     if (typeof input !== "object" || input === null) return refuse("blocked", "invalid-request", "a well-formed request object", "The request is not an object.");
+    if (typeof tokens !== "object" || tokens === null) return refuse("blocked", "invalid-request", "a well-formed tokens object", "Tokens must be an object (possibly empty).");
     const req = snapshotRequest(input);
     // deps are read once as well: a swapped ledger or store between steps must not split one authorization
     const { mandateVerifier, confirmationVerifier, ledger, consumed, revokedMandates, maxMandateLifetimeMs, maxConfirmationTtlMs } = deps;

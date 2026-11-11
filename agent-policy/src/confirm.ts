@@ -83,7 +83,7 @@ export async function verifyConfirmation(
     if (typeof p.jti !== "string" || !ID.test(p.jti) || !isSafePosInt(p.iat) || !isSafePosInt(p.exp) || p.exp <= p.iat || !bindingOk(p)) {
         return refuse("requires_confirmation", "confirmation-malformed", need, "Confirmation payload is malformed.");
     }
-    if (p.exp - p.iat > Math.min(opts.maxTtlMs ?? DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)) return refuse("requires_confirmation", "confirmation-ttl-too-long", need, "Confirmation lifetime exceeds the allowed maximum.");
+    if (p.exp - p.iat > Math.min(Number.isFinite(opts.maxTtlMs) ? (opts.maxTtlMs as number) : DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)) return refuse("requires_confirmation", "confirmation-ttl-too-long", need, "Confirmation lifetime exceeds the allowed maximum.");
     if (opts.now < p.iat) return refuse("requires_confirmation", "confirmation-not-yet-valid", need, "Confirmation is not yet valid.");
     if (opts.now >= p.exp) return refuse("requires_confirmation", "confirmation-expired", "an unexpired confirmation", "Confirmation has expired.");
     for (const k of BOUND) {

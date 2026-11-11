@@ -34,6 +34,12 @@ export interface NodeStyle {
     readonly backgroundImage?: boolean;
     /** Colour the capture sampled behind the text where a background image/gradient sits. Without it the backdrop is unknown. */
     readonly backgroundSample?: Rgba;
+    /**
+     * True when this element is the containing block for `position:fixed` descendants
+     * (transform, perspective, filter, backdrop-filter, will-change, contain, container-type).
+     * Without it a fixed box is assumed to escape ancestor clipping.
+     */
+    readonly containsFixed?: boolean;
 }
 
 export interface Rect {
@@ -153,20 +159,22 @@ export function ownHiddenReasons(n: PageNode, ctx: Partial<HideContext> = {}): H
     const moved = s.position === "absolute" || s.position === "fixed" || s.position === "relative" || s.position === "sticky";
     const behind = (v: number | undefined) => v !== undefined && v <= -900;
     const r = n.rect;
-    const outside = r !== undefined && (r.x + r.width <= 0 || r.y + r.height <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
+    const outside = r !== undefined && r.width > 0 && r.height > 0 && (r.x + r.width <= 0 || r.y + r.height <= 0 || (doc !== undefined && (r.x >= doc.width || r.y >= doc.height)));
     // Positive offsets are ordinary layout, unless an overflow-clipping ancestor (or the node
     // itself) would cut the content off: then a far offset or text-indent hides it.
     // When the node has a bounding box, only the box (against the document and the
     // accumulated clip) decides; the offset heuristics are for captures without one.
     const beyond = (v: number | undefined, dim: number | undefined) => r === undefined && clippedHere && v !== undefined && dim !== undefined && v >= Math.max(dim, 1);
     // the classic image-replacement hide: a huge text-indent inside a box that clips its own overflow
-    const indentHidden = ownClips && s.textIndentPx !== undefined && s.textIndentPx >= 900;
+    // (own box or a clipping ancestor); the limit is the clipper's width when known, else 900 px
+    const indentLimit = (ownClips ? s.widthPx : size.width) ?? 900;
+    const indentHidden = clippedHere && s.textIndentPx !== undefined && s.textIndentPx >= Math.max(indentLimit, 1);
     if ((moved && (behind(s.leftPx) || behind(s.topPx) || beyond(s.leftPx, size.width) || beyond(s.topPx, size.height))) || (s.textIndentPx !== undefined && (s.textIndentPx <= -900 || indentHidden)) || outside) out.push("offscreen");
     const clip = (s.clip ?? "").replace(/[\s,]+/g, "").toLowerCase();
     const cp = (s.clipPath ?? "").replace(/\s+/g, "").toLowerCase();
     if (/^rect\((0(px)?){4}\)$/.test(clip) || insetHidesAll((s.clipPath ?? "").toLowerCase().trim()) || cp === "circle(0)" || cp === "circle(0px)") out.push("clipped");
     const tiny = (v: number | undefined) => v !== undefined && v <= 1;
-    if ((tiny(s.widthPx) || tiny(s.heightPx)) && ownClips) out.push("zero-size");
+    if ((tiny(s.widthPx) || tiny(s.heightPx)) && (ownClips || scrollsOverflow(s.overflow))) out.push("zero-size");
     if (s.scale !== undefined && s.scale <= 0.01) out.push("scaled-to-zero");
     return out;
 }
@@ -195,6 +203,8 @@ export interface ExcludedSegment {
 }
 
 export interface CollectOptions {
+    /** Viewport size, to judge `position:fixed` boxes (which never scroll into view). */
+    readonly viewport?: { readonly width: number; readonly height: number };
     /** Document size, to judge boxes that lie beyond the right/bottom edge. */
     readonly document?: { readonly width: number; readonly height: number };
     /** Page background behind the root (default white, the CSS canvas). */
@@ -243,10 +253,12 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
     const unjudged: TextSegment[] = [];
     const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-    const walk = (n: PageNode, path: string, inherited: readonly HiddenReason[], visibilityHidden: boolean, backdrop: Rgba | null, opacity: number, clipIn: Rect | null, clippedIn: boolean, clipperSizeIn: { width?: number; height?: number } | undefined): void => {
+    const contains = (a: Rect, b: Rect) => b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+
+    const walk = (n: PageNode, path: string, inherited: readonly HiddenReason[], visibilityHidden: boolean, backdrop: Rgba | null, opacity: number, clipIn: Rect | null, clippedIn: boolean, clipperSizeIn: { width?: number; height?: number } | undefined, fixedBlocked: boolean): void => {
         const style0 = n.style ?? {};
-        // position:fixed escapes ancestor clipping; an overflow:auto|scroll ancestor makes its content reachable
-        const escapes = (style0.position ?? "").toLowerCase() === "fixed";
+        // position:fixed escapes ancestor clipping unless an ancestor is its containing block
+        const escapes = (style0.position ?? "").toLowerCase() === "fixed" && !fixedBlocked;
         const clip = escapes ? null : clipIn;
         const clippedAncestor = escapes ? false : clippedIn;
         const clipperSize = escapes ? undefined : clipperSizeIn;
@@ -260,12 +272,19 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         if (effOpacity <= 0.01 && !own.includes("zero-opacity")) own.push("zero-opacity"); // opacity compounds down the tree
         // a box wholly outside an ancestor's clipped area is not shown
         if (n.rect && clip && !intersects(n.rect, clip)) own.push("clipped");
+        // a fixed box never scrolls: it is shown only if it lies inside the viewport
+        const vp = opts.viewport;
+        const r0 = n.rect;
+        if (escapes && vp && r0 && r0.width > 0 && r0.height > 0 && (r0.x >= vp.width || r0.y >= vp.height || r0.x + r0.width <= 0 || r0.y + r0.height <= 0)) own.push("offscreen");
         const overflowClips = clipsOverflow(style.overflow);
         const scrolls = scrollsOverflow(style.overflow) && !overflowClips;
-        // a scroll container's content is reachable: it starts a fresh, unbounded region
-        const childClip = scrolls ? null : overflowClips && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
-        const childClipped = scrolls ? false : clippedAncestor || overflowClips;
-        const childSize = scrolls ? undefined : overflowClips ? { ...(style.widthPx !== undefined ? { width: style.widthPx } : {}), ...(style.heightPx !== undefined ? { height: style.heightPx } : {}) } : clipperSize;
+        // A scroll container's content is reachable, so it starts a fresh unbounded region, but only
+        // when the container itself is inside what its ancestors show: an auto-height wrapper
+        // that sticks out of a clipping ancestor does not scroll, it just overflows and is cut.
+        const resets = scrolls && ((clip === null && !clippedAncestor) || (clip !== null && n.rect !== undefined && contains(clip, n.rect)));
+        const childClip = resets ? null : (overflowClips || scrolls) && n.rect ? (clip ? intersectRect(clip, n.rect) : n.rect) : clip;
+        const childClipped = resets ? false : clippedAncestor || overflowClips;
+        const childSize = resets ? undefined : overflowClips ? { ...(style.widthPx !== undefined ? { width: style.widthPx } : {}), ...(style.heightPx !== undefined ? { height: style.heightPx } : {}) } : clipperSize;
         const vis = (n.style?.visibility ?? "").toLowerCase();
         const hiddenByVisibility = vis === "hidden" || vis === "collapse" ? true : vis === "visible" ? false : visibilityHidden;
         const reasons: HiddenReason[] = [...inherited, ...own];
@@ -293,9 +312,9 @@ export function collectText(root: PageNode, opts: CollectOptions = {}): Collecte
         (n.children ?? []).forEach((c) => {
             let extra: HiddenReason[] = [];
             if (isDetails && !detailsOpen && c.tag.toLowerCase() !== "summary") extra = ["closed-details"];
-            walk(c, here, [...pass, ...extra], hiddenByVisibility, childBackdrop, effOpacity, childClip, childClipped, childSize);
+            walk(c, here, [...pass, ...extra], hiddenByVisibility, childBackdrop, effOpacity, childClip, childClipped, childSize, fixedBlocked || style.containsFixed === true);
         });
     };
-    walk(root, "", [], false, opts.pageBackground ?? WHITE, 1, null, false, undefined);
+    walk(root, "", [], false, opts.pageBackground ?? WHITE, 1, null, false, undefined, false);
     return { visible, excluded, attributes, unjudged, hiddenOptIn };
 }

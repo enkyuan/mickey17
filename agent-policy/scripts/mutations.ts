@@ -30,7 +30,7 @@ export const MUTATIONS: readonly Mutation[] = [
     { id: "ledger-duplicate-ref", file: "mandate.ts", find: "entries.has(ref) ||", replace: "false ||" },
     // ---- confirmations ----
     { id: "confirm-expiry-boundary", file: "confirm.ts", find: "if (opts.now >= p.exp)", replace: "if (opts.now > p.exp)" },
-    { id: "confirm-ttl", file: "confirm.ts", find: "p.exp - p.iat > Math.min(opts.maxTtlMs ?? DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)", replace: "p.exp - p.iat < Math.min(opts.maxTtlMs ?? DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)" },
+    { id: "confirm-ttl", file: "confirm.ts", find: "p.exp - p.iat > Math.min(Number.isFinite(opts.maxTtlMs) ? (opts.maxTtlMs as number) : DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)", replace: "p.exp - p.iat < Math.min(Number.isFinite(opts.maxTtlMs) ? (opts.maxTtlMs as number) : DEFAULT_MAX_TTL_MS, MAX_RETENTION_MS - CONSUMED_RETENTION_MS)" },
     { id: "confirm-binding-verify", file: "confirm.ts", find: "        if (p[k] !== expected[k]) {", replace: "        if (p[k] === expected[k]) {" },
     { id: "confirm-binding-recheck", file: "confirm.ts", find: "        if (c[k] !== expected[k]) return", replace: "        if (c[k] === expected[k]) return" },
     { id: "confirm-single-use", file: "confirm.ts", find: "if (this.#seen.has(jti)) return Promise.resolve(false);", replace: "if (false) return Promise.resolve(false);" },
@@ -220,14 +220,14 @@ export const MUTATIONS: readonly Mutation[] = [
     { id: "r3-tooldesc-effect-reread", file: "tooldesc.ts", find: "EFFECT_TEXT[effect],", replace: "EFFECT_TEXT[spec.effect]," },
     { id: "r3-tooldesc-param-reread", file: "tooldesc.ts", find: "return { name: pid as string,", replace: "return { name: p.id as string," },
     // ---- added after review round 4 ----
-    { id: "r4-stream-safe", file: "sanitize.ts", find: "const streamSafe = text.replace(/(\\p{M}{30})\\p{M}+/gu, (_m, keep: string) => {", replace: "const streamSafe = text.replace(/(\\p{M}{3000000})\\p{M}+/gu, (_m, keep: string) => {" },
+    { id: "r4-stream-safe", file: "sanitize.ts", find: "text.replace(/([\\p{M}\\uFF9E\\uFF9F\\u0E33\\u0EB3]{30})", replace: "text.replace(/([\\p{M}\\uFF9E\\uFF9F\\u0E33\\u0EB3]{3000000})" },
     { id: "r4-overflow-two-values", file: "hidden.ts", find: "return [parts[0] ?? \"visible\", parts[1] ?? parts[0] ?? \"visible\"];", replace: "return [parts[0] ?? \"visible\", \"visible\"];" },
     { id: "r4-overflow-clip-value", file: "hidden.ts", find: "return overflowAxes(v).some((a) => a === \"hidden\" || a === \"clip\");", replace: "return overflowAxes(v).some((a) => a === \"hidden\");" },
-    { id: "r4-scroll-container", file: "hidden.ts", find: "const childClip = scrolls ? null :", replace: "const childClip = false ? null :" },
+    { id: "r4-scroll-container", file: "hidden.ts", find: "const childClip = resets ? null :", replace: "const childClip = false ? null :" },
     // r4-scroll-clipped-flag: equivalent, since a scroll container also resets the clipper size and an unknown size is never judged by position.
-    { id: "r4-fixed-escapes", file: "hidden.ts", find: "const escapes = (style0.position ?? \"\").toLowerCase() === \"fixed\";", replace: "const escapes = false;" },
+    { id: "r4-fixed-escapes", file: "hidden.ts", find: "const escapes = (style0.position ?? \"\").toLowerCase() === \"fixed\" && !fixedBlocked;", replace: "const escapes = false;" },
     { id: "r4-rect-decides", file: "hidden.ts", find: "r === undefined && clippedHere &&", replace: "clippedHere &&" },
-    { id: "r4-indent-hidden", file: "hidden.ts", find: "const indentHidden = ownClips && s.textIndentPx !== undefined && s.textIndentPx >= 900;", replace: "const indentHidden = false;" },
+    { id: "r4-indent-hidden", file: "hidden.ts", find: "const indentHidden = clippedHere && s.textIndentPx !== undefined && s.textIndentPx >= Math.max(indentLimit, 1);", replace: "const indentHidden = false;" },
     { id: "r4-snapshot-credential", file: "policy.ts", find: "snap.credential = Object.freeze({ kind: cred.kind, scopes: Array.isArray(scopes) ? Object.freeze([...scopes]) : scopes });", replace: "snap.credential = cred;" },
     { id: "r4-snapshot-thirdparty", file: "policy.ts", find: "snap.thirdParty = isObj(tp) ? Object.freeze({ robots: tp.robots, tos: tp.tos }) : tp;", replace: "snap.thirdParty = tp;" },
     { id: "r4-null-input", file: "policy.ts", find: "if (typeof input !== \"object\" || input === null) return refuse(", replace: "if (false) return refuse(" },
@@ -236,4 +236,15 @@ export const MUTATIONS: readonly Mutation[] = [
     { id: "r4-robots-pattern-merge", file: "robots.ts", find: "return s.replace(/\\/{2,}/g, \"/\").replace(/%([0-9a-fA-F]{2})/g,", replace: "return s.replace(/%([0-9a-fA-F]{2})/g," },
     { id: "r4-cjk-lookalike-hangul", file: "sanitize.ts", find: "\\u3125\\u311a\\u0e25\\u110b\\u1175", replace: "\\u3125\\u311a\\u0e25" },
     { id: "r4-cjk-benign-katakana", file: "sanitize.ts", find: "s === \"Latin\" || s === \"CJK\" || s === \"Thai\") && !Array.from", replace: "s === \"Latin\" || s === \"Thai\") && !Array.from" },
+    // ---- added after review round 5 ----
+    { id: "r5-mark-like-ff9e", file: "sanitize.ts", find: "[\\p{M}\\uFF9E\\uFF9F\\u0E33\\u0EB3]{30})[\\p{M}\\uFF9E\\uFF9F\\u0E33\\u0EB3]+", replace: "[\\p{M}]{30})[\\p{M}]+" },
+    { id: "r5-scroll-reset-inside", file: "hidden.ts", find: "const resets = scrolls && ((clip === null && !clippedAncestor) || (clip !== null && n.rect !== undefined && contains(clip, n.rect)));", replace: "const resets = scrolls;" },
+    { id: "r5-scroll-zero-size", file: "hidden.ts", find: "&& (ownClips || scrollsOverflow(s.overflow))) out.push(\"zero-size\");", replace: "&& ownClips) out.push(\"zero-size\");" },
+    { id: "r5-indent-limit-width", file: "hidden.ts", find: "const indentLimit = (ownClips ? s.widthPx : size.width) ?? 900;", replace: "const indentLimit = 900;" },
+    { id: "r5-indent-ancestor", file: "hidden.ts", find: "const indentHidden = clippedHere && s.textIndentPx", replace: "const indentHidden = ownClips && s.textIndentPx" },
+    { id: "r5-contains-fixed", file: "hidden.ts", find: "fixedBlocked || style.containsFixed === true);", replace: "fixedBlocked);" },
+    { id: "r5-fixed-viewport", file: "hidden.ts", find: "if (escapes && vp && r0 && r0.width > 0", replace: "if (false && vp && r0 && r0.width > 0" },
+    { id: "r5-zero-area-outside", file: "hidden.ts", find: "const outside = r !== undefined && r.width > 0 && r.height > 0 && (r.x", replace: "const outside = r !== undefined && (r.x" },
+    { id: "r5-tokens-null", file: "policy.ts", find: "if (typeof tokens !== \"object\" || tokens === null) return refuse(", replace: "if (false) return refuse(" },
+    { id: "r5-nan-ttl", file: "confirm.ts", find: "Number.isFinite(opts.maxTtlMs) ? (opts.maxTtlMs as number) : DEFAULT_MAX_TTL_MS", replace: "(opts.maxTtlMs ?? DEFAULT_MAX_TTL_MS)" },
 ];

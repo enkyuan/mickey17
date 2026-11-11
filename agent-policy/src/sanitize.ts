@@ -149,8 +149,10 @@ export function sanitizePageText(input: string, opts: SanitizeOptions = {}): San
     let text = stripInvisible(capped(input), flags, tagRuns);
 
     // Stream-Safe Text Format (UAX #15): canonical reordering is quadratic in the length of a
-    // run of combining marks, so a run longer than 30 is cut before normalization.
-    const streamSafe = text.replace(/(\p{M}{30})\p{M}+/gu, (_m, keep: string) => {
+    // run of combining marks, so a run longer than 30 is cut before normalization. U+FF9E and
+    // U+FF9F (halfwidth voiced marks, Lm) and U+0E33/U+0EB3 (Thai/Lao SARA AM, Lo) start with a
+    // combining mark under NFKC, so they count as marks here (a test enumerates Unicode for any other such code point).
+    const streamSafe = text.replace(/([\p{M}\uFF9E\uFF9F\u0E33\u0EB3]{30})[\p{M}\uFF9E\uFF9F\u0E33\u0EB3]+/gu, (_m, keep: string) => {
         bump(flags, "combining-flood");
         return keep;
     });
