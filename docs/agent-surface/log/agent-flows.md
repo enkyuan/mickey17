@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (105 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (111 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -264,12 +264,26 @@ Known and kept (low): GraphQL documents starting with a fragment, a comment or `
 pair silently (they surface as unexplained values); a 16 to 19 character digitless random secret in a non-sensitive field is emitted (threshold is 20);
 over-redaction of slug-shaped values under field names outside the slug word list.
 
-After round 5 no separate re-review of these last fixes was run; they are covered by the regression tests above.
+**Round 6 (Opus, high; narrow: round-5 delta + a fresh redaction/determinism pass).** Confirmed holding: capitalised-`Method` reorders, cards past 16 KB,
+linear comment scan, bounded `safeText`, hostname-shaped secrets, and a fixture sweep (12 stack/scenario pairs): byte-identical output for
+5 shuffles of entries, events, JSON key order and run order each, and no token-shaped string, email or card number from the recordings in any output.
+Findings, fixed and pinned in `tests/review.test.ts` ("round 6"):
+H1 `issuedBefore` let swapped RPC requests resolve when the operation name merely appeared in an earlier response (now only token-grade values with a
+digit that an earlier response, the starting jar or an earlier free-text body carries count as issued); M4 the same function wrongly blocked nonces from
+inline HTML or the jar (they now count); M1 uncapped `cardIn` was 15-27x slower and not truly uncapped (windows only at digit-group starts, no allocation;
+a value with over 4096 long digit runs is withheld, fail closed; a 1M-digit constant scans in well under a second; the suite no longer flakes, plus `bunfig.toml`
+timeout 30 s); M2 `steps[].provides` and `select.field` bypassed `safeLocation`; M3 events that reuse an id and carry no time were order-dependent (content hash tie-break).
+Low: slug words must be real words (random-case runs are not); `type`/`kind`/`mode`/`plan`/`tier`/`service` removed from the slug field names; the `//` exemption now requires a
+host; descriptive headers (`accept*`, `cache-control`, `sec-*`) exempt again only when they carry no token-grade word; typed text in automation calls is scrubbed
+by a single-pass scanner (any length, more call names, card-shaped location keys redacted); the self-closing raw-text exemption of round 5 was reverted (HTML ignores the slash).
+Known and kept: XHTML served with a self-closing `<script/>`/`<title/>` is read with HTML semantics (an input after it is a located token, not `html:input`).
+
+**Round 7:** re-review of the round-6 delta only — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 105 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 111 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -287,5 +301,5 @@ After round 5 no separate re-review of these last fixes was run; they are covere
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (105 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (111 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

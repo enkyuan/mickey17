@@ -162,13 +162,38 @@ export function sensitiveLocation(loc: string): boolean {
 function cardIn(text: string): boolean {
     let runs = 0;
     for (const m of text.matchAll(/\d(?:[ ._/-]{0,2}\d){12,63}/g)) {
-        if (++runs > 8192) break;
-        const digits = m[0].replace(/\D/g, "").slice(0, 96);
-        for (let s = 0; s + 13 <= digits.length; s++) {
-            for (let l = 13; l <= 19 && s + l <= digits.length; l++) if (looksLikeCard(digits.slice(s, s + l))) return true;
+        // Fail closed: a value with this many long digit runs is withheld rather than scanned to the end.
+        if (++runs > 4096) return true;
+        const run = m[0];
+        // Digits, and where each group of digits starts (the run start or just after a separator): a card
+        // begins at a group start, so windows are tried there only.
+        const digits: number[] = [];
+        const starts: number[] = [];
+        for (let i = 0; i < run.length && digits.length < 96; i++) {
+            const c = run.charCodeAt(i);
+            if (c >= 48 && c <= 57) {
+                if (i === 0 || run.charCodeAt(i - 1) < 48 || run.charCodeAt(i - 1) > 57) starts.push(digits.length);
+                digits.push(c - 48);
+            }
+        }
+        for (const s0 of starts) {
+            for (let l = 13; l <= 19 && s0 + l <= digits.length; l++) if (luhn(digits, s0, l)) return true;
         }
     }
     return false;
+}
+
+function luhn(d: number[], start: number, len: number): boolean {
+    let sum = 0;
+    for (let i = 0; i < len; i++) {
+        let x = d[start + len - 1 - i]!;
+        if (i % 2 === 1) {
+            x *= 2;
+            if (x > 9) x -= 9;
+        }
+        sum += x;
+    }
+    return sum % 10 === 0;
 }
 
 const distinctCount = (s: string): number => new Set(s).size;
@@ -189,7 +214,10 @@ function slugLike(p: string): boolean {
     const parts = p.split(/[-_]/);
     if (parts.length < 2 || !parts.every((w) => /^[A-Za-z]{1,12}$/.test(w) || /^\d{1,6}$/.test(w))) return false;
     // Readable: at least one real word, and not a key in equal-sized groups (`ABCDE-FGHIJ-KLMNO-PQRST`, `4821-9937-1102-5583`).
-    if (!parts.some((w) => /^[A-Za-z]{3,}$/.test(w))) return false;
+    const word = (w: string) => /^(?:[a-z]{3,}|[A-Z][a-z]{2,}|[A-Z]{3,})$/.test(w) && /[aeiouAEIOU]/.test(w);
+    if (!parts.some(word)) return false;
+    // Every alphabetic part is a short word (1-2 letters) or looks like one: random-case runs (`KqZxLm`) are not words.
+    if (!parts.every((w) => /^\d+$/.test(w) || w.length <= 2 || word(w))) return false;
     const sizes = new Map<number, number>();
     for (const w of parts) sizes.set(w.length, (sizes.get(w.length) ?? 0) + 1);
     return Math.max(...sizes.values()) < 3;
@@ -198,7 +226,7 @@ function slugLike(p: string): boolean {
 /** Leaf names that legitimately carry readable slugs and labels (whole words of the field name, never the whole location). */
 const SLUG_WORDS = new Set([
     "sku", "slug", "handle", "product", "variant", "category", "collection", "referer", "href", "title", "label", "route",
-    "method", "rate", "color", "colour", "coupon", "option", "size", "type", "kind", "mode", "plan", "tier", "carrier", "service", "shipping",
+    "method", "rate", "color", "colour", "coupon", "option", "size", "carrier", "shipping",
 ]);
 
 /** Whether a location may carry a readable slug: a path segment, or a field whose own name says so. */
@@ -219,7 +247,8 @@ const HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,10}$/i;
 /** A long mixed blob (digits or both cases, high entropy) regardless of URL/path shape. */
 function rawTokenish(p: string, slugOk = false, pathOk = false): boolean {
     if (slugOk && slugLike(p)) return false;
-    if (p.includes("://") || p.startsWith("//") || HOST.test(p)) return false; // a URL or host: its pieces and parameters are checked separately
+    if (p.includes("://") || HOST.test(p)) return false; // a URL or host: its pieces and parameters are checked separately
+    if (p.startsWith("//") && HOST.test(p.slice(2).split(/[/?#]/)[0] ?? "")) return false; // a scheme-relative URL
     const segs = p.split("/").filter(Boolean);
     // A readable path (`/api/v2/carts/`): mostly words, slugs and version tokens.
     if ((slugOk || pathOk) && segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || /^[a-z]{1,3}\d{1,3}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false;
@@ -285,10 +314,15 @@ export function urlHasSecret(value: string): boolean {
 
 /** Headers whose values are descriptive, not credentials: only URL/card/PII checks apply to them. */
 const BENIGN_HEADER = /^header:content-type(#\d+)?$/;
+/** Descriptive headers whose values are MIME types, language tags and directives. */
+const DESCRIPTIVE_HEADER = /^header:(accept|accept-encoding|accept-language|cache-control|sec-ch-[a-z-]+|sec-fetch-[a-z-]+)(#\d+)?$/;
 /** A browser product token (`Mozilla/5.0 (...) ...`, `curl/8.4.0`) in a user agent. */
 const PRODUCT_TOKEN = /^[A-Za-z][\w.-]*\/\d[\w.]*(?:\s|$)/;
+const noTokenWords = (value: string): boolean =>
+    !value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w)) && !/[A-Za-z0-9]{3,}_[A-Za-z0-9_]{6,}/.test(value);
 const benignValue = (loc: string, value: string): boolean =>
     BENIGN_HEADER.test(loc) ||
+    (DESCRIPTIVE_HEADER.test(loc) && noTokenWords(value) && !cardIn(value) && !piiish(value)) ||
     (/^header:user-agent(#\d+)?$/.test(loc) && PRODUCT_TOKEN.test(value) && !value.split(/[^A-Za-z0-9_-]+/).some((w) => w.length > 0 && tokenGrade(w)) && !/[A-Za-z0-9]{3,}_[A-Za-z0-9_]{6,}/.test(value));
 
 /** Whether a constant may not be written to the graph: by location name, or by what the value looks like. */
@@ -297,17 +331,44 @@ export function redactConstant(loc: string, value: string): boolean {
     return !benignValue(loc, value) && secretish(value, slugOkLocation(loc), slugOkLocation(loc));
 }
 
-/** A trace selector or label with attribute values removed (`[value="x"]` -> `[value=…]`), or withheld if it still looks secret. */
+const CALLS = /\b(fill|type|press|pressSequentially|insertText|setValue|check|select_?option|sendKeys|has-text|text|value|set_input_files)\(/gi;
+
+/** Replace the arguments of automation calls (`fill("x")`) with `…`, in one pass; an unclosed call drops the rest. */
+function scrubCalls(text: string): string {
+    let out = "";
+    let last = 0;
+    CALLS.lastIndex = 0;
+    for (let m = CALLS.exec(text); m !== null; m = CALLS.exec(text)) {
+        const open = m.index + m[0].length;
+        let depth = 1;
+        let quote = "";
+        let i = open;
+        for (; i < text.length && depth > 0; i++) {
+            const c = text[i]!;
+            if (quote) {
+                if (c === "\\") i++;
+                else if (c === quote) quote = "";
+            } else if (c === '"' || c === "'" || c === "`") quote = c;
+            else if (c === "(") depth++;
+            else if (c === ")") depth--;
+        }
+        out += `${text.slice(last, open)}…${depth === 0 ? ")" : ""}`;
+        last = i;
+        CALLS.lastIndex = i;
+        if (depth > 0) break;
+    }
+    return out + text.slice(last);
+}
+
+/** A trace selector or label with attribute values and typed text removed, or withheld if it still looks secret. */
 export function safeText(text: string): string {
-    const cleaned = text
-        .slice(0, 512)
+    const cleaned = scrubCalls(text.slice(0, 1024))
         .replace(/(\[?\bvalue\s*=\s*)(?:"[^"]{0,256}"|'[^']{0,256}'|[^\]\s]{0,256})/gi, "$1…")
-        .replace(/\b(fill|type|press|check|select_?option|sendKeys|has-text|text|value)\((?:"[^"]{0,256}"|'[^']{0,256}'|[^)]{0,256})\)/gi, "$1(…)")
         .replace(/\b(text|type|value|label)=\S{0,256}/gi, "$1=…");
     return secretish(cleaned) ? "<redacted-text>" : cleaned;
 }
 
 /** A location that embeds a token-grade key (a session id used as a JSON key or query name). */
 export function safeLocation(loc: string): string {
-    return piiish(loc) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
+    return piiish(loc) || cardIn(loc) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
 }

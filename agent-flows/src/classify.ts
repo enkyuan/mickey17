@@ -287,9 +287,18 @@ function operationOf(loc: string, value: string): string | null {
     return null;
 }
 
-/** Whether an earlier response of the run carries exactly this value. */
+/**
+ * Whether this value was issued to the client before the step: it is token-grade (so the classifier
+ * can explain it from its source) and an earlier response, the starting cookie jar or an earlier free-text
+ * body carries exactly it. Short words (`update`, `GetCart`) are never "issued": a response that merely
+ * lists them does not make two swapped requests alignable.
+ */
 function issuedBefore(run: RunData, step: number, value: string): boolean {
-    for (let j = 0; j < step; j++) if (run.resp[j]!.some((s) => s.value === value)) return true;
+    if (!isWeakEvidence(value) || !/\d/.test(value)) return false;
+    if (run.jar.some((s) => s.value === value)) return true;
+    for (let j = 0; j < step; j++) {
+        if (run.resp[j]!.some((s) => s.value === value) || run.free[j]?.has(value)) return true;
+    }
     return false;
 }
 

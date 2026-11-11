@@ -10,7 +10,7 @@ function source(s: SourceRef): SourceRef {
         step: s.step,
         location: safeLocation(s.location),
         ...(s.locator ? { locator: { before: s.locator.before, after: s.locator.after, origin: s.locator.origin } } : {}),
-        ...(s.select ? { select: { field: s.select.field, param: s.select.param } } : {}),
+        ...(s.select ? { select: { field: safeLocation(s.select.field), param: s.select.param } } : {}),
     };
 }
 
@@ -49,7 +49,7 @@ function step(s: Step): Step {
         path_template: s.path_template,
         statuses: [...s.statuses],
         values: s.values.map(value),
-        provides: [...s.provides],
+        provides: s.provides.map(safeLocation),
         needs: [...s.needs],
     };
 }

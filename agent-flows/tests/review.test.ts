@@ -841,9 +841,92 @@ describe("round 5", () => {
         for (const s of ["hunter2024", "hunter2025", "hunter2026"]) expect(t2, s).not.toContain(s);
     });
 
-    test("self-closing title/textarea do not swallow the rest of the page", () => {
-        const mk = (run: string, t: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", `<title/><textarea/><input type=hidden name=csrf value=${t}>`] }), req(1, "POST", `${B}/x`, { headers: [["x-csrf", t]] })]);
+    test("self-closing raw-text tags follow HTML (the slash is ignored): no phantom structured source, the token is still found", () => {
+        const mk = (run: string, t: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", `<textarea/><input type=hidden name=csrf value=${t}>`] }), req(1, "POST", `${B}/x`, { headers: [["x-csrf", t]] })]);
         const g = graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]);
-        expect(valueOf(g, 1, "header:x-csrf")!.source!.location).toBe("html:input[name=csrf]");
+        expect(valueOf(g, 1, "header:x-csrf")!.class).toBe("derived");
+        expect(valueOf(g, 1, "header:x-csrf")!.source!.location).toBe("body");
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 6
+
+describe("round 6", () => {
+    const pair = (mk: (n: string) => Req, a: string, b: string, before: Req[] = []) =>
+        graphOf([doc("a", [...before, mk(a), { ...mk(b), id: "q9", tMs: 5100 }]), doc("b", [...before, mk(b), { ...mk(a), id: "q9", tMs: 5100 }])]);
+
+    test("an operation name that an earlier response merely lists does not make swapped requests alignable", () => {
+        const features = req(0, "GET", `${B}/config`, { respBody: jsonBody({ features: [{ name: "GetCart" }, { name: "GetUser" }], perms: ["update", "delete"] }) });
+        const gql = (n: string) => req(5, "POST", `${B}/graphql`, { body: jsonBody({ operationName: n, variables: { id: "42" } }) });
+        expect(pair(gql, "GetCart", "GetUser", [features]).status).toBe("blocked");
+        const rpc = (n: string) => req(5, "POST", `${B}/rpc`, { body: jsonBody({ action: n }) });
+        expect(pair(rpc, "update", "delete", [features]).status).toBe("blocked");
+    });
+
+    test("a server nonce in an operation field from a cookie jar or inline HTML still aligns", () => {
+        const nonce = (run: string) => (run === "a" ? "act_8f2Kq9ZxLm41" : "act_Zq81mXk9L2f8");
+        const mk = (run: string) => {
+            const d = doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", `<script>var n="${nonce(run)}"</script>`] }), req(1, "POST", `${B}/x`, { body: jsonBody({ action: nonce(run) }) })]);
+            return d;
+        };
+        expect(graphOf([mk("a"), mk("b")]).status).toBe("resolved");
+        const jar = (run: string) => {
+            const d = doc(run, [req(0, "POST", `${B}/x`, { body: jsonBody({ action: nonce(run) }) })]);
+            d.cookies = [{ name: "n", value: nonce(run) }];
+            return d;
+        };
+        expect(graphOf([jar("a"), jar("b")]).status).toBe("resolved");
+    });
+
+    test("card scanning is cheap and fails closed", () => {
+        const started = performance.now();
+        const big = (run: string) => doc(run, [req(0, "POST", `${B}/x`, { body: jsonBody({ blob: "1".repeat(1_000_000), more: "9".repeat(500_000) }) })]);
+        graphOf([big("a"), big("b")]);
+        expect(performance.now() - started).toBeLessThan(5_000);
+        const hidden = "1234567890123x".repeat(8300) + " 4242 4242 4242 4242";
+        const g = graphOf([doc("a", [req(0, "POST", `${B}/x`, { body: jsonBody({ note: hidden }) })]), doc("b", [req(0, "POST", `${B}/x`, { body: jsonBody({ note: hidden }) })])]);
+        expect(toJson(g)).not.toContain("4242 4242");
+    });
+
+    test("provides, select.field and card-shaped keys go through the location filter", () => {
+        const mk = (run: string, tok: string) =>
+            doc(run, [
+                req(0, "POST", `${B}/a`, { respBody: jsonBody({ grants: { [`sess_${tok}`]: tok }, users: { "ada.quill@example.com": tok }, "4111 1111 1111 1111": "x" }) }),
+                req(1, "POST", `${B}/b`, { headers: [["x-t", tok]] }),
+            ]);
+        const text = toJson(graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]));
+        for (const s of ["sess_tok_8f2Kq9ZxLm41AbCd", "ada.quill@example.com", "4111 1111"]) expect(text, s).not.toContain(s);
+    });
+
+    test("events that reuse an id and have no time are ordered by content", () => {
+        const mk = (run: string, swap: boolean) => {
+            const reqs = [req(0, "POST", `${B}/x`, { body: jsonBody({ qty: run === "a" ? 2 : 3 }) })];
+            const t = traceOf(run, [], reqs);
+            const evs = [
+                { id: "e1", type: "click", target: "#a", inputs: { qty: String(run === "a" ? 2 : 3) }, requests: ["q0"] },
+                { id: "e1", type: "fill", target: "#b", requests: ["q0"] },
+            ];
+            t.events = swap ? evs.reverse() : evs;
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        expect(toJson(graphOf([mk("a", true), mk("b", false)]))).toBe(toJson(graphOf([mk("a", false), mk("b", true)])));
+    });
+
+    test("random-case slugs and scheme-relative blobs are not exempt; typed text beyond 256 chars is scrubbed", () => {
+        const mk = (run: string) =>
+            doc(run, [req(0, "POST", `${B}/x`, { headers: [["accept", "application/vnd.github.v3+json"]], body: jsonBody({ shippingMethod: "KqZxLmAbCd-QwErTyUi-482917", title: "Xyzzy-Plugh-9921-Frobozz", ref: "//a1B2.c3D4+e5F6g", serviceType: "express-next-day-delivery" }) })]);
+        const g = graphOf([mk("a"), mk("b")]);
+        const text = toJson(g);
+        for (const s of ["KqZxLmAbCd", "Xyzzy-Plugh", "a1B2.c3D4"]) expect(text, s).not.toContain(s);
+        expect(valueOf(g, 0, "header:accept")!.value).toBe("application/vnd.github.v3+json");
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mkT = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = `#pw >> fill('${"x".repeat(400)}hunter2024') >> pressSequentially("hunter2025") >> setValue(hunter2026)`;
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        const t2 = toJson(graphOf([mkT("a"), mkT("b")]));
+        for (const s of ["hunter2024", "hunter2025", "hunter2026"]) expect(t2, s).not.toContain(s);
     });
 });

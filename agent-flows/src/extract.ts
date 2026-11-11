@@ -283,7 +283,7 @@ function scanTags(html: string, tag: string): Map<string, string>[] {
         }
         if (!closed) break;
         i = p;
-        if (RAW_TEXT.has(name) && html[p - 2] !== "/") {
+        if (RAW_TEXT.has(name)) {
             // Raw text up to the matching end tag; nothing inside is markup.
             const re = new RegExp(`</${name}[\\s/>]`, "gi");
             re.lastIndex = i;

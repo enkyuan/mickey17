@@ -45,6 +45,8 @@ export interface TraceEvent {
     /** What the user supplied at this event, flattened to dotted names. */
     inputs: Map<string, string>;
     requests: string[];
+    /** Hash of the whole event: the last sort tie-break (recorders may reuse ids). */
+    key: string;
 }
 
 export interface Recording {
@@ -101,7 +103,7 @@ export function parseRecording(har: string, trace: string, cookies?: string | nu
     const entries = parseEntries(harV, skipped);
     entries.sort((a, b) => a.startedUs - b.startedUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key));
     const events = parseEvents(t);
-    events.sort((a, b) => a.tUs - b.tUs || natCmp(a.id, b.id) || cmp(a.id, b.id));
+    events.sort((a, b) => a.tUs - b.tUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key));
     const jar = cookies ? parseCookieJar(cookies) : [];
     jar.sort((a, b) => cmp(a.name, b.name) || cmp(a.value, b.value));
     return { id, params, entries, events, initialCookies: jar, skipped };
@@ -366,6 +368,7 @@ function parseEvents(t: Map<string, JVal>): TraceEvent[] {
             if (s !== null) requests.push(s);
         }
         out.push({
+            key: sha256Hex(stable(e!)),
             id,
             tUs,
             kind: asString(o?.get("type")) ?? "",
