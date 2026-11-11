@@ -19,16 +19,19 @@ pub enum State {
     Focus,
     FocusVisible,
     Active,
+    /// Not an element state: `@media (prefers-reduced-motion: reduce)` (Tailwind's `motion-reduce:`).
+    ReducedMotion,
 }
 
 impl State {
     /// Tailwind's output order for these variants (later wins at equal specificity).
-    pub const ALL: [State; 5] = [
+    pub const ALL: [State; 6] = [
         State::FocusWithin,
         State::Hover,
         State::Focus,
         State::FocusVisible,
         State::Active,
+        State::ReducedMotion,
     ];
 
     /// The state this one builds on: `:focus` implies `:focus-within`, `:focus-visible` implies `:focus`.
@@ -47,6 +50,7 @@ impl State {
             State::Focus => "focus",
             State::FocusVisible => "focus-visible",
             State::Active => "active",
+            State::ReducedMotion => "motion-reduce",
         }
     }
 
@@ -58,6 +62,7 @@ impl State {
             State::Focus => matches!(name, "focus" | "focus-within"),
             State::FocusVisible => matches!(name, "focus" | "focus-within" | "focus-visible"),
             State::Active => name == "active",
+            State::ReducedMotion => false,
         }
     }
 }
@@ -209,6 +214,141 @@ pub struct Layer {
     pub empty: Vec<String>,
     /// Empty-valued declarations replaced by the captured computed value.
     pub recovered: Vec<String>,
+    /// Declarations replaced by the captured end state (see [`settle_plan`]).
+    pub settled: Vec<String>,
+}
+
+/// An author declaration whose captured computed value says the element ended up elsewhere:
+/// the original's script (GSAP, WAAPI, an observer) revealed it after load, so the stylesheet's
+/// `opacity: 0` / `translate: 0 12px` is only the pre-reveal state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settle {
+    pub prop: String,
+    /// The author value (text of the resolved declaration) this replaces.
+    pub author: String,
+    pub value: String,
+}
+
+fn identity(prop: &str, computed: &str) -> bool {
+    let c = computed.trim();
+    match prop {
+        "transform" => {
+            c == "none"
+                || c == "matrix(1, 0, 0, 1, 0, 0)"
+                || c == "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)"
+        }
+        "translate" => matches!(c, "none" | "0px" | "0px 0px" | "0px 0px 0px"),
+        "scale" => matches!(c, "none" | "1" | "1 1" | "1 1 1"),
+        "rotate" => matches!(c, "none" | "0deg"),
+        _ => false,
+    }
+}
+
+/// What the element's captured end state says about its resting-width author declarations:
+/// opacity and visibility that differ, and transform-like properties that settled to identity.
+pub fn settle_plan(rest: &Layer, computed: &BTreeMap<String, String>) -> Vec<Settle> {
+    let mut out = Vec::new();
+    for prop in [
+        "opacity",
+        "visibility",
+        "transform",
+        "translate",
+        "scale",
+        "rotate",
+    ] {
+        let (Some(author), Some(value)) = (rest.decls.get(prop), computed.get(prop)) else {
+            continue;
+        };
+        let (a, c) = (author.trim(), value.trim());
+        let differs = match prop {
+            "opacity" => match (a.parse::<f64>(), c.parse::<f64>()) {
+                (Ok(x), Ok(y)) => (x - y).abs() > 1e-3,
+                _ => false,
+            },
+            "visibility" => {
+                matches!(a, "hidden" | "visible" | "collapse")
+                    && matches!(c, "hidden" | "visible" | "collapse")
+                    && a != c
+            }
+            _ => a != "none" && identity(prop, c) && offsets_at_rest(a, computed),
+        };
+        if differs {
+            let settled = if prop == "opacity" || prop == "visibility" {
+                c.to_string()
+            } else {
+                "none".to_string()
+            };
+            out.push(Settle {
+                prop: prop.to_string(),
+                author: author.clone(),
+                value: settled,
+            });
+        }
+    }
+    out
+}
+
+/// Does the author's transform-like value, with its custom properties read from the captured
+/// computed style, move the element? False when it is identity only because a variable is 0 at
+/// rest (`translateY(var(--y, 0px))`): that is not a reveal, and hover/media rules that change
+/// only the variable must keep working. Unresolvable variables count as "no".
+fn offsets_at_rest(author: &str, computed: &BTreeMap<String, String>) -> bool {
+    let components = css::parse_components(author);
+    let text = if eval::needs_substitution(&components) {
+        let lookup = |name: &str| -> Option<Vec<Component>> {
+            computed.get(name).map(|v| css::parse_components(v))
+        };
+        let Some(resolved) = eval::substitute_vars(&components, &lookup, 0) else {
+            return false;
+        };
+        css::to_css(&resolved)
+    } else {
+        author.to_string()
+    };
+    // Any non-zero number (or percentage/length) means the value moves the element.
+    let mut number = String::new();
+    let mut found = false;
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_digit() || c == '.' {
+            number.push(c);
+        } else {
+            if number.chars().any(|d| d.is_ascii_digit())
+                && number.parse::<f64>().is_ok_and(|n| n != 0.0)
+            {
+                found = true;
+            }
+            number.clear();
+        }
+    }
+    found
+}
+
+/// What another captured viewport says about the elements of the primary snapshot: for every
+/// paired element, its own author layer at that viewport's width, valid for the widths
+/// `lo..hi` (the run of width intervals that activate the same rules as the captured width).
+#[derive(Debug, Clone)]
+pub struct Overlay {
+    pub label: String,
+    pub width: u32,
+    pub lo: u32,
+    pub hi: u32,
+    /// Primary-snapshot node -> the paired element's layer.
+    pub layers: HashMap<usize, Layer>,
+    /// The same elements in each forced state and under reduced motion, resolved on the other
+    /// capture's own DOM.
+    pub states: HashMap<usize, BTreeMap<State, Layer>>,
+}
+
+impl Layer {
+    /// Replace the declarations a [`Settle`] names, where they still carry the author value.
+    pub fn apply_settle(&mut self, plan: &[Settle]) {
+        for s in plan {
+            if self.decls.get(&s.prop) == Some(&s.author) {
+                self.decls.insert(s.prop.clone(), s.value.clone());
+                self.settled.push(s.prop.clone());
+            }
+        }
+    }
 }
 
 const EXPANDED: &[&str] = &[
@@ -685,6 +825,38 @@ pub fn place(
         let Some(layers) = states.get(&state) else {
             continue;
         };
+        if state == State::ReducedMotion {
+            // Tailwind sorts `motion-reduce:` before `min-[W]:`, so a wider interval's plain
+            // utility beats an earlier `motion-reduce:` one, while `min-[W]:motion-reduce:`
+            // beats the plain one again: simulate what applies under reduced motion and write
+            // `motion-reduce:` utilities wherever it differs from the layer.
+            let mut applied: BTreeMap<String, String> = BTreeMap::new();
+            for (i, layer) in layers.iter().enumerate() {
+                out.uncertain.extend(layer.uncertain.iter().cloned());
+                out.overlapping.extend(layer.conflicts.iter().cloned());
+                if i == 0 {
+                    applied = rest[0].decls.clone();
+                } else {
+                    for p in rest[i - 1].decls.keys().chain(rest[i].decls.keys()) {
+                        if rest[i - 1].decls.get(p) != rest[i].decls.get(p) {
+                            match rest[i].decls.get(p) {
+                                Some(v) => applied.insert(p.clone(), v.clone()),
+                                None => applied.remove(p),
+                            };
+                        }
+                    }
+                }
+                delta(
+                    &applied,
+                    &layer.decls,
+                    min_of(i),
+                    Some(state),
+                    &mut out.placed,
+                );
+                applied = layer.decls.clone();
+            }
+            continue;
+        }
         for (i, layer) in layers.iter().enumerate() {
             out.uncertain.extend(layer.uncertain.iter().cloned());
             out.overlapping.extend(layer.conflicts.iter().cloned());

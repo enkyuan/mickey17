@@ -454,3 +454,370 @@ fn numbered_recipe_names_avoid_tailwind_utilities() {
         assert!(!name.contains("order-2"), "{name}");
     }
 }
+
+#[test]
+fn script_revealed_elements_are_written_in_their_end_state() {
+    // The stylesheet hides the element (`opacity: 0; translate: 0 12px`); the capture, taken after
+    // the original's script revealed it, computed opacity 1 and no translate.
+    let p = run(
+        &[(Some(1), "p", "reveal"), (Some(1), "p", "still-hidden")],
+        &[
+            ("font-size", "16px"),
+            ("opacity", "1"),
+            ("translate", "none"),
+            ("visibility", "visible"),
+        ],
+        &[
+            ".reveal { opacity: 0; translate: 0 12px; visibility: hidden; transition: opacity .2s }",
+            ".still-hidden { color: red }",
+        ],
+    );
+    verified(&p);
+    let all = format!("{} {}", p.classes[&2], p.files["src/styles/recipes.css"]);
+    assert!(
+        !all.contains("opacity-0") && !all.contains("opacity:0") && !all.contains("opacity: 0"),
+        "{all}"
+    );
+    assert!(
+        all.contains("opacity-100") || all.contains("opacity:1"),
+        "{all}"
+    );
+    assert!(
+        all.contains("translate:none") || all.contains("translate: none"),
+        "{all}"
+    );
+    assert!(
+        all.contains("visibility:visible") || all.contains("visible"),
+        "{all}"
+    );
+    assert!(
+        all.contains("transition"),
+        "the animation/transition declarations are kept: {all}"
+    );
+    assert_eq!(p.report.untranslated.settled_from_computed["opacity"], 1);
+    assert!(p.files["styles.report.md"].contains("End states written"));
+}
+
+#[test]
+fn reduced_motion_overrides_become_motion_reduce_variants() {
+    let p = run(
+        &[(Some(1), "div", "card"), (Some(1), "div", "plain")],
+        &[
+            ("font-size", "16px"),
+            ("transition-duration", "0.15s"),
+            ("animation-name", "enter"),
+        ],
+        &[
+            "@keyframes enter { from { opacity: 0 } to { opacity: 1 } }",
+            ".card { transition: opacity 0.15s; animation: enter 0.3s both }",
+            "@media (prefers-reduced-motion: reduce) { .card { transition-duration: 1e-05s; animation-duration: 1e-05s } }",
+            "@media (prefers-reduced-motion: no-preference) { .plain { animation: enter 1s linear 1 } }",
+            ".plain { color: red }",
+        ],
+    );
+    verified(&p);
+    let all = format!(
+        "{} {} {}",
+        p.classes[&2], p.classes[&3], p.files["src/styles/recipes.css"]
+    );
+    assert!(
+        all.contains("motion-reduce:") || all.contains("prefers-reduced-motion: reduce"),
+        "{all}"
+    );
+    assert!(all.contains("0.00001s"), "{all}");
+    assert!(p.files["src/styles/at-rules.css"].contains("@keyframes enter"));
+    assert!(
+        p.report.check.states.iter().any(|s| s == "motion-reduce"),
+        "{:?}",
+        p.report.check.states
+    );
+    assert!(
+        !p.report
+            .untranslated
+            .never_applicable_conditions
+            .keys()
+            .any(|k| k.contains("reduced-motion")),
+        "{:?}",
+        p.report.untranslated.never_applicable_conditions
+    );
+}
+
+type NodeList<'a> = &'a [(Option<usize>, &'a str, &'a str)];
+
+/// Captured viewports of one page: `(width, nodes)`; the widest is the primary.
+fn translate_views(views: &[(u32, NodeList)], rules: &[&str]) -> StylePlan {
+    let dir = tempfile::tempdir().unwrap();
+    let pages = dir.path().join("reconstruction").join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    let mut widest = String::new();
+    let mut widest_w = 0;
+    for (width, nodes) in views {
+        let nodes: Vec<serde_json::Value> = nodes
+            .iter()
+            .map(|(parent, tag, class)| {
+                json!({"parent": parent, "kind": "element", "tag": tag,
+                       "attributes": [{"name": "class", "value": class}], "style": 0, "pseudo": {}})
+            })
+            .collect();
+        let page = json!({
+            "url": "https://t.test/", "viewport": {"width": width, "height": 800}, "color_scheme": "dark",
+            "nodes": nodes,
+            "styles": {"strings": ["font-size", "16px"], "maps": [[[0, 1]]]},
+            "stylesheets": [{"href": null, "rules": rules}],
+        });
+        let name = format!("page-00000-{width}x800.json");
+        std::fs::write(pages.join(&name), page.to_string()).unwrap();
+        if *width > widest_w {
+            widest_w = *width;
+            widest = name;
+        }
+    }
+    translate(
+        dir.path(),
+        &Path::new("reconstruction/pages").join(widest),
+        &StyleOptions::standard(),
+    )
+    .unwrap()
+}
+
+/// Two captured viewports of one page: `(width, class of the card)`.
+fn translate_viewports(views: &[(u32, &str)], rules: &[&str]) -> StylePlan {
+    type Owned<'a> = Vec<(u32, Vec<(Option<usize>, &'a str, &'a str)>)>;
+    let owned: Owned = views
+        .iter()
+        .map(|(w, c)| {
+            (
+                *w,
+                vec![
+                    (None, "html", ""),
+                    (Some(0), "body", ""),
+                    (Some(1), "div", *c),
+                ],
+            )
+        })
+        .collect();
+    let refs: Vec<(u32, NodeList)> = owned.iter().map(|(w, n)| (*w, n.as_slice())).collect();
+    translate_views(&refs, rules)
+}
+
+#[test]
+fn a_narrower_captured_viewport_overrides_its_width_interval() {
+    // At 375 a script had added `card--compact`; at 1440 it had not.
+    let p = translate_viewports(
+        &[(1440, "card"), (375, "card card--compact")],
+        &[
+            ".card { font-size: 16px; color: red }",
+            ".card--compact { font-size: 10px }",
+            "@media (min-width: 600px) { .card { margin-top: 1px } }",
+        ],
+    );
+    verified(&p);
+    let o = &p.report.untranslated.viewport_overlays;
+    assert_eq!(o.len(), 1, "{o:?}");
+    assert!(
+        o[0].skipped.is_none() && o[0].aligned_elements >= 3,
+        "{o:?}"
+    );
+    assert_eq!(o[0].overridden["font-size"], 1, "{o:?}");
+    assert!(p.report.check.overlay_compared > 0);
+    let classes = &p.classes[&2];
+    let css = &p.files["src/styles/recipes.css"];
+    let all = format!("{classes} {css}");
+    assert!(all.contains("10px") && all.contains("16px"), "{all}");
+    assert!(
+        all.contains("min-[600px]") || all.contains("width >= 600px"),
+        "{all}"
+    );
+    assert!(p.files["styles.report.md"].contains("Viewport 375x800"));
+}
+
+#[test]
+fn a_viewport_in_the_same_width_interval_is_not_used() {
+    let p = translate_viewports(
+        &[(1440, "card"), (1200, "card card--compact")],
+        &[
+            ".card { font-size: 16px }",
+            ".card--compact { font-size: 10px }",
+            "@media (min-width: 600px) { .card { margin-top: 1px } }",
+        ],
+    );
+    verified(&p);
+    let o = &p.report.untranslated.viewport_overlays;
+    assert!(o[0].skipped.is_some(), "{o:?}");
+    assert!(!p.classes[&2].contains("10px"));
+}
+
+#[test]
+fn a_universal_reduced_motion_reset_is_proven() {
+    let p = run(
+        &[(Some(1), "div", "card")],
+        FONT,
+        &[
+            ".card { transition: opacity 0.15s }",
+            "@media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important } }",
+        ],
+    );
+    verified(&p);
+    assert!(
+        p.classes[&0].contains("motion-reduce:"),
+        "{}",
+        p.classes[&0]
+    );
+}
+
+#[test]
+fn reduced_motion_and_viewport_overlays_work_together() {
+    let p = translate_viewports(
+        &[(1440, "card"), (375, "card card--compact")],
+        &[
+            ".card { font-size: 16px; transition: opacity 0.2s }",
+            ".card--compact { font-size: 10px }",
+            "@media (min-width: 600px) { .card { margin-top: 1px } }",
+            "@media (prefers-reduced-motion: reduce) { *, ::before, ::after { transition-duration: 0.01ms !important } }",
+        ],
+    );
+    verified(&p);
+    assert!(p.report.check.overlay_compared > 0);
+}
+
+// ----- regressions from the third adversarial review -----------------------------------------
+
+#[test]
+fn identity_at_rest_because_of_a_variable_is_not_a_reveal() {
+    let p = run(
+        &[(Some(1), "div", "card")],
+        &[
+            ("font-size", "16px"),
+            ("transform", "matrix(1, 0, 0, 1, 0, 0)"),
+        ],
+        &[
+            ".card { transform: translateY(var(--y, 0px)) }",
+            ".card:hover { --y: -4px }",
+            "@media (max-width: 599px) { .card { --y: 10px } }",
+        ],
+    );
+    verified(&p);
+    let all = format!("{} {}", p.classes[&2], p.files["src/styles/recipes.css"]);
+    assert!(
+        !all.contains("transform:none") && !all.contains("transform: none"),
+        "{all}"
+    );
+    assert!(all.contains("-4px") && all.contains("10px"), "{all}");
+    assert!(p.report.untranslated.settled_from_computed.is_empty());
+}
+
+#[test]
+fn overlay_states_come_from_the_other_captures_own_cascade() {
+    // At 375 the link also has `--dim`; `.nav-link:hover` still wins there (higher specificity).
+    let p = translate_viewports(
+        &[(1440, "nav-link"), (375, "nav-link nav-link--dim")],
+        &[
+            ".nav-link { opacity: 1 }",
+            ".nav-link--dim { opacity: 0.6 }",
+            ".nav-link:hover { opacity: 1 }",
+            "@media (min-width: 600px) { .nav-link { margin-top: 1px } }",
+        ],
+    );
+    verified(&p);
+    let all = format!("{} {}", p.classes[&2], p.files["src/styles/recipes.css"]);
+    assert!(all.contains("0.6") || all.contains("opacity-60"), "{all}");
+    assert!(all.contains("hover"), "{all}");
+}
+
+#[test]
+fn reduced_motion_rules_bounded_by_width_are_not_deduplicated_away() {
+    let p = run(
+        &[(Some(1), "div", "hero")],
+        FONT,
+        &[
+            ".hero { animation: rise 1s both }",
+            "@media (prefers-reduced-motion: reduce) and (min-width: 800px) { .hero { animation: none } }",
+        ],
+    );
+    verified(&p);
+    let all = format!("{} {}", p.classes[&2], p.files["src/styles/recipes.css"]);
+    assert!(
+        all.contains("motion-reduce") || all.contains("prefers-reduced-motion"),
+        "{all}"
+    );
+}
+
+#[test]
+fn motion_reduce_is_restated_where_a_wider_plain_utility_would_beat_it() {
+    let p = run(
+        &[(Some(1), "div", "hero")],
+        FONT,
+        &[
+            ".hero { opacity: 0.5 }",
+            "@media (min-width: 768px) { .hero { opacity: 0.7 } }",
+            "@media (prefers-reduced-motion: reduce) { .hero { opacity: 1 } }",
+        ],
+    );
+    verified(&p);
+    let all = format!("{} {}", p.classes[&2], p.files["src/styles/recipes.css"]);
+    assert!(all.contains("min-[768px]:motion-reduce:"), "{all}");
+}
+
+#[test]
+fn a_recipe_block_is_rewritten_when_overlapping_declarations_swap_precedence() {
+    let p = run(
+        &[(Some(1), "div", "x")],
+        FONT,
+        &[
+            ".x { background: url(a.png) }",
+            ".x { background-color: red }",
+            "@media (min-width: 768px) { .x { background: url(a.png) } }",
+        ],
+    );
+    verified(&p);
+    let css = &p.files["src/styles/recipes.css"];
+    let wide = css.split("@media (width >= 768px)").nth(1).expect(css);
+    assert!(
+        wide.contains("background: url(a.png)") && wide.contains("background-color"),
+        "{css}"
+    );
+}
+
+#[test]
+fn siblings_one_capture_has_more_of_are_not_paired_by_order() {
+    let three: NodeList = &[
+        (None, "html", ""),
+        (Some(0), "body", ""),
+        (Some(1), "ul", ""),
+        (Some(2), "li", "slide"),
+        (Some(2), "li", "slide"),
+        (Some(2), "li", "slide"),
+    ];
+    let two: NodeList = &[
+        (None, "html", ""),
+        (Some(0), "body", ""),
+        (Some(1), "ul", ""),
+        (Some(2), "li", "slide slide--b"),
+        (Some(2), "li", "slide"),
+    ];
+    let p = translate_views(
+        &[(1440, three), (375, two)],
+        &[
+            ".slide { color: red } .slide--b { color: blue }",
+            "@media (min-width: 600px) { .slide { margin-top: 1px } }",
+        ],
+    );
+    verified(&p);
+    // The three slides are not paired with two: nothing of the narrow capture is applied to them.
+    let o = &p.report.untranslated.viewport_overlays;
+    assert!(o[0].aligned_elements <= 3, "{o:?}");
+    for node in [3, 4, 5] {
+        assert!(!p.classes[&node].contains("blue"), "{}", p.classes[&node]);
+    }
+}
+
+#[test]
+fn reduced_motion_combined_with_a_state_is_reported_as_a_gap() {
+    let p = run(
+        &[(Some(1), "button", "btn")],
+        FONT,
+        &["@media (prefers-reduced-motion: no-preference) { .btn:hover { scale: 1.05 } }"],
+    );
+    assert_eq!(p.report.untranslated.reduced_motion_with_state, 1);
+    assert!(p.files["styles.report.md"].contains("combine a state"));
+}

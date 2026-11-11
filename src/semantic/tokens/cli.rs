@@ -113,8 +113,7 @@ fn run_styles(args: &Args, page: &std::path::Path, tokens: Options) -> Result<()
         &StyleOptions {
             tokens,
             tailwind_dir: args.tailwind_dir.clone(),
-            min_share: 2,
-            reserved_names: Default::default(),
+            ..StyleOptions::standard()
         },
     )?;
     let r = &plan.report;

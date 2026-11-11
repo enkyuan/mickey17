@@ -9,11 +9,14 @@ use super::super::pipeline::{self, Output};
 use super::super::plan::{Options, TokenSet};
 use super::super::selector::Simple;
 use super::super::verify::{environment, theme_as_root_sheet, theme_definitions};
+use super::align;
 use super::classes::Theme;
 use super::emit::{apply_css, pseudo_css, recipe_css, render_classes};
 use super::layers::{
-    ElementLayers, ForcedDom, Layer, State, layer_for, layer_of, place, width_breakpoints,
+    ElementLayers, ForcedDom, Layer, Overlay, Settle, State, layer_for, layer_of, place,
+    settle_plan, width_breakpoints,
 };
+use super::par;
 use super::tailwind;
 use super::verify::{StyleCheck, check, unreachable_state_rules};
 use anyhow::{Context, Result, bail};
@@ -31,6 +34,10 @@ pub struct StyleOptions {
     /// Recipe names already in use by other pages of the same project: this page's recipes take
     /// other names, so one stylesheet can carry the recipes of several pages.
     pub reserved_names: BTreeSet<String>,
+    /// Also use the other captured viewports of the same page (`page-00000-375x812.json` next to
+    /// `page-00000-1440x900.json`): where an element's styles at a narrower captured width differ
+    /// from what the primary snapshot gives there, that width interval follows the capture.
+    pub viewport_overlays: bool,
 }
 
 impl StyleOptions {
@@ -40,6 +47,7 @@ impl StyleOptions {
             tailwind_dir: None,
             min_share: 2,
             reserved_names: BTreeSet::new(),
+            viewport_overlays: true,
         }
     }
 }
@@ -86,6 +94,93 @@ pub struct RecipeStats {
     pub overlap_examples: Vec<String>,
 }
 
+/// `f` on the cascade of each width, computed once per group of widths with the same rules.
+fn per_width<T: Clone>(
+    rep_of: &[usize],
+    cascades: &[Cascade],
+    f: impl Fn(usize, &Cascade) -> T,
+) -> Vec<T> {
+    let mut out: Vec<T> = Vec::with_capacity(rep_of.len());
+    for (i, &r) in rep_of.iter().enumerate() {
+        let v = if r == i {
+            f(i, &cascades[i])
+        } else {
+            out[r].clone()
+        };
+        out.push(v);
+    }
+    out
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct OverlayReport {
+    pub viewport: String,
+    /// Widths `from..to` (to = 0 means unbounded) that follow this capture.
+    pub from: u32,
+    pub to: u32,
+    pub aligned_elements: usize,
+    /// Primary-snapshot elements with no counterpart in this capture, and the reverse.
+    pub primary_only: usize,
+    pub other_only: usize,
+    /// Property -> elements whose declaration at these widths differs from the primary's.
+    pub overridden: BTreeMap<String, usize>,
+    pub skipped: Option<String>,
+}
+
+/// Other captured viewports of the page `snap` belongs to: `page-00000-375x812.json` for
+/// `page-00000-1440x900.json`, narrower than `snap`, widest first.
+fn sibling_snapshots<'a>(corpus: &'a Corpus, snap: &Snapshot) -> Vec<&'a Snapshot> {
+    let stem = |s: &Snapshot| -> Option<String> {
+        let name = s
+            .file
+            .file_name()?
+            .to_str()?
+            .strip_suffix(".json")?
+            .to_string();
+        name.rsplit_once('-').map(|(p, _)| p.to_string())
+    };
+    let Some(mine) = stem(snap) else {
+        return Vec::new();
+    };
+    let mut out: Vec<&Snapshot> = corpus
+        .snapshots
+        .iter()
+        .filter(|s| s.file != snap.file && s.width < snap.width && stem(s).as_ref() == Some(&mine))
+        .collect();
+    out.sort_by_key(|s| std::cmp::Reverse(s.width));
+    out
+}
+
+fn add_counts(into: &mut BTreeMap<String, usize>, from: BTreeMap<String, usize>) {
+    for (k, v) in from {
+        *into.entry(k).or_default() += v;
+    }
+}
+
+impl Untranslated {
+    /// Add the per-element counts a worker collected.
+    fn absorb(&mut self, o: Untranslated) {
+        self.canvas_elements += o.canvas_elements;
+        self.important_flattened_elements += o.important_flattened_elements;
+        add_counts(&mut self.undecidable_properties, o.undecidable_properties);
+        add_counts(&mut self.recovered_from_computed, o.recovered_from_computed);
+        add_counts(&mut self.recovered_in_states, o.recovered_in_states);
+        add_counts(&mut self.settled_from_computed, o.settled_from_computed);
+        for (k, v) in o.viewport_overridden {
+            *self.viewport_overridden.entry(k).or_default() += v;
+        }
+        add_counts(
+            &mut self.empty_value_declarations,
+            o.empty_value_declarations,
+        );
+        add_counts(&mut self.animation_properties, o.animation_properties);
+        add_counts(
+            &mut self.mask_and_timeline_properties,
+            o.mask_and_timeline_properties,
+        );
+    }
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Untranslated {
     /// Property -> elements where an undecidable condition (container query, unknown pseudo-class) hides it.
@@ -99,6 +194,9 @@ pub struct Untranslated {
     /// Properties among those that were also recovered in forced-state layers, where the resting
     /// computed value is only an approximation of the state's.
     pub recovered_in_states: BTreeMap<String, usize>,
+    /// Property -> elements whose author declaration was replaced by the captured end state
+    /// (script-driven reveal: opacity 0 -> 1, translate offset -> none).
+    pub settled_from_computed: BTreeMap<String, usize>,
     /// Conditions under which rules never apply at any sampled width/environment (`@media print`,
     /// `prefers-reduced-motion: reduce`): their declarations are not in the output.
     pub never_applicable_conditions: BTreeMap<String, usize>,
@@ -113,6 +211,13 @@ pub struct Untranslated {
     /// of the site): the declaration is invalid at computed-value time before and after, so they
     /// are carried unchanged and do not make the check incomplete.
     pub undefined_in_original: Vec<String>,
+    /// Rules that need both a state (hover, focus ...) and a reduced-motion condition: the
+    /// combination is not translated.
+    pub reduced_motion_with_state: usize,
+    /// What the other captured viewports contributed (see `StyleOptions::viewport_overlays`).
+    pub viewport_overlays: Vec<OverlayReport>,
+    #[serde(skip)]
+    viewport_overridden: BTreeMap<(usize, String), usize>,
     pub state_rules_on_ancestors_or_pseudo_elements: usize,
     pub state_rule_examples: Vec<String>,
     pub rules_for_other_pseudo_elements: usize,
@@ -222,6 +327,9 @@ fn uses_states(cascade: &Cascade) -> BTreeSet<State> {
         if let Some(last) = rule.complex.compounds.last() {
             visit(&last.simples, &mut out);
         }
+        if rule.condition.contains("prefers-reduced-motion") {
+            out.insert(State::ReducedMotion);
+        }
     }
     out
 }
@@ -282,6 +390,26 @@ fn at_rules(sheets: &[&Sheet]) -> (String, BTreeMap<String, usize>) {
 /// Layers per width interval and per forced state, for plain-CSS recipes.
 type Layers = (Vec<Layer>, BTreeMap<State, Vec<Layer>>);
 
+static T_REST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static T_STATES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static T_PLACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static T_PSEUDO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn tick(counter: &std::sync::atomic::AtomicU64, since: std::time::Instant) {
+    counter.fetch_add(
+        since.elapsed().as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+struct NodeOut {
+    part: Parts,
+    settle: Vec<Settle>,
+    sensitive: bool,
+    untranslated: Untranslated,
+    overlap_example: Option<String>,
+}
+
 struct Parts {
     node: usize,
     utilities: Vec<String>,
@@ -307,6 +435,15 @@ fn valid_recipe_name(name: &str) -> bool {
 }
 
 pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result<StylePlan> {
+    let t0 = std::time::Instant::now();
+    for t in [&T_REST, &T_STATES, &T_PLACE, &T_PSEUDO] {
+        t.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+    let lap = |what: &str| {
+        if std::env::var_os("MOCHI_TOKENS_TIMING").is_some() {
+            eprintln!("[{:>7.2}s] {what}", t0.elapsed().as_secs_f64());
+        }
+    };
     let out: Output = pipeline::run(capture_dir, &opts.tokens)?;
     let corpus = Corpus::load(capture_dir)?;
     let file_name = page.file_name().context("page path has no file name")?;
@@ -368,6 +505,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             _ => b,
         })
         .collect();
+    lap("tokens pipeline + corpus");
     let cascades: Vec<Cascade> = reps
         .iter()
         .map(|&w| {
@@ -377,7 +515,38 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         })
         .collect();
     let states_in_play: BTreeSet<State> = cascades.iter().flat_map(uses_states).collect();
+    // Widths whose environments activate the same rules (normally and under reduced motion)
+    // resolve every element the same way.
+    let reduced_main: Vec<Cascade> = if states_in_play.contains(&State::ReducedMotion) {
+        reps.iter()
+            .map(|&w| {
+                let mut env = environment(snap);
+                env.width = f64::from(w);
+                env.reduced_motion = true;
+                Cascade::build(&inputs, &env)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let rep_of: Vec<usize> = {
+        let fps: Vec<(Vec<u8>, Vec<u8>)> = (0..cascades.len())
+            .map(|i| {
+                (
+                    cascades[i].fingerprint(),
+                    reduced_main
+                        .get(i)
+                        .map(Cascade::fingerprint)
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        (0..fps.len())
+            .map(|i| (0..=i).find(|&j| fps[j] == fps[i]).unwrap_or(i))
+            .collect()
+    };
 
+    lap("cascades built");
     // Per-element layers.
     let plain = ForcedDom {
         inner: snap,
@@ -393,155 +562,439 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
     let mut untranslated = Untranslated::default();
     let mut recipes = RecipeStats::default();
     let mut arbitrary_by_property: BTreeMap<String, usize> = BTreeMap::new();
-    for &node in &nodes {
-        let element = snap.element(node).expect("element");
-        if element.tag == "canvas" {
-            untranslated.canvas_elements += 1;
-        }
-        let recover = snap.computed(node);
-        let rest: Vec<Layer> = cascades
-            .iter()
-            .map(|c| layer_of(c, &plain, node, recover))
-            .collect();
-        let mut states: BTreeMap<State, Vec<Layer>> = BTreeMap::new();
-        for &state in &states_in_play {
-            let dom = ForcedDom {
-                inner: snap,
-                forced: Some((node, state)),
-                classes: None,
-            };
-            states.insert(
-                state,
-                cascades
-                    .iter()
-                    .map(|c| layer_of(c, &dom, node, recover))
-                    .collect(),
-            );
-        }
-        if states
-            .values()
-            .any(|layers| layers.iter().zip(&rest).any(|(s, r)| s.decls != r.decls))
-        {
-            state_sensitive.insert(node);
-        }
-        let placed: ElementLayers = place(&bounds, &rest, &states);
-        for p in &rest
-            .iter()
-            .flat_map(|l| l.uncertain.iter())
-            .cloned()
-            .collect::<BTreeSet<_>>()
-        {
-            *untranslated
-                .undecidable_properties
-                .entry(p.clone())
-                .or_default() += 1;
-        }
-        if placed.important > 0 {
-            untranslated.important_flattened_elements += 1;
-        }
-        for p in rest
-            .iter()
-            .flat_map(|l| l.recovered.iter())
-            .collect::<BTreeSet<_>>()
-        {
-            *untranslated
-                .recovered_from_computed
-                .entry(p.clone())
-                .or_default() += 1;
-        }
-        for p in states
-            .values()
-            .flatten()
-            .flat_map(|l| l.recovered.iter())
-            .collect::<BTreeSet<_>>()
-        {
-            *untranslated
-                .recovered_in_states
-                .entry(p.clone())
-                .or_default() += 1;
-        }
-        for p in rest
-            .iter()
-            .flat_map(|l| l.empty.iter())
-            .collect::<BTreeSet<_>>()
-        {
-            *untranslated
-                .empty_value_declarations
-                .entry(p.clone())
-                .or_default() += 1;
-        }
-        let classes_attr = element
-            .attributes
-            .iter()
-            .find(|(k, _)| k == "class")
-            .map_or("", |(_, v)| v.as_str());
-        let tokens: Vec<&str> = classes_attr.split_ascii_whitespace().collect();
-        let semantic = semantic_class(&tokens);
+    let captured_ix = bounds.iter().rposition(|&b| b <= snap.width).unwrap_or(0);
+    let mut settle_map: HashMap<usize, Vec<Settle>> = HashMap::new();
 
-        let uncertain = &placed.uncertain;
-        let usable: Vec<_> = placed
-            .placed
-            .iter()
-            .filter(|p| !uncertain.contains(&p.prop))
-            .cloned()
-            .collect();
-        let rendered = if placed.overlapping.is_empty() {
-            render_classes(&usable, &theme)
+    // Other captured viewports: each paired element's own layer at that viewport's width.
+    let mut overlays: Vec<Overlay> = Vec::new();
+    let mut overlay_reports: Vec<OverlayReport> = Vec::new();
+    let mut overlay_ix: Vec<usize> = Vec::new();
+    let mut overlay_range: Vec<(usize, usize)> = Vec::new();
+    let mut overlay_report_of: Vec<usize> = Vec::new();
+    let siblings =
+        if opts.viewport_overlays && std::env::var_os("MOCHI_TOKENS_NO_OVERLAYS").is_none() {
+            sibling_snapshots(&corpus, snap)
         } else {
-            None
+            Vec::new()
         };
-        let (utilities, fallback) = match rendered {
-            Some(u) => (u, None),
-            None => {
-                if recipes.overlap_examples.len() < 8 {
+    for other in siblings {
+        let label = format!("{}x{}", other.width, other.height);
+        let ix = bounds.iter().rposition(|&b| b <= other.width).unwrap_or(0);
+        // The run of intervals around `ix` that activate the same rules (widths between two
+        // thresholds that change nothing resolve alike).
+        let mut lo_i = ix;
+        while lo_i > 0 && rep_of[lo_i - 1] == rep_of[ix] {
+            lo_i -= 1;
+        }
+        let mut hi_i = ix;
+        while hi_i + 1 < rep_of.len() && rep_of[hi_i + 1] == rep_of[ix] {
+            hi_i += 1;
+        }
+        let (from, to) = (bounds[lo_i], bounds.get(hi_i + 1).copied().unwrap_or(0));
+        let mut report = OverlayReport {
+            viewport: label.clone(),
+            from,
+            to,
+            ..Default::default()
+        };
+        let end = |x: u32| if x == 0 { u32::MAX } else { x };
+        let clash = (lo_i..=hi_i).contains(&captured_ix)
+            || overlays.iter().any(|o| o.lo < end(to) && from < end(o.hi));
+        if clash {
+            report.skipped = Some(
+                "this width activates the same rules as the primary capture (or another overlay): the primary's styles are kept"
+                    .into(),
+            );
+            overlay_reports.push(report);
+            continue;
+        }
+        let mut inputs_other: Vec<SheetInput<'_>> = vec![SheetInput {
+            sheet: &tokens_plain,
+            index: usize::MAX,
+            media: "",
+        }];
+        inputs_other.extend(
+            other
+                .sheets
+                .iter()
+                .filter(|s| !s.disabled)
+                .map(|s| SheetInput {
+                    sheet: &rewritten[s.sheet],
+                    index: s.sheet,
+                    media: "",
+                }),
+        );
+        let other_points = width_breakpoints(
+            &inputs_other
+                .iter()
+                .map(|i| i.sheet)
+                .collect::<Vec<&Sheet>>(),
+        );
+        if !other_points.is_subset(&points) {
+            report.skipped = Some(
+                "this capture's stylesheets have width thresholds the primary's lack, so its interval cannot be taken from the primary's"
+                    .into(),
+            );
+            overlay_reports.push(report);
+            continue;
+        }
+        let pairs = align::align(snap, other);
+        let other_elements = other.elements().count();
+        report.aligned_elements = pairs.len();
+        report.primary_only = nodes.iter().filter(|n| !pairs.contains_key(n)).count();
+        report.other_only = other_elements.saturating_sub(pairs.len());
+        let mut items: Vec<(usize, usize)> = pairs.into_iter().collect();
+        items.sort_unstable();
+        let plain_other = ForcedDom {
+            inner: other,
+            forced: None,
+            classes: None,
+        };
+        let states_wanted: Vec<State> = states_in_play.iter().copied().collect();
+        let layers: Vec<(usize, Layer, BTreeMap<State, Layer>)> = par::map_with(
+            &items,
+            || {
+                let mut env = environment(other);
+                env.width = f64::from(other.width);
+                let normal = Cascade::build(&inputs_other, &env);
+                env.reduced_motion = true;
+                let reduced = states_wanted
+                    .contains(&State::ReducedMotion)
+                    .then(|| Cascade::build(&inputs_other, &env));
+                (normal, reduced)
+            },
+            |(cascade, reduced), &(w, o)| {
+                let recover = other.computed(o);
+                // The paired element resolved on its own DOM and cascade: at rest, in every forced
+                // state and under reduced motion (never guessed from the primary's layers).
+                let plan = |l: &Layer| match recover {
+                    Some(c) if !other.animated.contains(&o) => settle_plan(l, c),
+                    _ => Vec::new(),
+                };
+                let mut layer = layer_of(cascade, &plain_other, o, recover);
+                let settle = plan(&layer);
+                layer.apply_settle(&settle);
+                let mut states: BTreeMap<State, Layer> = BTreeMap::new();
+                for &state in &states_wanted {
+                    let mut l = if state == State::ReducedMotion {
+                        match reduced {
+                            Some(r) => layer_of(r, &plain_other, o, recover),
+                            None => layer.clone(),
+                        }
+                    } else {
+                        let dom = ForcedDom {
+                            inner: other,
+                            forced: Some((o, state)),
+                            classes: None,
+                        };
+                        if cascade.state_matters(&dom, o) {
+                            layer_of(cascade, &dom, o, recover)
+                        } else {
+                            layer.clone()
+                        }
+                    };
+                    l.apply_settle(&settle);
+                    states.insert(state, l);
+                }
+                (w, layer, states)
+            },
+        );
+        overlay_ix.push(ix);
+        overlay_range.push((lo_i, hi_i));
+        overlay_report_of.push(overlay_reports.len());
+        overlays.push(Overlay {
+            label,
+            width: other.width,
+            lo: from,
+            hi: to,
+            layers: layers.iter().map(|(w, l, _)| (*w, l.clone())).collect(),
+            states: layers.into_iter().map(|(w, _, s)| (w, s)).collect(),
+        });
+        overlay_reports.push(report);
+    }
+    lap("viewport overlays");
+    let outs: Vec<NodeOut> = par::map_with(
+        &nodes,
+        || {
+            let build = |reduced: bool| -> Vec<Cascade> {
+                reps.iter()
+                    .map(|&w| {
+                        let mut env = environment(snap);
+                        env.width = f64::from(w);
+                        env.reduced_motion = reduced;
+                        Cascade::build(&inputs, &env)
+                    })
+                    .collect()
+            };
+            let reduced = if states_in_play.contains(&State::ReducedMotion) {
+                build(true)
+            } else {
+                Vec::new()
+            };
+            (build(false), reduced)
+        },
+        |(cascades, reduced), &node| {
+            let mut untranslated = Untranslated::default();
+            let element = snap.element(node).expect("element");
+            if element.tag == "canvas" {
+                untranslated.canvas_elements += 1;
+            }
+            let recover = snap.computed(node);
+            let t_rest = std::time::Instant::now();
+            let mut rest: Vec<Layer> =
+                per_width(&rep_of, cascades, |_, c| layer_of(c, &plain, node, recover));
+            let mut states: BTreeMap<State, Vec<Layer>> = BTreeMap::new();
+            tick(&T_REST, t_rest);
+            let t_states = std::time::Instant::now();
+            for &state in &states_in_play {
+                if state == State::ReducedMotion {
+                    // The environment, not the element, changes: resolve under reduced motion
+                    // wherever that activates a different set of rules.
+                    let layers: Vec<Layer> = per_width(&rep_of, cascades, |i, c| {
+                        if reduced[i].fingerprint() == c.fingerprint() {
+                            rest[i].clone()
+                        } else {
+                            layer_of(&reduced[i], &plain, node, recover)
+                        }
+                    });
+                    states.insert(state, layers);
+                    continue;
+                }
+                let dom = ForcedDom {
+                    inner: snap,
+                    forced: Some((node, state)),
+                    classes: None,
+                };
+                // A state no rule can react to on this element leaves its layer as it rests.
+                let layers: Vec<Layer> = per_width(&rep_of, cascades, |i, c| {
+                    if c.state_matters(&dom, node) {
+                        layer_of(c, &dom, node, recover)
+                    } else {
+                        rest[i].clone()
+                    }
+                });
+                states.insert(state, layers);
+            }
+            // End states reached by the original's script (reveals): see `settle_plan`.
+            tick(&T_STATES, t_states);
+            let settle: Vec<Settle> = match (recover, rest.get(captured_ix)) {
+                // An element captured with an animation in flight has transient computed values.
+                (Some(c), Some(at)) if !snap.animated.contains(&node) => settle_plan(at, c),
+                _ => Vec::new(),
+            };
+            if !settle.is_empty() {
+                for l in rest.iter_mut().chain(states.values_mut().flatten()) {
+                    l.apply_settle(&settle);
+                }
+                for sp in &settle {
+                    *untranslated
+                        .settled_from_computed
+                        .entry(sp.prop.clone())
+                        .or_default() += 1;
+                }
+            }
+            // Another captured viewport's own styles for this element (see `Overlay`).
+            for (oi, o) in overlays.iter().enumerate() {
+                let Some(target) = o.layers.get(&node) else {
+                    continue;
+                };
+                let ix = overlay_ix[oi];
+                let base = rest[ix].clone();
+                for (p, _) in base
+                    .decls
+                    .iter()
+                    .filter(|(p, v)| target.decls.get(*p) != Some(*v))
+                {
+                    *untranslated
+                        .viewport_overridden
+                        .entry((oi, p.clone()))
+                        .or_default() += 1;
+                }
+                for (p, _) in target
+                    .decls
+                    .iter()
+                    .filter(|(p, _)| !base.decls.contains_key(*p))
+                {
+                    *untranslated
+                        .viewport_overridden
+                        .entry((oi, p.clone()))
+                        .or_default() += 1;
+                }
+                let (from, to) = overlay_range[oi];
+                for (state, layers) in states.iter_mut() {
+                    let own = o
+                        .states
+                        .get(&node)
+                        .and_then(|m| m.get(state))
+                        .unwrap_or(target);
+                    for layer in &mut layers[from..=to] {
+                        *layer = own.clone();
+                    }
+                }
+                for layer in &mut rest[from..=to] {
+                    *layer = target.clone();
+                }
+            }
+            let mut sensitive = false;
+            if states
+                .values()
+                .any(|layers| layers.iter().zip(&rest).any(|(s, r)| s.decls != r.decls))
+            {
+                sensitive = true;
+            }
+            let t_place = std::time::Instant::now();
+            let placed: ElementLayers = place(&bounds, &rest, &states);
+            tick(&T_PLACE, t_place);
+            for p in &rest
+                .iter()
+                .flat_map(|l| l.uncertain.iter())
+                .cloned()
+                .collect::<BTreeSet<_>>()
+            {
+                *untranslated
+                    .undecidable_properties
+                    .entry(p.clone())
+                    .or_default() += 1;
+            }
+            if placed.important > 0 {
+                untranslated.important_flattened_elements += 1;
+            }
+            for p in rest
+                .iter()
+                .flat_map(|l| l.recovered.iter())
+                .collect::<BTreeSet<_>>()
+            {
+                *untranslated
+                    .recovered_from_computed
+                    .entry(p.clone())
+                    .or_default() += 1;
+            }
+            for p in states
+                .values()
+                .flatten()
+                .flat_map(|l| l.recovered.iter())
+                .collect::<BTreeSet<_>>()
+            {
+                *untranslated
+                    .recovered_in_states
+                    .entry(p.clone())
+                    .or_default() += 1;
+            }
+            for p in rest
+                .iter()
+                .flat_map(|l| l.empty.iter())
+                .collect::<BTreeSet<_>>()
+            {
+                *untranslated
+                    .empty_value_declarations
+                    .entry(p.clone())
+                    .or_default() += 1;
+            }
+            let classes_attr = element
+                .attributes
+                .iter()
+                .find(|(k, _)| k == "class")
+                .map_or("", |(_, v)| v.as_str());
+            let tokens: Vec<&str> = classes_attr.split_ascii_whitespace().collect();
+            let semantic = semantic_class(&tokens);
+
+            let uncertain = &placed.uncertain;
+            let usable: Vec<_> = placed
+                .placed
+                .iter()
+                .filter(|p| !uncertain.contains(&p.prop))
+                .cloned()
+                .collect();
+            let rendered = if placed.overlapping.is_empty() {
+                render_classes(&usable, &theme)
+            } else {
+                None
+            };
+            let mut overlap_example: Option<String> = None;
+            let (utilities, fallback) = match rendered {
+                Some(u) => (u, None),
+                None => {
                     let why = placed.overlapping.first().map_or(
                         "a value that cannot be written inside a class token".to_string(),
                         |(a, b)| format!("{a} and {b} in one variant"),
                     );
-                    recipes
-                        .overlap_examples
-                        .push(format!("node {node} ({}): {why}", element.tag));
+                    overlap_example = Some(format!("node {node} ({}): {why}", element.tag));
+                    (Vec::new(), Some((rest.clone(), states.clone())))
                 }
-                (Vec::new(), Some((rest.clone(), states.clone())))
+            };
+            for pl in &usable {
+                if pl.prop.starts_with("animation") || pl.prop.starts_with("transition") {
+                    *untranslated
+                        .animation_properties
+                        .entry(pl.prop.clone())
+                        .or_default() += 1;
+                }
+                if pl.prop.starts_with("mask")
+                    || pl.prop.starts_with("-webkit-mask")
+                    || pl.prop.contains("timeline")
+                {
+                    *untranslated
+                        .mask_and_timeline_properties
+                        .entry(pl.prop.clone())
+                        .or_default() += 1;
+                }
             }
-        };
-        for pl in &usable {
-            if pl.prop.starts_with("animation") || pl.prop.starts_with("transition") {
-                *untranslated
-                    .animation_properties
-                    .entry(pl.prop.clone())
-                    .or_default() += 1;
+            let t_pseudo = std::time::Instant::now();
+            let mut pseudo = Vec::new();
+            for (key, style) in &element.pseudo {
+                let pseudo_style = Some(&snap.styles[*style]);
+                let layers: Vec<Layer> = per_width(&rep_of, cascades, |_, c| {
+                    layer_for(c, &plain, node, Some(key), pseudo_style)
+                });
+                if layers.iter().any(|l| !l.decls.is_empty()) {
+                    pseudo.push((key.clone(), layers));
+                }
             }
-            if pl.prop.starts_with("mask")
-                || pl.prop.starts_with("-webkit-mask")
-                || pl.prop.contains("timeline")
-            {
-                *untranslated
-                    .mask_and_timeline_properties
-                    .entry(pl.prop.clone())
-                    .or_default() += 1;
+            tick(&T_PSEUDO, t_pseudo);
+            NodeOut {
+                part: Parts {
+                    node,
+                    utilities,
+                    fallback,
+                    pseudo,
+                    semantic,
+                },
+                settle,
+                sensitive,
+                untranslated,
+                overlap_example,
             }
+        },
+    );
+    for out in outs {
+        if !out.settle.is_empty() {
+            settle_map.insert(out.part.node, out.settle.clone());
         }
-        let mut pseudo = Vec::new();
-        for (key, style) in &element.pseudo {
-            let pseudo_style = Some(&snap.styles[*style]);
-            let layers: Vec<Layer> = cascades
-                .iter()
-                .map(|c| layer_for(c, &plain, node, Some(key), pseudo_style))
-                .collect();
-            if layers.iter().any(|l| !l.decls.is_empty()) {
-                pseudo.push((key.clone(), layers));
-            }
+        if out.sensitive {
+            state_sensitive.insert(out.part.node);
         }
-        parts.push(Parts {
-            node,
-            utilities,
-            fallback,
-            pseudo,
-            semantic,
-        });
+        if let Some(example) = out.overlap_example
+            && recipes.overlap_examples.len() < 8
+        {
+            recipes.overlap_examples.push(example);
+        }
+        untranslated.absorb(out.untranslated);
+        parts.push(out.part);
     }
-
+    for ((oi, prop), n) in std::mem::take(&mut untranslated.viewport_overridden) {
+        *overlay_reports[overlay_report_of[oi]]
+            .overridden
+            .entry(prop)
+            .or_default() += n;
+    }
+    untranslated.viewport_overlays = std::mem::take(&mut overlay_reports);
+    lap(&format!(
+        "layers+placement (cpu s: rest {:.1}, states {:.1}, place {:.1}, pseudo {:.1})",
+        T_REST.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
+        T_STATES.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
+        T_PLACE.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
+        T_PSEUDO.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
+    ));
     // Names: shared recipes, plain-CSS recipes and pseudo-element hooks.
     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, p) in parts.iter().enumerate() {
@@ -682,6 +1135,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         recipe_of.insert(p.key, name);
     }
 
+    lap("names");
     // CSS of the recipes and the final class strings.
     let mut recipes_css = String::new();
     let mut classes: HashMap<usize, String> = HashMap::new();
@@ -728,6 +1182,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         }
     }
 
+    lap("recipes css");
     // The CSS the generated project would produce.
     let candidates: Vec<String> = inline.iter().cloned().collect();
     let tailwind_dir =
@@ -763,6 +1218,7 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         }
     };
 
+    lap("tailwind compile");
     // Equality proof.
     let mut verify_widths: BTreeSet<u32> = reps.iter().copied().collect();
     verify_widths.extend(bounds.iter().skip(1).map(|b| b - 1));
@@ -783,8 +1239,11 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         &states_in_play,
         &|n| state_sensitive.contains(&n),
         &pseudo_nodes,
+        &settle_map,
+        &overlays,
     );
 
+    lap("equality check");
     // Gaps.
     let (state_rule_count, state_rule_examples) = unreachable_state_rules(&cascades[0]);
     untranslated.state_rules_on_ancestors_or_pseudo_elements = state_rule_count;
@@ -804,6 +1263,29 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
     }
     untranslated.rules_for_other_pseudo_elements = other_pseudo_count;
     untranslated.other_pseudo_element_examples = other_pseudo.into_iter().collect();
+    untranslated.reduced_motion_with_state = cascades[0]
+        .rules
+        .iter()
+        .filter(|r| {
+            r.condition.contains("prefers-reduced-motion")
+                && r.complex.compounds.last().is_some_and(|last| {
+                    fn state(simples: &[Simple]) -> bool {
+                        simples.iter().any(|s| match s {
+                            Simple::Pseudo(n) => matches!(
+                                n.as_str(),
+                                "hover" | "active" | "focus" | "focus-visible" | "focus-within"
+                            ),
+                            Simple::Is(l) | Simple::Where(l) | Simple::Not(l) => {
+                                l.0.iter()
+                                    .any(|c| c.compounds.iter().any(|k| state(&k.simples)))
+                            }
+                            _ => false,
+                        })
+                    }
+                    state(&last.simples)
+                })
+        })
+        .count();
     let (at_css, at_counts) = at_rules(&sheet_refs);
     untranslated.at_rules_carried_verbatim = at_counts;
 
@@ -815,11 +1297,18 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
             if rule.condition.is_empty() {
                 continue;
             }
-            let all_no = cascades.iter().all(|c| {
+            let all_no = cascades.iter().chain(&reduced_main).all(|c| {
                 c.rules
                     .get(i)
                     .is_some_and(|r| r.active == super::super::selector::Tri::No)
             });
+            // `prefers-reduced-motion` is a translated variant (`motion-reduce:`), not an assumption.
+            if !all_no
+                && rule.condition.contains("prefers-reduced-motion")
+                && !reduced_main.is_empty()
+            {
+                continue;
+            }
             if all_no {
                 *never.entry(rule.condition.clone()).or_default() += 1;
             } else if [
@@ -962,6 +1451,28 @@ pub fn translate(capture_dir: &Path, page: &Path, opts: &StyleOptions) -> Result
         gaps.push(format!(
             "Empty-valued longhands recovered from the captured computed style ({:?}) are frozen at that resting value at every width and state ({:?} also recovered inside forced states); the static check does not count them ({} comparisons) because the output carries the same text. var()-driven variation of these values is lost.",
             untranslated.recovered_from_computed, untranslated.recovered_in_states, verification.recovered_unverified
+        ));
+    }
+    if untranslated.reduced_motion_with_state > 0 {
+        gaps.push(format!(
+            "{} rule(s) combine a state (hover/focus/active) with a prefers-reduced-motion condition: only the state under no-preference and the reduced-motion layer at rest are translated, not their combination.",
+            untranslated.reduced_motion_with_state
+        ));
+    }
+    for o in &untranslated.viewport_overlays {
+        gaps.push(match &o.skipped {
+            Some(why) => format!("Viewport {} not used: {why}.", o.viewport),
+            None => format!(
+                "Viewport {}: widths {}..{} follow this capture for {} paired elements ({} primary-only, {} only in this capture are not translated); elsewhere the primary capture's cascade decides, so widths between captured viewports, and script-toggled classes at them, are not captured.",
+                o.viewport, o.from, if o.to == 0 { "∞".to_string() } else { o.to.to_string() },
+                o.aligned_elements, o.primary_only, o.other_only
+            ),
+        });
+    }
+    if !untranslated.settled_from_computed.is_empty() {
+        gaps.push(format!(
+            "End states written instead of the stylesheet's pre-reveal values ({:?}, elements per property): the captured computed style says a script (GSAP, WAAPI, an observer) had revealed these elements (opacity 0 -> 1, an offset translate -> none) while the author declaration is still the hidden one. The reveal itself is not reproduced; the elements start in the end state. The static check does not count these comparisons (included in the {} unverified).",
+            untranslated.settled_from_computed, verification.recovered_unverified
         ));
     }
     if !untranslated.undefined_in_original.is_empty() {
@@ -1230,6 +1741,8 @@ mod tests {
             &[1000],
             &BTreeSet::new(),
             &|_| true,
+            &[],
+            &HashMap::new(),
             &[],
         );
         assert!(check.different > 0, "{check:?}");

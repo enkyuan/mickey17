@@ -3,7 +3,7 @@
 
 use super::super::css;
 use super::classes::{self, Theme};
-use super::layers::{Layer, Placed, REVERT, State};
+use super::layers::{Layer, Placed, REVERT, State, overlaps};
 use std::collections::BTreeMap;
 
 pub fn variant_prefix(min: Option<u32>, state: Option<State>) -> String {
@@ -123,23 +123,67 @@ fn block(selector: &str, decls: &[(String, String)], indent: &str) -> String {
     out
 }
 
-/// Declarations of `layer` in precedence order, preceded by `revert` for properties the
-/// previous layer set and this one does not.
-fn ordered(layer: &Layer, previous: Option<&Layer>) -> Vec<(String, String)> {
+/// What a block has to write on top of what is already in force (`prev`): `revert` for what
+/// disappeared, then the changed declarations in precedence order. A declaration that did not
+/// change is written again when an earlier one in the block overlaps it (a shorthand resets its
+/// longhands), so the cascade inside the block ends where the layer does.
+fn delta(
+    order: &[String],
+    decls: &BTreeMap<String, String>,
+    prev: &BTreeMap<String, String>,
+    prev_order: &[String],
+) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    if let Some(prev) = previous {
-        for p in prev.decls.keys() {
-            if !layer.decls.contains_key(p) {
-                out.push((p.clone(), REVERT.to_string()));
-            }
+    // Two overlapping declarations (`background` / `background-color`) that swapped places keep
+    // their values but change who wins: write the whole layer.
+    let position = |list: &[String], p: &str| list.iter().position(|x| x == p);
+    let reordered = !prev_order.is_empty()
+        && order.iter().enumerate().any(|(i, a)| {
+            order[i + 1..].iter().any(|b| {
+                overlaps(a, b)
+                    && matches!(
+                        (position(prev_order, a), position(prev_order, b)),
+                        (Some(x), Some(y)) if x > y
+                    )
+            })
+        });
+    if reordered {
+        return prev
+            .keys()
+            .filter(|p| !decls.contains_key(*p))
+            .map(|p| (p.clone(), REVERT.to_string()))
+            .chain(
+                order
+                    .iter()
+                    .filter_map(|p| decls.get(p).map(|v| (p.clone(), v.clone()))),
+            )
+            .collect();
+    }
+    let mut written: Vec<&String> = Vec::new();
+    for p in prev.keys() {
+        if !decls.contains_key(p) {
+            out.push((p.clone(), REVERT.to_string()));
+            written.push(p);
         }
     }
-    for p in &layer.order {
-        if let Some(v) = layer.decls.get(p) {
+    for p in order {
+        let Some(v) = decls.get(p) else { continue };
+        if prev.get(p) != Some(v) || written.iter().any(|q| overlaps(q, p)) {
             out.push((p.clone(), v.clone()));
+            written.push(p);
         }
     }
     out
+}
+
+fn ordered(layer: &Layer, previous: Option<&Layer>) -> Vec<(String, String)> {
+    let none = BTreeMap::new();
+    delta(
+        &layer.order,
+        &layer.decls,
+        previous.map_or(&none, |p| &p.decls),
+        previous.map_or(&[][..], |p| &p.order),
+    )
 }
 
 fn wrap(min: Option<u32>, inner: String) -> String {
@@ -194,19 +238,7 @@ pub fn recipe_css(
                     }
                 }
             }
-            let mut decls: Vec<(String, String)> = Vec::new();
-            for p in effective.keys() {
-                if !layer.decls.contains_key(p) {
-                    decls.push((p.clone(), REVERT.to_string()));
-                }
-            }
-            for p in &layer.order {
-                if let Some(v) = layer.decls.get(p)
-                    && effective.get(p) != Some(v)
-                {
-                    decls.push((p.clone(), v.clone()));
-                }
-            }
+            let decls = delta(&layer.order, &layer.decls, &effective, &[]);
             let entry = carried.entry(state).or_default();
             for (p, v) in &decls {
                 entry.insert(p.clone(), (v != REVERT).then(|| v.clone()));
@@ -214,12 +246,18 @@ pub fn recipe_css(
             if decls.is_empty() {
                 continue;
             }
-            let rule = block(&format!("{selector}:{}", state.variant()), &decls, "");
-            let rule = if state == State::Hover {
-                let indented: String = rule.lines().map(|l| format!("  {l}\n")).collect();
-                format!("@media (hover: hover) {{\n{indented}}}\n")
+            let rule = if state == State::ReducedMotion {
+                let inner = block(&selector, &decls, "");
+                let indented: String = inner.lines().map(|l| format!("  {l}\n")).collect();
+                format!("@media (prefers-reduced-motion: reduce) {{\n{indented}}}\n")
             } else {
-                rule
+                let rule = block(&format!("{selector}:{}", state.variant()), &decls, "");
+                if state == State::Hover {
+                    let indented: String = rule.lines().map(|l| format!("  {l}\n")).collect();
+                    format!("@media (hover: hover) {{\n{indented}}}\n")
+                } else {
+                    rule
+                }
             };
             out.push_str(&wrap((i > 0).then(|| bounds[i]), rule));
         }

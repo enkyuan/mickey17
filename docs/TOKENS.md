@@ -284,13 +284,26 @@ Without a Tailwind package the same check runs against this crate's model of the
 the report says so. The model itself is tested against a real Tailwind build for every utility
 it renders (`utilities_expand_exactly_like_a_real_tailwind`).
 
-Measured (page 0, 1440×900, Tailwind 4.3.5; static, not browser-verified; comparisons exclude 6,240 / 0 / 70,056 recovered-from-computed values and 48 / 0 / 69,823 on variables the site never defines):
+Measured (page 0, 1440×900 primary capture with the page's other captured viewports as
+overlays, Tailwind 4.3.5; static, not browser-verified). Widths with the same active rules are
+compared once, so counts are lower than in the first version of this table; the unverified column
+is comparisons the check does not count (values recovered or settled from the captured computed
+style, and variables the site never defines):
 
-| Site | Elements | Widths | Comparisons | Different |
-| --- | ---: | ---: | ---: | ---: |
-| Natural | 997 | 48 | 1,063,753 | 0 |
-| Infinite Garden | 1,207 | 21 | 233,594 | 0 |
-| Microsoft AI | 1,378 | 56 | 5,890,405 | 0 |
+| Site | Elements | Widths | Comparisons | Different | Not counted | Against another viewport's capture |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Natural | 997 | 48 | 2,147,074 | 0 | 17,993 + 126 | 6,951 |
+| Infinite Garden | 1,207 | 21 | 161,255 | 0 | 7 | 2,287 |
+| Microsoft AI | 1,378 | 56 | 5,007,075 | 0 | 56,027 + 59,559 | 6,832 |
+
+The 375×812 capture follows for widths 374–418 (Natural), 361–760 (Garden) and 0–479 (Microsoft AI):
+the run of width intervals that activate the same rules as the captured width; other widths use the
+primary capture's cascade.
+
+Translation time on the same machine under heavy load (load average 20–50 on 8 cores, 4
+threads): Natural 83 s, Infinite Garden 3.5 s, Microsoft AI 84 s (was about 2, 0.1 and 4
+minutes). `MOCHI_TOKENS_THREADS=n` sets the worker count, `MOCHI_TOKENS_TIMING=1` prints the
+phases.
 
 The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 * -1)`,
 `select-none` adds a `-webkit-` declaration, `p-0` is `0px`, a theme with `--spacing-0` changes
@@ -306,10 +319,43 @@ The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 *
   order, so when two states are on at once (pressed + hovered, focused + hovered) a property
   they both set can resolve differently from the original; the check cannot see it.
   `:has(<state>)` selectors are counted with the ancestor-state rules and not translated.
+- Attribute selectors (`[data-state=open]`, `[aria-expanded=true]`, `[data-pressed]`) are resolved
+  against the attributes as captured and baked into each element's classes; styles that depend on
+  an attribute a script toggles later (open/pressed menus, Base UI's `data-open`/`data-popup-open`
+  in place of the original's `data-state`) are only as captured, never re-evaluated in the build.
 - `hover:` utilities and hover recipe states are wrapped in `@media (hover: hover)`; the
   original's sticky `:hover` on touch devices is not reproduced.
 - Viewport height, orientation, resolution, color scheme other than the captured one and
   container queries are not varied; properties behind undecidable conditions are skipped.
+- **Motion.** `@media (prefers-reduced-motion: reduce)` is translated as a state: every element is
+  resolved under reduced motion at each width interval and the difference becomes `motion-reduce:`
+  utilities (or an `@media` block in a plain-CSS recipe), checked like the hover states. Tailwind
+  sorts `motion-reduce:` before `min-[W]:`, so the placement simulates what applies under reduced
+  motion and restates it (`min-[W]:motion-reduce:`) where a wider plain utility would beat it.
+  `animation`/`transition` declarations and `@keyframes` (central `at-rules.css`) are carried as
+  written; scroll-driven `animation-timeline`, view transitions and script-started animations are
+  not reproduced. Reduced motion combined with hover/focus is not translated.
+- **Script-driven end states.** When the captured computed `opacity`, `visibility` or a
+  `transform`/`translate`/`scale`/`rotate` offset says an element ended somewhere other than the
+  stylesheet's declaration (a GSAP/WAAPI/observer reveal: `opacity: 0` in CSS, 1 captured), the
+  captured end state is written instead (`settled_from_computed`) wherever the declaration still has
+  the author value; the reveal itself is not reproduced and the check does not count these. A
+  transform-like value that is identity only because a custom property is 0 at rest
+  (`translateY(var(--y, 0px))`) is not a reveal and is kept, as are elements captured with an
+  animation in flight (their computed values are transient).
+- **Other captured viewports.** Snapshots of the same page at narrower widths
+  (`page-00000-375x812.json` next to `…-1440x900.json`) are used as overlays: elements are paired
+  across the two DOMs (tag, identity attributes and classes without `--modifier`/`is-`/`has-`/`js-`
+  suffixes, in matching order); for each pair the narrower capture's own author layer replaces the
+  primary's in the run of width intervals that activate the same rules as that capture's width, and
+  the check compares the output there with the capture's layer, not the primary's. Hover/focus/
+  active and reduced-motion layers at those widths are resolved on the other capture's own DOM and
+  cascade. Siblings with equal keys that one capture has more of than the other are left unpaired;
+  elements present in only one capture, pseudo-elements, widths between captured viewports (or
+  intervals shared with the primary) and captures whose stylesheets add width thresholds the primary
+  lacks are not overlaid. Classes a script toggles over time (an active carousel slide) are taken
+  as captured, and script-toggled classes outside the captured intervals are unknown.
+  `StyleOptions::viewport_overlays` turns this off.
 - `!important` is flattened. A declaration the capture serialized with an empty value (a `var()`
   shorthand artifact of the CSSOM, e.g. `animation-duration: ;`) is never written. Where the
   element's captured computed style has that longhand, its resting value is used instead,
@@ -334,8 +380,6 @@ The check found real problems while it was built (Tailwind's `-z-1` is `calc(1 *
   behavior is not verified. SVG presentation attributes and canvas/WebGL drawing are not CSS.
 - Flattening the cascade puts the whole reset on every element, so classes per element are
   high (see `average_per_element`); recipes absorb repeats only where a component class names them.
-- Running the translation takes about two minutes per page on a large site (cascade resolution at
-  ~50 widths × 5 states); it is not optimized.
 - The browser harness has not been run against a translated project in a real browser.
   `tokens.equality-harness.js` evaluates like the parity collector (Playwright `evaluate`,
   Browser pane `javascript_tool`) and is idempotent; compare an original page and the generated

@@ -14,6 +14,8 @@ pub struct Environment {
     pub width: f64,
     pub height: f64,
     pub color_scheme: String,
+    /// `prefers-reduced-motion: reduce` (the default is `no-preference`, the capture's setting).
+    pub reduced_motion: bool,
 }
 
 impl Environment {
@@ -249,7 +251,11 @@ fn feature(name: &str, value: &[&Component], env: &Environment) -> Tri {
             Some(scheme) => (env.color_scheme.eq_ignore_ascii_case(scheme)).into(),
             None => Tri::Unknown,
         },
-        "prefers-reduced-motion" => ident.map_or(Tri::Unknown, |i| (i == "no-preference").into()),
+        "prefers-reduced-motion" => ident.map_or(Tri::Unknown, |i| match i.as_str() {
+            "reduce" => env.reduced_motion.into(),
+            "no-preference" => (!env.reduced_motion).into(),
+            _ => Tri::Unknown,
+        }),
         "prefers-contrast" => ident.map_or(Tri::Unknown, |i| (i == "no-preference").into()),
         "prefers-reduced-transparency" | "prefers-reduced-data" => {
             ident.map_or(Tri::Unknown, |i| (i == "no-preference").into())
@@ -427,6 +433,7 @@ mod tests {
             width,
             height: 900.0,
             color_scheme: "dark".into(),
+            reduced_motion: false,
         }
     }
     fn media(q: &str, width: f64) -> Tri {
@@ -453,6 +460,10 @@ mod tests {
         assert_eq!(media("(prefers-color-scheme: dark)", 1440.0), Tri::Yes);
         assert_eq!(media("(prefers-color-scheme: light)", 1440.0), Tri::No);
         assert_eq!(media("(prefers-reduced-motion: reduce)", 1440.0), Tri::No);
+        assert_eq!(
+            media("(prefers-reduced-motion: no-preference)", 1440.0),
+            Tri::Yes
+        );
         assert_eq!(
             media("(hover: hover) and (pointer: fine)", 1440.0),
             Tri::Yes

@@ -29,6 +29,7 @@ pub fn environment(snapshot: &Snapshot) -> Environment {
         width: f64::from(snapshot.width),
         height: f64::from(snapshot.height),
         color_scheme: snapshot.color_scheme.clone(),
+        reduced_motion: false,
     }
 }
 

@@ -550,6 +550,19 @@ impl Cascade {
         cascade
     }
 
+    /// What the environment decided: which rules are active. Two environments with the same
+    /// fingerprint resolve every element identically.
+    pub fn fingerprint(&self) -> Vec<u8> {
+        self.rules
+            .iter()
+            .map(|r| match r.active {
+                Tri::Yes => 1,
+                Tri::No => 0,
+                Tri::Unknown => 2,
+            })
+            .collect()
+    }
+
     fn candidates<D: Dom + ?Sized>(&self, dom: &D, node: usize) -> Vec<usize> {
         let mut out: Vec<usize> = self.universal.clone();
         if let Some(id) = dom.attr(node, "id")
@@ -570,6 +583,35 @@ impl Cascade {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// Could forcing an interactive state on `node` (the `dom` already says which) change what
+    /// the element resolves to? False when no rule that names `:hover`, `:focus`, ... on its
+    /// subject matches it in that state, so the state's layer equals the resting one.
+    pub fn state_matters<D: Dom + ?Sized>(&self, dom: &D, node: usize) -> bool {
+        fn mentions(simples: &[Simple]) -> bool {
+            simples.iter().any(|s| match s {
+                Simple::Pseudo(n) => matches!(
+                    n.as_str(),
+                    "hover" | "active" | "focus" | "focus-visible" | "focus-within"
+                ),
+                Simple::Is(l) | Simple::Where(l) | Simple::Not(l) => {
+                    l.0.iter()
+                        .any(|c| c.compounds.iter().any(|k| mentions(&k.simples)))
+                }
+                _ => false,
+            })
+        }
+        self.candidates(dom, node).into_iter().any(|i| {
+            let rule = &self.rules[i];
+            rule.active != Tri::No
+                && rule
+                    .complex
+                    .compounds
+                    .last()
+                    .is_some_and(|last| last.pseudo_element().is_none() && mentions(&last.simples))
+                && selector::complex_match(&rule.complex, dom, node) != Tri::No
+        })
     }
 
     /// Resolve the cascade for an element (`pseudo = None`) or one of its pseudo-elements.
@@ -828,6 +870,7 @@ mod tests {
             width,
             height: 900.0,
             color_scheme: "dark".into(),
+            reduced_motion: false,
         };
         let cascade = Cascade::build(
             &[SheetInput {

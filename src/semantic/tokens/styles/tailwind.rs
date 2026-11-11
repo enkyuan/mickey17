@@ -213,12 +213,18 @@ fn rule(selector: &str, decls: &[(String, String)]) -> String {
 /// only), width media outside.
 fn utility_rule(selector: &str, p: &Parsed<'_>, decls: &[(String, String)]) -> String {
     let sel = match p.state {
+        Some(State::ReducedMotion) | None => selector.to_string(),
         Some(s) => format!("{selector}:{}", s.variant()),
-        None => selector.to_string(),
     };
     let mut css = rule(&sel, decls);
     if p.state == Some(State::Hover) {
         css = format!("@media (hover: hover) {{\n{}}}\n", indent(&css));
+    }
+    if p.state == Some(State::ReducedMotion) {
+        css = format!(
+            "@media (prefers-reduced-motion: reduce) {{\n{}}}\n",
+            indent(&css)
+        );
     }
     if let Some(w) = p.min {
         css = format!("@media (width >= {w}px) {{\n{}}}\n", indent(&css));
@@ -239,6 +245,7 @@ fn order_key(p: &Parsed<'_>) -> (u32, u8, u32) {
         State::Focus => 3,
         State::FocusVisible => 4,
         State::Active => 5,
+        State::ReducedMotion => 6,
     });
     match p.min {
         None => (0, state_rank, 0),
