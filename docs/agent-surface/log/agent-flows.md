@@ -18,7 +18,7 @@ process.stdout.write(toJson(graph));          // canonical JSON
 ```
 CLI: `bun agent-flows/src/cli.ts --run <har>,<trace>[,<cookies>] --run … [--ignore-host H] [--ignore-path-prefix P] [--only-traced] [--out f.json]` (exit 2 when blocked).
 
-Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (77 tests). The
+Checks (from `agent-flows/`): `bun run check` = `tsc --noEmit` + `bun test` (91 tests). The
 ground-truth tests need the fixture shops from the agent-fixtures branch
 (`benchmarks/fixtures/agent/shops`): until that merges they skip with a warning unless
 `MOCHI_AGENT_SHOPS=<dir>` points at them; `MOCHI_REQUIRE_AGENT_FIXTURES=1` turns "not found" into a failure
@@ -222,12 +222,28 @@ Verified findings and what was done:
   adoption must wrap them, D8); storage and DOM sources (storageState `origins[]`) are not read, so such values are
   `client-computed`; a missing or string HAR `time` counts as instantaneous; weak-only values shorter than 8 characters are never looked up.
 
-**Round 3:** re-review of these fixes — see the entry below once it has run.
+**Round 3 (Opus, high) re-review of d72cbb5.** Confirmed holding: no-op aliases (exact path), weak-only handling, input-beats-partial,
+the operation check for `operationName` bodies, tie blocking (the fixtures use explicit ids and still resolve), `entry-skipped`,
+sorted-key hashing, token-grade keys in locations, auth-scheme-only prefixes. New verified findings, all fixed with tests:
+card number with its expiry glued on (digit windows + Luhn); over-redaction of replayable constants (`content-type`,
+`user-agent`, slugs, SKUs, `currencyCode`: benign headers are exempt from value checks, slugs and readable paths are not
+token-grade, a no-digit token needs mixed case); no-op aliases missing on the substring and fill-in paths; operation check missed
+GET `?operationName=`, batched bodies and query-only GraphQL (any depth, plus the operation name inside the GraphQL document);
+quadratic `piiish` regex (linear scan); crowded length-class lookup (at most 64 lengths per window); duplicate jar names
+keyed by value order (now not sources, with a `jar-duplicate-names` warning); short secrets and PII (names `pw`,
+`passcode`, `pincode`, `totp`, `key`; `name=value` and JSON-text pairs with percent-decoded names; emails and SSNs in
+prefixes, locators and locations; trace selectors have `value=` attributes removed); HTML scanner (non-ASCII before a tag, `<!-->`,
+markup inside attribute values: every tag is now parsed through its quoted attributes); explicit-id ties sort by natural order;
+`entry-skipped` no longer embeds the entry index; event `type`/`target` text is cleaned.
+Known and kept: a persisted-query `sha256Hash` or any other 14+ character digit-bearing token constant is redacted (it cannot
+be told from a secret); Chrome/Playwright HARs without `_requestId` and with same-millisecond requests will block on `ambiguous` order.
+
+**Round 4:** re-review of the round-3 fixes — see below once it has run.
 
 ## Commands run
 
 - `tsc --noEmit` (5.9.3, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`): clean.
-- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 77 pass, 0 fail (259 truth edges).
+- `bun test` in `agent-flows/` with `MOCHI_AGENT_SHOPS=…/agent-fixtures…/benchmarks/fixtures/agent/shops MOCHI_REQUIRE_AGENT_FIXTURES=1`: 91 pass, 0 fail (259 truth edges).
 
 ## Not run / limits
 
@@ -245,5 +261,5 @@ Verified findings and what was done:
 
 Title: `feat(agent-flows): infer typed flow graphs from recorded HAR runs`
 Base: `feat/tanstack-exporter`. Body: what (package, algorithm, formats), why (M2: classes and edges from
-recordings, framework-neutral), evidence (77 tests; 259 edges vs the fixture truth on three stacks; mutation
+recordings, framework-neutral), evidence (91 tests; 259 edges vs the fixture truth on three stacks; mutation
 controls; review findings fixed), limits (above), review summary (this log).

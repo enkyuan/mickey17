@@ -196,80 +196,88 @@ const safeCp = (n: number, fallback: string): string => {
 
 /**
  * Attributes of every `<tag ...>` outside comments, scripts and styles. A tolerant single-pass
- * scanner (linear time, whatever the input), not a full HTML parser.
+ * scanner (linear time, whatever the input), not a full HTML parser. Every tag is parsed through its
+ * quoted attributes, so markup inside an attribute value is never mistaken for a tag.
  */
 function scanTags(html: string, tag: string): Map<string, string>[] {
-    const lower = html.toLowerCase();
     const out: Map<string, string>[] = [];
-    const open = `<${tag}`;
     let i = 0;
     while (i < html.length) {
         const lt = html.indexOf("<", i);
         if (lt < 0) break;
+        if (html.startsWith("<!-->", lt)) {
+            i = lt + 5;
+            continue;
+        }
+        if (html.startsWith("<!--->", lt)) {
+            i = lt + 6;
+            continue;
+        }
         if (html.startsWith("<!--", lt)) {
             const end = html.indexOf("-->", lt + 4);
             if (end < 0) break;
             i = end + 3;
             continue;
         }
-        let skipped = false;
-        for (const raw of ["script", "style"]) {
-            const next = lower[lt + raw.length + 1] ?? "";
-            if (lower.startsWith(`<${raw}`, lt) && /[\s/>]/.test(next)) {
-                const end = lower.indexOf(`</${raw}`, lt + raw.length + 1);
-                if (end < 0) return out;
-                i = end + raw.length + 2;
-                skipped = true;
-                break;
-            }
-        }
-        if (skipped) continue;
-        if (lower.startsWith(open, lt) && /[\s/>]/.test(lower[lt + open.length] ?? "")) {
-            // Parse attributes up to the closing `>`, honouring quotes.
-            const attrs = new Map<string, string>();
-            let p = lt + open.length;
-            let closed = false;
-            while (p < html.length) {
-                const c = html[p]!;
-                if (c === ">") {
-                    closed = true;
-                    p++;
-                    break;
-                }
-                if (/[\s/]/.test(c)) {
-                    p++;
-                    continue;
-                }
-                let q = p;
-                while (q < html.length && !/[\s/>=]/.test(html[q]!)) q++;
-                const name = html.slice(p, q).toLowerCase();
-                p = q;
-                while (p < html.length && /\s/.test(html[p]!)) p++;
-                let value = "";
-                if (html[p] === "=") {
-                    p++;
-                    while (p < html.length && /\s/.test(html[p]!)) p++;
-                    const quote = html[p];
-                    if (quote === '"' || quote === "'") {
-                        const end = html.indexOf(quote, p + 1);
-                        if (end < 0) return out;
-                        value = html.slice(p + 1, end);
-                        p = end + 1;
-                    } else {
-                        q = p;
-                        while (q < html.length && !/[\s>]/.test(html[q]!)) q++;
-                        value = html.slice(p, q);
-                        p = q;
-                    }
-                }
-                if (name && !attrs.has(name)) attrs.set(name, decodeEntities(value));
-            }
-            if (!closed) break;
-            out.push(attrs);
-            i = p;
+        const first = html[lt + 1] ?? "";
+        if (!/[A-Za-z]/.test(first)) {
+            i = lt + 1;
             continue;
         }
-        i = lt + 1;
+        // Tag name, then attributes up to the closing `>`, honouring quotes.
+        let p = lt + 1;
+        while (p < html.length && !/[\s/>]/.test(html[p]!)) p++;
+        const name = html.slice(lt + 1, p).toLowerCase();
+        const attrs = new Map<string, string>();
+        let closed = false;
+        while (p < html.length) {
+            const c = html[p]!;
+            if (c === ">") {
+                closed = true;
+                p++;
+                break;
+            }
+            if (/[\s/]/.test(c)) {
+                p++;
+                continue;
+            }
+            let q = p;
+            while (q < html.length && !/[\s/>=]/.test(html[q]!)) q++;
+            if (q === p) q = p + 1; // a stray `=`
+            const attr = html.slice(p, q).toLowerCase();
+            p = q;
+            while (p < html.length && /\s/.test(html[p]!)) p++;
+            let value = "";
+            if (html[p] === "=") {
+                p++;
+                while (p < html.length && /\s/.test(html[p]!)) p++;
+                const quote = html[p];
+                if (quote === '"' || quote === "'") {
+                    const end = html.indexOf(quote, p + 1);
+                    if (end < 0) return out;
+                    value = html.slice(p + 1, end);
+                    p = end + 1;
+                } else {
+                    q = p;
+                    while (q < html.length && !/[\s>]/.test(html[q]!)) q++;
+                    value = html.slice(p, q);
+                    p = q;
+                }
+            }
+            if (attr && !attrs.has(attr)) attrs.set(attr, decodeEntities(value));
+        }
+        if (!closed) break;
+        i = p;
+        if (name === "script" || name === "style") {
+            // Raw text up to the matching end tag; nothing inside is markup.
+            const re = new RegExp(`</${name}[\\s/>]`, "gi");
+            re.lastIndex = i;
+            const end = re.exec(html);
+            if (!end) break;
+            i = end.index + 2 + name.length;
+            continue;
+        }
+        if (name === tag) out.push(attrs);
     }
     return out;
 }

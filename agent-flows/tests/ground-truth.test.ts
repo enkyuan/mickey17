@@ -97,6 +97,10 @@ maybe("ground truth (agent-fixtures)", () => {
                 const g = graphFor(stack, scenario);
                 expect(g.blockers, tag).toEqual([]);
                 expect(g.status, tag).toBe("resolved");
+                // Replayable constants must survive redaction: every content type is kept.
+                for (const st of g.steps) {
+                    for (const v of st.values) if (v.location === "header:content-type") expect(v.value, `${tag}: step ${st.index}`).toBeDefined();
+                }
                 const reqOf = (i: number) => {
                     const s = g.steps[i]!;
                     const r = reqs.find((q) => q.method === s.method && q.path === normPath(s.path_template));

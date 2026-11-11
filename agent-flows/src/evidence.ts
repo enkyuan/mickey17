@@ -131,11 +131,11 @@ export function looksLikeCard(v: string): boolean {
 /** Long names matched anywhere in a location. */
 const SENSITIVE_SUBSTRINGS = [
     "authorization", "cookie", "token", "secret", "password", "passwd", "passphrase", "credential", "signature", "session",
-    "csrf", "xsrf", "apikey", "api-key", "api_key", "privatekey", "private-key", "private_key", "bearer", "hmac",
+    "csrf", "xsrf", "apikey", "api-key", "api_key", "privatekey", "private-key", "private_key", "bearer", "hmac", "passcode", "pincode",
 ];
 /** Short names matched only as whole words (`pin` must not redact `shipping`). */
 const SENSITIVE_WORDS = new Set([
-    "pwd", "pass", "pin", "otp", "jwt", "auth", "card", "cvc", "cvv", "cvv2", "iban", "ssn", "social", "email", "sig", "body", "code", "phone",
+    "pwd", "pw", "pass", "pin", "otp", "jwt", "auth", "card", "cvc", "cvv", "cvv2", "iban", "ssn", "social", "email", "sig", "body", "phone", "key", "totp",
 ]);
 
 /**
@@ -152,36 +152,86 @@ export function sensitiveLocation(loc: string): boolean {
     return words.some((w) => SENSITIVE_WORDS.has(w));
 }
 
-/** A run of 13 to 19 digits (spaces and dashes allowed) that passes the Luhn check, anywhere in the text. */
+/**
+ * A card number anywhere in the text: any 13 to 19 digit window of a digit run (single spaces or
+ * dashes between digits allowed) that passes the Luhn check, so an expiry date glued to the number
+ * does not hide it.
+ */
 function cardIn(text: string): boolean {
-    for (const m of text.matchAll(/(?:\d[ -]?){13,19}/g)) if (looksLikeCard(m[0].trim())) return true;
+    for (const m of text.matchAll(/\d(?:[ -]?\d){12,63}/g)) {
+        const digits = m[0].replace(/[ -]/g, "");
+        for (let s = 0; s + 13 <= digits.length; s++) {
+            for (let l = 13; l <= 19 && s + l <= digits.length; l++) if (looksLikeCard(digits.slice(s, s + l))) return true;
+        }
+    }
     return false;
 }
 
 const distinctCount = (s: string): number => new Set(s).size;
 
+/**
+ * A token-grade word: a long unbroken run that is not prose. With a digit, 14+ characters unless it
+ * is a slug (words and short numbers joined by `-`/`_`: `blue-widget-2024`, `WIDGET-2024-XL`);
+ * without a digit, 20+ characters of mixed case (`sk-live-QWERTYuiop…`; `x-www-form-urlencoded` is not).
+ */
+function tokenGrade(p: string): boolean {
+    if (!isEvidence(p)) return false;
+    if (/\d/.test(p)) return p.length >= 14 && !slugLike(p);
+    return p.length >= 20 && /[a-z]/.test(p) && /[A-Z]/.test(p);
+}
+
+function slugLike(p: string): boolean {
+    const parts = p.split(/[-_]/);
+    return parts.length >= 2 && parts.every((w) => (/^[A-Za-z]{1,12}$/.test(w)) || /^\d{1,6}$/.test(w));
+}
+
 /** A long mixed blob (digits or both cases, high entropy) regardless of URL/path shape. */
 function rawTokenish(p: string): boolean {
+    if (slugLike(p)) return false;
+    if (p.includes("://")) return false; // a URL: its pieces and parameters are checked separately
+    const segs = p.split("/").filter(Boolean);
+    if (segs.length >= 2 && segs.filter((s) => /^[A-Za-z]{3,}$/.test(s) || slugLike(s)).length * 2 >= segs.length) return false; // a readable path
     return p.length >= 12 && distinctCount(p) >= 6 && entropyBitsPerChar(p) >= 3.0 && /\d/.test(p);
 }
 
-/** Text that is, or contains, something secret-looking: a token-grade piece or a card number. */
+/** Text that is, or contains, something secret-looking: a token-grade piece, a card number or personal data. */
 export function secretish(text: string): boolean {
-    if (cardIn(text)) return true;
-    const tokenGrade = (p: string) => isEvidence(p) && ((p.length >= 14 && /\d/.test(p)) || p.length >= 20);
+    if (cardIn(text) || piiish(text)) return true;
     const words = text.split(/[^A-Za-z0-9_-]+/);
     const blobs = text.split(/[\s"'<>&;,(){}[\]|\\`=:]+/);
     return words.some((p) => p.length > 0 && tokenGrade(p)) || blobs.some((p) => p.length > 0 && (tokenGrade(p) || rawTokenish(p)));
 }
 
-/** Personal data by shape: an email address or a US social security number. */
+/** Personal data by shape: an email address (linear scan, no backtracking) or a US social security number. */
 export function piiish(value: string): boolean {
-    return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(value) || /(?:^|\D)\d{3}-\d{2}-\d{4}(?:\D|$)/.test(value);
+    let from = 0;
+    for (let n = 0; n < 64; n++) {
+        const at = value.indexOf("@", from);
+        if (at < 0) break;
+        from = at + 1;
+        let l = at;
+        while (l > 0 && at - l < 256 && !/\s/.test(value[l - 1]!) && value[l - 1] !== "@") l--;
+        let r = at + 1;
+        while (r < value.length && r - at < 256 && !/\s/.test(value[r]!) && value[r] !== "@") r++;
+        const domain = value.slice(at + 1, r);
+        if (l < at && /[^.]\.[^.]/.test(domain)) return true;
+    }
+    return /(?:^|\D)\d{3}-\d{2}-\d{4}(?:\D|$)/.test(value);
 }
 
-/** Parameters in a URL, absolute or relative, including the query, fragment and `;` forms. */
+const decode = (s: string): string => {
+    try {
+        return decodeURIComponent(s);
+    } catch {
+        return s;
+    }
+};
+
+/**
+ * `name=value` pairs (URL query, fragment, `;` or form body) and `"name":"value"` pairs (JSON text)
+ * anywhere in a value, with a sensitive name or a secret-looking value. Names are percent-decoded.
+ */
 export function urlHasSecret(value: string): boolean {
-    if (!/[?#;]/.test(value) && !value.includes("://")) return false;
     if (value.startsWith("http://") || value.startsWith("https://")) {
         try {
             const u = new URL(value);
@@ -191,19 +241,32 @@ export function urlHasSecret(value: string): boolean {
             /* fall through to the textual scan */
         }
     }
-    for (const m of value.matchAll(/[?&#;]([^=&#;\s]+)=([^&#;\s]*)/g)) {
+    if (value.length > 8192) return false;
+    for (const m of value.matchAll(/(?:^|[?&#;])([^=&#;\s]+)=([^&#;\s]*)/g)) {
+        if (sensitiveLocation(decode(m[1]!)) || secretish(decode(m[2]!))) return true;
+    }
+    for (const m of value.matchAll(/"([^"\\]{1,64})"\s*:\s*"([^"\\]{0,256})"/g)) {
         if (sensitiveLocation(m[1]!) || secretish(m[2]!)) return true;
     }
     return false;
 }
 
+/** Headers whose values are descriptive, not credentials: only URL/card/PII checks apply to them. */
+const BENIGN_HEADER = /^header:(content-type|accept|accept-encoding|accept-language|user-agent|cache-control|x-requested-with|origin|connection|dnt|sec-[a-z-]+|upgrade-insecure-requests|pragma)(#\d+)?$/;
+
 /** Whether a constant may not be written to the graph: by location name, or by what the value looks like. */
 export function redactConstant(loc: string, value: string): boolean {
-    return sensitiveLocation(loc) || looksLikeCard(value) || cardIn(value) || secretish(value) || piiish(value) || urlHasSecret(value);
+    if (sensitiveLocation(loc) || looksLikeCard(value) || cardIn(value) || piiish(value) || urlHasSecret(value)) return true;
+    return !BENIGN_HEADER.test(loc) && secretish(value);
+}
+
+/** A trace selector or label with attribute values removed (`[value="x"]` -> `[value=…]`), or withheld if it still looks secret. */
+export function safeText(text: string): string {
+    const cleaned = text.replace(/(\[?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*'|[^\]\s]+)/gi, "$1…");
+    return secretish(cleaned) ? "<redacted-text>" : cleaned;
 }
 
 /** A location that embeds a token-grade key (a session id used as a JSON key or query name). */
 export function safeLocation(loc: string): string {
-    const tokenGrade = (p: string) => isEvidence(p) && ((p.length >= 14 && /\d/.test(p)) || p.length >= 20);
-    return loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
+    return piiish(loc) || loc.split(/[^A-Za-z0-9_-]+/).some((p) => p.length > 0 && tokenGrade(p)) ? "<redacted-location>" : loc;
 }

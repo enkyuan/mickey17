@@ -517,3 +517,166 @@ describe("robustness (round 2, M-f, low)", () => {
         expect(w(["shippingZip", "billingZip"])[0]!.detail).toContain("`billingZip`");
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Round 3 (re-review of the round-2 fixes)
+
+describe("round 3: redaction leaks", () => {
+    const onlyConstants = (value: Record<string, unknown>, headers: [string, string][] = [], url = `${B}/x`) => {
+        const mk = (run: string) => doc(run, [req(0, "POST", url, { headers, body: jsonBody(value) })]);
+        return graphOf([mk("a"), mk("b")]);
+    };
+
+    test("a card number with its expiry glued on is found", () => {
+        const g = onlyConstants({ a: "4539 1488 0343 6467 12/30", b: "4242 4242 4242 4242 1230", c: "card 4242-4242-4242-4242-123", d: "4242424242424242|12/30|123" });
+        const text = toJson(g);
+        for (const s of ["4539 1488", "4242 4242", "4242-4242", "4242424242424242"]) expect(text).not.toContain(s);
+    });
+
+    test("short secrets, form and JSON text, encoded names, emails and event text stay out", () => {
+        const g = onlyConstants(
+            { pw: "Hunter2xyz", passcode: "Tr0ub4dor", pincode: "4821", totp_seed: "JBSWY3DP", key: "k-abc", form: "user=bob&password=hunter2pw", text: '{"password":"hunter3pw"}', rel: "/cb?t%6Fken=hunter2", note: "mail alice@example.com pw=hunter2 ok", prefs: { "alice.smith@example.com": true } },
+        );
+        const text = toJson(g);
+        for (const s of ["Hunter2xyz", "Tr0ub4dor", "4821", "JBSWY3DP", "hunter2pw", "hunter3pw", "hunter2", "alice@example.com", "alice.smith@example.com"]) expect(text, s).not.toContain(s);
+    });
+
+    test("edge prefixes and locators carrying emails or passwords are refused", () => {
+        const toks = ["tok_8f2Kq9ZxLm41AbCd", "tok_Zq81mXk9L2f8QwEr"];
+        const mk = (run: string, t: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/`, { respHeaders: [["set-cookie", `sid=${t}; Path=/`]], respBody: ["text/html", `<b>bo@x.io</b><i>${t}</i>`] }),
+                req(1, "POST", `${B}/x`, { body: jsonBody({ note: `mail alice@example.com pw=hunter2 ref ${t}` }), headers: [["x-page", t]] }),
+            ]);
+        const g = graphOf([mk("a", toks[0]!), mk("b", toks[1]!)]);
+        const text = toJson(g);
+        expect(text).not.toContain("alice@example.com");
+        expect(text).not.toContain("bo@x.io");
+        expect(text).not.toContain("hunter2");
+    });
+
+    test("trace selectors with attribute values are cleaned", () => {
+        const reqs = [req(0, "GET", `${B}/a`)];
+        const mk = (run: string) => {
+            const t = traceOf(run, [], reqs);
+            t.events[0].target = 'input[name=password][value="Hunter2xyz"]';
+            return { har: harOf(reqs), trace: t, cookies: [] } as RunDoc;
+        };
+        const text = toJson(graphOf([mk("a"), mk("b")]));
+        expect(text).not.toContain("Hunter2xyz");
+        expect(text).toContain("input[name=password]");
+    });
+});
+
+describe("round 3: over-redaction of replayable constants", () => {
+    test("content types, user agents, slugs, SKUs and country codes are kept", () => {
+        const mk = (run: string) =>
+            doc(run, [
+                req(0, "POST", `${B}/x`, {
+                    headers: [["content-type", "application/x-www-form-urlencoded"], ["user-agent", "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"], ["referer", `${B}/shop/blue-widget-2024`]],
+                    body: jsonBody({ sku: "WIDGET-2024-BLUE-XL", currencyCode: "USD", postal_code_label: "ZIP" }),
+                }),
+            ]);
+        const g = graphOf([mk("a"), mk("b")]);
+        for (const loc of ["header:content-type", "header:user-agent", "header:referer", "json:$.sku", "json:$.currencyCode"]) {
+            expect(valueOf(g, 0, loc)!.redacted, loc).toBeUndefined();
+            expect(valueOf(g, 0, loc)!.value, loc).toBeDefined();
+        }
+    });
+});
+
+describe("round 3: matching", () => {
+    test("a substring match (Bearer) survives a token that needs encoding in only one run", () => {
+        const mk = (run: string, raw: string) =>
+            doc(run, [
+                req(0, "GET", `${B}/`, { respHeaders: [["set-cookie", `tk=${encodeURIComponent(raw)}; Path=/`]] }),
+                req(1, "POST", `${B}/x`, { headers: [["authorization", `Bearer ${raw}`]] }),
+            ]);
+        const g = graphOf([mk("a", "abcdef0123456789Zq81mXk9L2f8"), mk("b", "ab/cd+ef0123456789Zq81mXk9")]);
+        expect(g.status).toBe("resolved");
+        expect(valueOf(g, 1, "header:authorization")!.class).toBe("derived");
+    });
+
+    test("operation names are compared for GET, batched and query-only GraphQL", () => {
+        const swap = (mk: (_run: string, first: boolean) => Req[]) => graphOf([doc("a", mk("a", true)), doc("b", mk("b", false))]);
+        const get = (name: string) => req(0, "GET", `${B}/graphql?operationName=${name}`);
+        const g1 = swap((_run, first) => (first ? [get("GetCart"), { ...get("GetUser"), id: "q1", tMs: 1100 }] : [get("GetUser"), { ...get("GetCart"), id: "q1", tMs: 1100 }]));
+        expect(g1.status).toBe("blocked");
+        const batch = (n: string) => req(0, "POST", `${B}/graphql`, { body: jsonBody([{ operationName: n, variables: { id: "x" } }]) });
+        const g2 = swap((_run, first) => (first ? [batch("GetCart"), { ...batch("GetUser"), id: "q1", tMs: 1100 }] : [batch("GetUser"), { ...batch("GetCart"), id: "q1", tMs: 1100 }]));
+        expect(g2.status).toBe("blocked");
+        const q = (n: string) => req(0, "POST", `${B}/graphql`, { body: jsonBody({ query: `query ${n} { x }` }) });
+        const g3 = swap((_run, first) => (first ? [q("GetCart"), { ...q("GetUser"), id: "q1", tMs: 1100 }] : [q("GetUser"), { ...q("GetCart"), id: "q1", tMs: 1100 }]));
+        expect(g3.status).toBe("blocked");
+    });
+
+    test("duplicate jar cookie names are not sources, and say so", () => {
+        const mk = (run: string, a: string, b: string) => {
+            const d = doc(run, [req(0, "POST", `${B}/x`, { headers: [["x-a", a], ["x-b", b]] })]);
+            d.cookies = [{ name: "j", value: a }, { name: "j", value: b }];
+            return d;
+        };
+        const g = graphOf([mk("a", "k8Q2m9ZxL41aBcD7", "p3W7nRj6T5cEfG2h"), mk("b", "Zq81mXk9L2f8QwEr", "Hy47Vt3Bn6Ds0KuJ")]);
+        expect(g.edges.filter((e) => e.from.where === "initial-cookie")).toEqual([]);
+        expect(g.warnings.some((w) => w.kind === "jar-duplicate-names")).toBe(true);
+    });
+
+    test("entries tied on start time with numeric-looking ids pair by natural order", () => {
+        const mk = (run: string, ids: string[]) =>
+            doc(run, [
+                req(0, "POST", `${B}/api/items`, { id: ids[0]!, tMs: 1000, body: jsonBody({ sku: "mug-001" }) }),
+                req(1, "POST", `${B}/api/items`, { id: ids[1]!, tMs: 1000, body: jsonBody({ sku: "kettle-002" }) }),
+            ]);
+        const g = graphOf([mk("a", ["100.9", "100.10"]), mk("b", ["200.7", "200.8"])]);
+        expect(valueOf(g, 0, "json:$.sku")).toMatchObject({ class: "constant", value: "mug-001" });
+        expect(valueOf(g, 1, "json:$.sku")).toMatchObject({ class: "constant", value: "kettle-002" });
+    });
+
+    test("entry-skipped output does not depend on entry order", () => {
+        const a = doc("a", [req(0, "GET", `${B}/a`)]);
+        a.har.log.entries.push({ ...structuredClone(a.har.log.entries[0]), _requestId: "bad", request: { method: "GET", url: "not a url", headers: [] } });
+        const flipped = structuredClone(a);
+        flipped.har.log.entries.reverse();
+        const b = doc("b", [req(0, "GET", `${B}/a`)]);
+        expect(toJson(graphOf([a, b]))).toBe(toJson(graphOf([flipped, b])));
+    });
+});
+
+describe("round 3: scanners and cost", () => {
+    const csrf = (html: string) => {
+        const mk = (run: string, t: string) => doc(run, [req(0, "GET", `${B}/`, { respBody: ["text/html", html.replace("TOK", t)] }), req(1, "POST", `${B}/x`, { headers: [["x-csrf", t]] })]);
+        return graphOf([mk("a", "tok_8f2Kq9ZxLm41AbCd"), mk("b", "tok_Zq81mXk9L2f8QwEr")]);
+    };
+    const loc = (g: ReturnType<typeof graphOf>) => valueOf(g, 1, "header:x-csrf")!.source?.location;
+
+    test("non-ASCII before the tag, empty comments and markup inside attribute values", () => {
+        expect(loc(csrf('<p>İstanbul</p><input type="hidden" name="csrf" value="TOK">'))).toBe("html:input[name=csrf]");
+        expect(loc(csrf('<!--><input type="hidden" name="csrf" value="TOK">'))).toBe("html:input[name=csrf]");
+        expect(loc(csrf(`<div title='<input type=hidden name=csrf value=FAKEFAKEFAKE1234>'></div><input type="hidden" name="csrf" value="TOK">`))).toBe("html:input[name=csrf]");
+    });
+
+    test("pathological HTML still finds the token where HTML would", () => {
+        for (const unit of ["<!--a", "<script>"]) {
+            const g = csrf(`${unit.repeat(2000)}<meta name="csrf" content="TOK">`);
+            expect(g.status).toBe("resolved");
+        }
+    });
+
+    test("a huge whitespace-free constant is not quadratic", () => {
+        const started = performance.now();
+        const mk = (run: string) => doc(run, [req(0, "POST", `${B}/x`, { body: jsonBody({ blob: "a".repeat(200_000) }) })]);
+        graphOf([mk("a"), mk("b")]);
+        expect(performance.now() - started).toBeLessThan(5_000);
+    });
+
+    test("crowded windows with many distinct lengths stay bounded", () => {
+        const mk = (run: string) => {
+            const leaves = Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`k${i}`, `${"a".repeat(8 + (i % 1500))}Z9`]));
+            const headers = Array.from({ length: 10 }, (_, i) => [`x-h${i}`, `${"a".repeat(4000)}${run}${i}`] as [string, string]);
+            return doc(run, [req(0, "GET", `${B}/a`, { respBody: jsonBody(leaves) }), req(1, "POST", `${B}/b`, { headers })]);
+        };
+        const started = performance.now();
+        graphOf([mk("a"), mk("b")]);
+        expect(performance.now() - started).toBeLessThan(10_000);
+    });
+});

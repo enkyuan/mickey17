@@ -57,6 +57,24 @@ export interface Recording {
     skipped: string[];
 }
 
+/** Natural string order: digit runs compare as numbers, so `100.9` sorts before `100.10` in every run. */
+export function natCmp(a: string, b: string): number {
+    const ta = a.match(/\d+|\D+/g) ?? [];
+    const tb = b.match(/\d+|\D+/g) ?? [];
+    for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
+        const x = ta[i]!;
+        const y = tb[i]!;
+        if (x === y) continue;
+        if (/^\d/.test(x) && /^\d/.test(y)) {
+            const d = BigInt(x) - BigInt(y);
+            if (d !== 0n) return d < 0n ? -1 : 1;
+            continue;
+        }
+        return cmp(x, y);
+    }
+    return ta.length - tb.length;
+}
+
 export function endUs(e: Entry): number {
     return e.startedUs + Math.max(0, e.durationUs);
 }
@@ -77,9 +95,9 @@ export function parseRecording(har: string, trace: string, cookies?: string | nu
     for (const key of ["params", "inputs"]) flatten("", t.get(key), params);
     const skipped: string[] = [];
     const entries = parseEntries(harV, skipped);
-    entries.sort((a, b) => a.startedUs - b.startedUs || cmp(a.id, b.id) || cmp(a.key, b.key));
+    entries.sort((a, b) => a.startedUs - b.startedUs || natCmp(a.id, b.id) || cmp(a.id, b.id) || cmp(a.key, b.key));
     const events = parseEvents(t);
-    events.sort((a, b) => a.tUs - b.tUs || cmp(a.id, b.id));
+    events.sort((a, b) => a.tUs - b.tUs || natCmp(a.id, b.id) || cmp(a.id, b.id));
     const jar = cookies ? parseCookieJar(cookies) : [];
     jar.sort((a, b) => cmp(a.name, b.name) || cmp(a.value, b.value));
     return { id, params, entries, events, initialCookies: jar, skipped };
@@ -141,7 +159,7 @@ function parseEntries(har: JVal, skipped: string[]): Entry[] {
         try {
             url = new URL(asString(req.get("url")) ?? "");
         } catch {
-            skipped.push(`entry ${i}: request.url is not a valid URL`);
+            skipped.push("an entry with an invalid request.url was skipped");
             return;
         }
         // data:, blob: and similar entries are not network requests; they are skipped without a warning.

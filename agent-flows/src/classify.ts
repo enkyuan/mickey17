@@ -1,6 +1,6 @@
 // Alignment, cross-request matching and value classing.
 
-import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, secretish, sensitiveLocation, shape } from "./evidence.ts";
+import { isEvidence, isWeakEvidence, MIN_LEN, redactConstant, safeLocation, safeText, secretish, sensitiveLocation, shape, urlHasSecret } from "./evidence.ts";
 import { bodyTokens, isFreeText, pathSegments, requestSlots, responseSlots, type Slot } from "./extract.ts";
 import { endUs, type Entry, eventOf, type Recording } from "./har.ts";
 import {
@@ -118,6 +118,13 @@ export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
     const nSteps = runs[0]!.entries.length;
 
     recs.forEach((rec, ri) => {
+        const names = new Map<string, number>();
+        for (const c of rec.initialCookies) names.set(c.name, (names.get(c.name) ?? 0) + 1);
+        for (const [n, k] of [...names].sort((a, b) => cmp(a[0], b[0]))) {
+            if (k > 1) {
+                warnings.push({ step: null, location: null, kind: "jar-duplicate-names", detail: `run ${runIds[ri]}: ${k} starting cookies are named \`${safeLocation(n)}\`; they are not used as sources` });
+            }
+        }
         for (const s of rec.skipped) warnings.push({ step: null, location: null, kind: "entry-skipped", detail: `run ${runIds[ri]}: ${s}` });
     });
 
@@ -159,7 +166,7 @@ export function infer(recordings: Recording[], opts: Options = {}): FlowGraph {
         const statuses = [...new Set(runs.map((r) => r.entries[i]!.status))].sort((a, b) => a - b);
         const event = (r: number) => {
             const ev = eventOf(recs[r]!, runs[r]!.entries[i]!.id);
-            return ev ? { type: ev.kind, target: ev.target } : undefined;
+            return ev ? { type: safeText(ev.kind), target: safeText(ev.target) } : undefined;
         };
         const ev0 = event(0);
         for (let r = 1; r < nRuns; r++) {
@@ -251,19 +258,22 @@ function paramValues(recs: Recording[], runs: RunData[], step: number): Set<stri
 
 /** The starting jar as slots; duplicate names get `#n` like every other repeated key. */
 function jarSlots(rec: Recording): Slot[] {
+    // Cookies that share a name (different domain or path) have no stable identity across runs: they
+    // are not sources (reported by `jar-duplicate-names`).
     const counts = new Map<string, number>();
-    return rec.initialCookies.map((c) => {
-        const n = counts.get(c.name) ?? 0;
-        counts.set(c.name, n + 1);
-        return { loc: `cookie:${c.name.replace(/#/g, "%23")}${n === 0 ? "" : `#${n}`}`, value: c.value };
-    });
+    for (const c of rec.initialCookies) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+    return rec.initialCookies.filter((c) => counts.get(c.name) === 1).map((c) => ({ loc: `cookie:${c.name.replace(/#/g, "%23")}`, value: c.value }));
 }
 
-/** Top-level fields that name the operation of an RPC-style endpoint (GraphQL, JSON-RPC, `?action=`). */
-const OPERATION_KEYS = [
-    "json:$.operationName", "json:$.operation", "json:$.method", "json:$.action", "json:$.op", "json:$.mutation", "json:$.cmd",
-    "url.query:action", "url.query:op", "url.query:operation", "url.query:method", "url.query:cmd", "form:action", "form:op",
-];
+/** Last path component of a location, for matching fields that name an operation at any depth (batched GraphQL: `json:$[0].operationName`). */
+const OPERATION_FIELDS = new Set(["operationname", "operation", "op", "action", "method", "mutation", "cmd"]);
+const lastComponent = (loc: string): string => (loc.split(/[.:]/).pop() ?? "").replace(/\[\d+\]$/, "").toLowerCase();
+/** The operation a request value names: an operation field's value, or the name in a GraphQL document. */
+function operationOf(loc: string, value: string): string | null {
+    if (OPERATION_FIELDS.has(lastComponent(loc)) && (loc.startsWith("json:") || loc.startsWith("url.query:") || loc.startsWith("form:"))) return value;
+    const m = value.length < 8192 ? /^\s*(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(value) : null;
+    return m ? `gql:${m[1]}` : null;
+}
 
 function alignmentError(runs: RunData[], recs: Recording[]): string | null {
     const n = runs[0]!.entries.length;
@@ -286,11 +296,16 @@ function alignmentError(runs: RunData[], recs: Recording[]): string | null {
         }
         // The operation named by an RPC-style body or query must agree (or follow a run parameter):
         // two requests to the same endpoint (`POST /graphql`) are otherwise indistinguishable.
-        for (const key of OPERATION_KEYS) {
-            const vals = runs.map((r) => r.reqMap[i]!.get(key));
+        const locs = new Set(runs.flatMap((r) => [...r.reqMap[i]!.keys()]));
+        for (const key of [...locs].sort(cmp)) {
+            const vals = runs.map((r) => {
+                const v = r.reqMap[i]!.get(key);
+                return v === undefined ? undefined : operationOf(key, v);
+            });
+            if (vals.every((v) => v === null || v === undefined)) continue;
             if (vals.every((v) => v === vals[0])) continue;
-            if (vals.every((v, r) => v !== undefined && params[r]!.has(v))) continue;
-            return `runs are not alignable at step ${i}: the operation (${key}) differs between runs (the requests may have been reordered)`;
+            if (vals.every((v, r) => v !== null && v !== undefined && params[r]!.has(v))) continue;
+            return `runs are not alignable at step ${i}: the operation (${safeLocation(key)}) differs between runs (the requests may have been reordered)`;
         }
         // A path segment that differs between runs must be an id (token-grade in every run) or
         // follow a run parameter; otherwise two different endpoints were paired by position.
@@ -392,7 +407,9 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
         if (list.length <= 16) continue;
         const byLen = new Map<number, Set<string>>();
         for (const v of list) byLen.set(v.length, (byLen.get(v.length) ?? new Set<string>()).add(v));
-        crowded.set(w, byLen);
+        // Bound the work per offset: at most the 64 most common lengths of a crowded window are probed.
+        const keep = [...byLen.entries()].sort((a, b) => b[1].size - a[1].size || a[0] - b[0]).slice(0, 64);
+        crowded.set(w, new Map(keep));
     }
     const variantsAt = (value: string, i: number): string[] => {
         const w = value.slice(i, i + MIN_LEN);
@@ -433,8 +450,15 @@ function discover(run: RunData, targets: Aligned[]): RunHits {
                     for (const [si, tf] of index.get(variant) ?? []) {
                         const e = all[si]!;
                         if (!eligible(run, e.sid, t.step)) continue;
-                        const rel: Rel = { transform: tf, prefix: value.slice(0, i), suffix: value.slice(i + variant.length) };
-                        addHit(out, ti, e.sid, rel, strongRelation(tf, e.val, variant), undefined, e.concrete);
+                        const prefix = value.slice(0, i);
+                        const suffix = value.slice(i + variant.length);
+                        const strong = strongRelation(tf, e.val, variant);
+                        addHit(out, ti, e.sid, { transform: tf, prefix, suffix }, strong, undefined, e.concrete);
+                        if (tf === "Identity") {
+                            for (const alias of TRANSFORMS) {
+                                if (alias !== "Identity" && isNoop(alias, e.val)) addHit(out, ti, e.sid, { transform: alias, prefix, suffix }, strong, undefined, e.concrete);
+                            }
+                        }
                     }
                 }
             }
@@ -632,8 +656,16 @@ function classifyTarget(
             const own = run.reqMap[t.step]!.get(t.loc);
             const src = sourceValue(run, sid);
             if (own === undefined || src === undefined || !eligible(run, sid, t.step)) return;
-            const tf = exactTransforms(own, src, false)[0];
-            if (tf) perRun[ri] = { rels: new Map([[relKey({ transform: tf, prefix: "", suffix: "" }), { transform: tf, prefix: "", suffix: "" }]]), strong: false };
+            const tfs = new Set(exactTransforms(own, src, false));
+            if (tfs.has("Identity")) for (const alias of TRANSFORMS) if (alias !== "Identity" && isNoop(alias, src)) tfs.add(alias);
+            if (tfs.size > 0) {
+                const rels = new Map<string, Rel>();
+                for (const tf of tfs) {
+                    const rel: Rel = { transform: tf, prefix: "", suffix: "" };
+                    rels.set(relKey(rel), rel);
+                }
+                perRun[ri] = { rels, strong: false };
+            }
         });
     }
     const validExt: Valid[] = [];
@@ -768,7 +800,7 @@ function candidate(
     }
     // Surrounding text is copied into the graph: it must not carry a secret.
     const sensitiveTarget = sensitiveLocation(targetLoc);
-    if (secretish(rel.prefix) || secretish(rel.suffix) || (sensitiveTarget && ((rel.prefix && !AUTH_SCHEME.test(rel.prefix)) || rel.suffix))) {
+    if (secretish(rel.prefix) || secretish(rel.suffix) || urlHasSecret(rel.prefix) || urlHasSecret(rel.suffix) || (sensitiveTarget && ((rel.prefix && !AUTH_SCHEME.test(rel.prefix)) || rel.suffix))) {
         return { kind: "partial", why: `matches ${describe(sid)} inside text that looks like a secret; it is not copied into the graph` };
     }
     if (sid.loc.includes("[*]")) {
